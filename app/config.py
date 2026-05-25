@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     # Token compartido pyservices <-> NestJS (header X-Internal-Token).
     internal_shared_token: str = ""
 
+    # FEL (PAC) — timbrado CFDI 4.0. Vacío = facturación deshabilitada.
+    fel_usuario: str = ""
+    fel_password: str = ""
+    fel_wsdl_url: str = "https://app.fel.mx/WSTimbrado33Test/WSCFDI33.svc?WSDL"  # pruebas por defecto
+    fel_modo: str = "test"  # test | prod
+    fel_timeout_s: float = 40.0
+
+    @property
+    def fel_configurado(self) -> bool:
+        return bool(self.fel_usuario and self.fel_password)
+
 
 @lru_cache
 def get_settings() -> Settings:
