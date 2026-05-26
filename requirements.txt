@@ -6,3 +6,4 @@ python-dotenv>=1.0.1
 anthropic>=0.69.0
 satcfdi>=4.5.0
 zeep>=4.2.1
+weasyprint>=62.0

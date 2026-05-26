@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.routers import facturacion, vision
+from app.routers import facturacion, reportes, vision
 
 app = FastAPI(
     title="vuelatour-pyservices",
@@ -9,6 +9,7 @@ app = FastAPI(
 
 app.include_router(vision.router)
 app.include_router(facturacion.router)
+app.include_router(reportes.router)
 
 
 @app.get("/")
