@@ -4,7 +4,12 @@ from functools import lru_cache
 import anthropic
 
 from app.config import get_settings
-from app.schemas.vision import TacometroRequest, TacometroResponse
+from app.schemas.vision import (
+    GastoTicketRequest,
+    GastoTicketResponse,
+    TacometroRequest,
+    TacometroResponse,
+)
 
 _SYSTEM = (
     "Eres un asistente de operaciones de aviación. Lees el HORÓMETRO/TACÓMETRO "
@@ -36,7 +41,7 @@ def _client() -> anthropic.Anthropic:
     )
 
 
-def _image_block(req: TacometroRequest) -> dict:
+def _image_block(req: TacometroRequest | GastoTicketRequest) -> dict:
     if req.image_base64:
         return {
             "type": "image",
@@ -81,6 +86,67 @@ def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
         lectura=float(lectura) if isinstance(lectura, (int, float)) else None,
         confianza=float(data.get("confianza", 0.0)),
         legible=bool(data.get("legible", lectura is not None)),
+        notas=str(data.get("notas", "")),
+        modelo=s.anthropic_model,
+    )
+
+
+_TICKET_SYSTEM = (
+    "Eres un asistente de captura de gastos para una empresa de aviación. A partir "
+    "de la foto de un ticket o recibo, extraes los datos del gasto. Devuelves SOLO "
+    "un objeto JSON, sin texto adicional ni ```fences```, con las claves exactas:\n"
+    '  "monto": número con el TOTAL pagado (no subtotales), o null si ilegible.\n'
+    '  "moneda": "MXN" o "USD" según el ticket (default "MXN" en México).\n'
+    '  "fecha": fecha del ticket en formato YYYY-MM-DD, o null.\n'
+    '  "proveedor": nombre del comercio/proveedor, o null.\n'
+    '  "concepto": descripción breve de lo comprado, o null.\n'
+    '  "categoria_sugerida": una de GAS, ATERRIZAJE, TUAS, FBO, COMIDA, HOTEL, '
+    "TAXI, REFACCION, PERMISO, FIJO, OTRO (la más probable), o null.\n"
+    '  "confianza": número entre 0 y 1.\n'
+    '  "legible": true/false según si el ticket se distingue.\n'
+    '  "notas": string breve en español con cualquier observación.\n'
+    "No inventes datos que no aparezcan: usa null. GAS es combustible/turbosina; "
+    "FBO es servicio de aeropuerto; TUAS es tarifa de uso de aeropuerto."
+)
+
+_TICKET_PROMPT = (
+    "Extrae los datos de gasto de este ticket y responde con el JSON indicado. "
+    "Prioriza el TOTAL final, no subtotales ni impuestos por separado."
+)
+
+
+def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
+    s = get_settings()
+    resp = _client().messages.create(
+        model=s.anthropic_model,
+        max_tokens=512,
+        system=[{"type": "text", "text": _TICKET_SYSTEM, "cache_control": {"type": "ephemeral"}}],
+        messages=[
+            {
+                "role": "user",
+                "content": [_image_block(req), {"type": "text", "text": _TICKET_PROMPT}],
+            }
+        ],
+    )
+    text = next((b.text for b in resp.content if b.type == "text"), "")
+    data = _extract_json(text)
+
+    monto = data.get("monto")
+    moneda = data.get("moneda")
+    categoria = data.get("categoria_sugerida")
+    valid_cats = {
+        "GAS", "ATERRIZAJE", "TUAS", "FBO", "COMIDA", "HOTEL",
+        "TAXI", "REFACCION", "PERMISO", "FIJO", "OTRO",
+    }
+    return GastoTicketResponse(
+        monto=float(monto) if isinstance(monto, (int, float)) else None,
+        moneda=moneda if moneda in ("MXN", "USD") else None,
+        fecha=str(data["fecha"]) if data.get("fecha") else None,
+        proveedor=str(data["proveedor"]) if data.get("proveedor") else None,
+        concepto=str(data["concepto"]) if data.get("concepto") else None,
+        categoria_sugerida=categoria if categoria in valid_cats else None,
+        confianza=float(data.get("confianza", 0.0)),
+        legible=bool(data.get("legible", monto is not None)),
         notas=str(data.get("notas", "")),
         modelo=s.anthropic_model,
     )
