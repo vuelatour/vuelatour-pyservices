@@ -1,3 +1,5 @@
+"""Configuracion del microservicio, leida de variables de entorno / .env."""
+
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,7 +15,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     port: int = 8000
 
-    # Anthropic (Claude) — vision para lectura de tacómetros.
+    # Anthropic (Claude) — vision para lectura de tacómetros y extracción.
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
     anthropic_timeout_s: float = 30.0
@@ -21,6 +23,8 @@ class Settings(BaseSettings):
 
     # Token compartido pyservices <-> NestJS (header X-Internal-Token).
     internal_shared_token: str = ""
+    # Token de servicio de dramirez (header X-Service-Token). Puede ser igual al anterior.
+    service_token: str = ""
 
     # FEL (PAC) — timbrado CFDI 4.0. Vacío = facturación deshabilitada.
     fel_usuario: str = ""
