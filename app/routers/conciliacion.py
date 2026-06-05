@@ -3,9 +3,14 @@ import logging
 import anthropic
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.schemas.conciliacion import ConciliacionParseRequest, ConciliacionParseResponse
+from app.schemas.conciliacion import (
+    ConciliacionParseRequest,
+    ConciliacionParseResponse,
+    ConciliacionSugerirRequest,
+    ConciliacionSugerirResponse,
+)
 from app.security import require_internal_token
-from app.services.estado_cuenta import parsear_estado_cuenta
+from app.services.estado_cuenta import parsear_estado_cuenta, sugerir_conciliacion
 
 logger = logging.getLogger("conciliacion")
 
@@ -35,4 +40,22 @@ def parse(req: ConciliacionParseRequest) -> ConciliacionParseResponse:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(e),
+        ) from e
+
+
+@router.post("/sugerir", response_model=ConciliacionSugerirResponse)
+def sugerir(req: ConciliacionSugerirRequest) -> ConciliacionSugerirResponse:
+    try:
+        return sugerir_conciliacion(req)
+    except anthropic.APIStatusError as e:
+        logger.warning("Claude API error %s: %s", e.status_code, e.message)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Claude no disponible ({e.status_code})",
+        ) from e
+    except (ValueError, KeyError) as e:
+        logger.warning("Sugerencia de conciliación no parseable: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No se pudo interpretar la sugerencia de conciliación",
         ) from e

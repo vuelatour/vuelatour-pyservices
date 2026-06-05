@@ -10,22 +10,24 @@ TOKEN = "secreto-de-prueba"
 
 def _payload() -> dict:
     return {
-        "folio": 1042,
-        "version": 2,
+        "folio": "COT-1042",
         "fecha": "2026-05-16",
         "cliente": "Cliente Demo S.A.",
-        "aeronave": "XB-PEV — Cessna 206",
-        "ruta": "CUN → CZM (redondo)",
-        "tipo_vuelo": "REDONDO",
+        "origen": "CUN",
+        "destino": "CZM",
+        "tipo": "REDONDO",
         "pasajeros": 3,
-        "lineas": [
-            {"concepto": "Tiempo de vuelo (1.20 hrs × $750 USD)", "monto_usd": 900.0},
+        "escalas": [
+            {"orden": 1, "origen": "CUN", "destino": "CZM"},
         ],
+        "tiempo_cobrable_hr": 1.2,
+        "tarifa_hora_usd": 750.0,
         "subtotal_usd": 900.0,
         "tuas_usd": 75.0,
+        "iva_pct": 16.0,
         "iva_usd": 156.0,
         "total_usd": 1131.0,
-        "tc_usd_mxn": 18.5,
+        "moneda": "USD",
         "notas": "Cotización de prueba.",
     }
 
@@ -42,31 +44,31 @@ def test_root() -> None:
     assert res.json()["service"] == "vuelatour-pyservices"
 
 
-def test_pdf_sin_token_rechazado(monkeypatch) -> None:
-    monkeypatch.setenv("SERVICE_TOKEN", TOKEN)
+def test_cotizacion_sin_token_rechazado(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
     get_settings.cache_clear()
-    res = client.post("/pdf/cotizacion", json=_payload())
+    res = client.post("/reportes/cotizacion", json=_payload())
     assert res.status_code == 401
 
 
-def test_pdf_token_invalido_rechazado(monkeypatch) -> None:
-    monkeypatch.setenv("SERVICE_TOKEN", TOKEN)
+def test_cotizacion_token_invalido_rechazado(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
     get_settings.cache_clear()
     res = client.post(
-        "/pdf/cotizacion",
+        "/reportes/cotizacion",
         json=_payload(),
-        headers={"X-Service-Token": "incorrecto"},
+        headers={"X-Internal-Token": "incorrecto"},
     )
     assert res.status_code == 401
 
 
-def test_pdf_genera_documento(monkeypatch) -> None:
-    monkeypatch.setenv("SERVICE_TOKEN", TOKEN)
+def test_cotizacion_genera_documento(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
     get_settings.cache_clear()
     res = client.post(
-        "/pdf/cotizacion",
+        "/reportes/cotizacion",
         json=_payload(),
-        headers={"X-Service-Token": TOKEN},
+        headers={"X-Internal-Token": TOKEN},
     )
     assert res.status_code == 200
     assert res.headers["content-type"] == "application/pdf"

@@ -4,13 +4,18 @@ import anthropic
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.schemas.vision import (
+    CombustibleTicketResponse,
     GastoTicketRequest,
     GastoTicketResponse,
     TacometroRequest,
     TacometroResponse,
 )
 from app.security import require_internal_token
-from app.services.anthropic_vision import leer_tacometro, leer_ticket_gasto
+from app.services.anthropic_vision import (
+    leer_tacometro,
+    leer_ticket_combustible,
+    leer_ticket_gasto,
+)
 
 logger = logging.getLogger("vision")
 
@@ -50,4 +55,22 @@ def gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No se pudo interpretar el ticket",
+        ) from e
+
+
+@router.post("/combustible", response_model=CombustibleTicketResponse)
+def combustible(req: GastoTicketRequest) -> CombustibleTicketResponse:
+    try:
+        return leer_ticket_combustible(req)
+    except anthropic.APIStatusError as e:
+        logger.warning("Claude API error %s: %s", e.status_code, e.message)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Claude no disponible ({e.status_code})",
+        ) from e
+    except (ValueError, KeyError) as e:
+        logger.warning("Respuesta de Claude no parseable: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No se pudo interpretar el ticket de combustible",
         ) from e

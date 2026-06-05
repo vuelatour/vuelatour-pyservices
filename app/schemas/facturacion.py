@@ -40,6 +40,11 @@ class TimbrarRequest(BaseModel):
     csd_cer_b64: str
     csd_key_b64: str
     csd_password: str
+    # Tipo de comprobante: I=Ingreso (default), E=Egreso (nota de crédito).
+    tipo_comprobante: str = "I"
+    # Relación a otro CFDI (p. ej. nota de crédito 01 → UUID de la factura original).
+    cfdi_relacionado_uuid: str | None = None
+    tipo_relacion: str | None = None
 
 
 class TimbrarResponse(BaseModel):
@@ -48,4 +53,22 @@ class TimbrarResponse(BaseModel):
     fecha_timbrado: str | None = None
     xml_b64: str | None = None
     pdf_b64: str | None = None
+    error: str | None = None
+
+
+class CancelarRequest(BaseModel):
+    uuid: str = Field(
+        min_length=36, max_length=36, description="UUID (folio fiscal) del CFDI a cancelar"
+    )
+    rfc_emisor: str
+    # c_MotivoCancelacion: 01 con sustitución, 02 errores sin relación,
+    # 03 no se llevó a cabo, 04 operación nominativa global.
+    motivo: str = "02"
+    folio_sustitucion: str | None = None  # UUID sustituto, requerido si motivo=01
+
+
+class CancelarResponse(BaseModel):
+    ok: bool
+    estatus: str | None = None
+    acuse_xml: str | None = None
     error: str | None = None

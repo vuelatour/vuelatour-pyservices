@@ -5,6 +5,7 @@ import anthropic
 
 from app.config import get_settings
 from app.schemas.vision import (
+    CombustibleTicketResponse,
     GastoTicketRequest,
     GastoTicketResponse,
     TacometroRequest,
@@ -147,6 +148,68 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         categoria_sugerida=categoria if categoria in valid_cats else None,
         confianza=float(data.get("confianza", 0.0)),
         legible=bool(data.get("legible", monto is not None)),
+        notas=str(data.get("notas", "")),
+        modelo=s.anthropic_model,
+    )
+
+
+_COMBUSTIBLE_SYSTEM = (
+    "Eres un asistente de captura de cargas de combustible de aviación (turbosina "
+    "Jet A o avgas 100LL). A partir de la foto del ticket de combustible extraes los "
+    "datos. Devuelves SOLO un objeto JSON, sin texto adicional ni ```fences```, con "
+    "las claves exactas:\n"
+    '  "litros": litros cargados (si viene en galones, conviértelo: 1 gal = 3.78541 L), o null.\n'
+    '  "precio_litro": precio por litro, o null.\n'
+    '  "total": total pagado, o null.\n'
+    '  "moneda": "MXN" o "USD", o null.\n'
+    '  "aeropuerto": código IATA/ICAO o nombre del aeropuerto/FBO, o null.\n'
+    '  "tipo_combustible": "TURBOSINA" o "AVGAS" según el ticket, o null.\n'
+    '  "fecha": fecha YYYY-MM-DD, o null.\n'
+    '  "proveedor": nombre del proveedor/FBO, o null.\n'
+    '  "confianza": número entre 0 y 1.\n'
+    '  "legible": true/false.\n'
+    '  "notas": string breve en español.\n'
+    "No inventes datos: usa null. Si el ticket indica galones, convierte a litros."
+)
+
+_COMBUSTIBLE_PROMPT = (
+    "Extrae los datos de esta carga de combustible y responde con el JSON indicado. "
+    "Si la cantidad viene en galones (GAL), conviértela a litros."
+)
+
+
+def leer_ticket_combustible(req: GastoTicketRequest) -> CombustibleTicketResponse:
+    s = get_settings()
+    resp = _client().messages.create(
+        model=s.anthropic_model,
+        max_tokens=512,
+        system=[{"type": "text", "text": _COMBUSTIBLE_SYSTEM, "cache_control": {"type": "ephemeral"}}],
+        messages=[
+            {
+                "role": "user",
+                "content": [_image_block(req), {"type": "text", "text": _COMBUSTIBLE_PROMPT}],
+            }
+        ],
+    )
+    text = next((b.text for b in resp.content if b.type == "text"), "")
+    data = _extract_json(text)
+
+    def _num(v: object) -> float | None:
+        return float(v) if isinstance(v, (int, float)) else None
+
+    moneda = data.get("moneda")
+    tipo = data.get("tipo_combustible")
+    return CombustibleTicketResponse(
+        litros=_num(data.get("litros")),
+        precio_litro=_num(data.get("precio_litro")),
+        total=_num(data.get("total")),
+        moneda=moneda if moneda in ("MXN", "USD") else None,
+        aeropuerto=str(data["aeropuerto"]) if data.get("aeropuerto") else None,
+        tipo_combustible=tipo if tipo in ("TURBOSINA", "AVGAS") else None,
+        fecha=str(data["fecha"]) if data.get("fecha") else None,
+        proveedor=str(data["proveedor"]) if data.get("proveedor") else None,
+        confianza=float(data.get("confianza", 0.0)),
+        legible=bool(data.get("legible", data.get("total") is not None)),
         notas=str(data.get("notas", "")),
         modelo=s.anthropic_model,
     )

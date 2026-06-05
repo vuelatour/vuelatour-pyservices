@@ -56,7 +56,8 @@ ruff check app tests
 |--------|------|-------------|
 | GET | `/` | Info del servicio |
 | GET | `/health` | Healthcheck |
-| POST | `/pdf/cotizacion` | Genera el PDF de una cotización (requiere `X-Service-Token`) |
+| POST | `/reportes/cotizacion` | Genera el PDF de una cotización (requiere `X-Internal-Token`) |
+| POST | `/pdf/reparto` | Genera el PDF de reparto de utilidades (requiere `X-Service-Token`) |
 
 ## Autenticación entre servicios
 

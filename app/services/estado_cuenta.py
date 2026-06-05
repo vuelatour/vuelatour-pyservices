@@ -8,6 +8,8 @@ from app.config import get_settings
 from app.schemas.conciliacion import (
     ConciliacionParseRequest,
     ConciliacionParseResponse,
+    ConciliacionSugerirRequest,
+    ConciliacionSugerirResponse,
     MovimientoParseado,
 )
 
@@ -186,3 +188,79 @@ def parsear_estado_cuenta(req: ConciliacionParseRequest) -> ConciliacionParseRes
     if name.endswith(".pdf"):
         return _parse_pdf(req)
     raise ValueError(f"Formato no soportado: {req.filename}")
+
+
+_SUGERIR_SYSTEM = (
+    "Eres un asistente de conciliación bancaria para una empresa de aviación. "
+    "Recibes UN movimiento bancario sin conciliar y una lista de gastos candidatos "
+    "(ya filtrados por fecha y monto cercanos). Tu trabajo es elegir el gasto que "
+    "con más probabilidad corresponde a ese movimiento. Devuelves SOLO un objeto "
+    "JSON, sin texto adicional ni ```fences```, con las claves exactas:\n"
+    '  "gasto_id_sugerido": el "id" del gasto candidato más probable, o null si '
+    "ninguno encaja razonablemente.\n"
+    '  "confianza": número entre 0 y 1 (qué tan seguro estás del match).\n'
+    '  "razon": explicación breve en español (ej. "mismo proveedor y monto exacto", '
+    '"diferencia de $3 = comisión bancaria", "fechas a 1 día").\n'
+    "Considera: pequeñas diferencias de monto suelen ser comisiones o redondeos; el "
+    "proveedor del gasto puede aparecer dentro de la descripción del movimiento; "
+    "fechas cercanas (no idénticas) son normales por el tiempo de procesamiento "
+    "bancario. Usa solo ids que estén en la lista de candidatos. Si la lista está "
+    "vacía o nada encaja, devuelve gasto_id_sugerido=null con confianza 0."
+)
+
+
+def sugerir_conciliacion(req: ConciliacionSugerirRequest) -> ConciliacionSugerirResponse:
+    s = get_settings()
+
+    movimiento = {
+        "fecha": req.movimiento.fecha,
+        "monto": req.movimiento.monto,
+        "descripcion": req.movimiento.descripcion,
+    }
+    candidatos = [
+        {"id": c.id, "fecha": c.fecha, "monto": c.monto, "proveedor": c.proveedor}
+        for c in req.candidatos
+    ]
+    ids_validos = {c.id for c in req.candidatos}
+
+    if not candidatos:
+        return ConciliacionSugerirResponse(
+            gasto_id_sugerido=None,
+            confianza=0.0,
+            razon="No hay gastos candidatos para este movimiento.",
+            modelo=s.anthropic_model,
+        )
+
+    payload = json.dumps(
+        {"movimiento": movimiento, "candidatos": candidatos}, ensure_ascii=False
+    )
+    resp = _client().messages.create(
+        model=s.anthropic_model,
+        max_tokens=512,
+        system=[{"type": "text", "text": _SUGERIR_SYSTEM, "cache_control": {"type": "ephemeral"}}],
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    "Movimiento sin conciliar y gastos candidatos (JSON):\n"
+                    f"{payload}\n\n"
+                    "Elige el match más probable y responde con el JSON indicado."
+                ),
+            }
+        ],
+    )
+    text = next((b.text for b in resp.content if b.type == "text"), "")
+    data = _extract_json(text)
+
+    sugerido = data.get("gasto_id_sugerido")
+    sugerido = str(sugerido) if sugerido is not None else None
+    # No confíes en ids inventados por el modelo: solo acepta candidatos reales.
+    if sugerido not in ids_validos:
+        sugerido = None
+
+    return ConciliacionSugerirResponse(
+        gasto_id_sugerido=sugerido,
+        confianza=float(data.get("confianza", 0.0)) if sugerido else 0.0,
+        razon=str(data.get("razon", "")),
+        modelo=s.anthropic_model,
+    )

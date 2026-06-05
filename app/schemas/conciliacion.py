@@ -24,3 +24,34 @@ class ConciliacionParseResponse(BaseModel):
     formato: str = Field(description="csv | excel | pdf")
     notas: str = Field(default="")
     modelo: str | None = Field(default=None, description="Modelo de Claude si se usó (PDF)")
+
+
+class MovimientoSinConciliar(BaseModel):
+    """Movimiento bancario que aún no tiene gasto vinculado."""
+
+    fecha: str | None = Field(default=None, description="Fecha del movimiento YYYY-MM-DD")
+    monto: float = Field(description="Monto del movimiento (positivo)")
+    descripcion: str | None = Field(default=None, description="Descripción/concepto del banco")
+
+
+class GastoCandidato(BaseModel):
+    id: str = Field(description="Identificador del gasto")
+    fecha: str | None = Field(default=None, description="Fecha del gasto YYYY-MM-DD")
+    monto: float = Field(description="Monto del gasto (positivo)")
+    proveedor: str | None = Field(default=None, description="Proveedor/comercio del gasto")
+
+
+class ConciliacionSugerirRequest(BaseModel):
+    """Movimiento sin conciliar + gastos candidatos cercanos para que Claude proponga el match."""
+
+    movimiento: MovimientoSinConciliar
+    candidatos: list[GastoCandidato] = Field(default_factory=list)
+
+
+class ConciliacionSugerirResponse(BaseModel):
+    gasto_id_sugerido: str | None = Field(
+        default=None, description="ID del gasto candidato más probable, o null si ninguno encaja"
+    )
+    confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1 del match")
+    razon: str = Field(default="", description="Explicación breve en español del match")
+    modelo: str = Field(description="Modelo de Claude usado")

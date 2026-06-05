@@ -73,3 +73,22 @@ class GastoTicketResponse(BaseModel):
     legible: bool = Field(default=False, description="true si el ticket se pudo leer")
     notas: str = Field(default="", description="Observaciones")
     modelo: str = Field(description="Modelo de Claude usado")
+
+
+class CombustibleTicketResponse(BaseModel):
+    """Datos extraídos de un ticket de carga de combustible (turbosina/avgas)."""
+
+    litros: float | None = Field(default=None, description="Litros cargados (galones→L si aplica), o null")
+    precio_litro: float | None = Field(default=None, description="Precio por litro, o null")
+    total: float | None = Field(default=None, description="Total pagado, o null")
+    moneda: Literal["MXN", "USD"] | None = Field(default=None, description="Moneda detectada")
+    aeropuerto: str | None = Field(default=None, description="Código/nombre del aeropuerto o FBO, o null")
+    tipo_combustible: Literal["TURBOSINA", "AVGAS"] | None = Field(
+        default=None, description="Turbosina (Jet A) o avgas (100LL)"
+    )
+    fecha: str | None = Field(default=None, description="Fecha del ticket YYYY-MM-DD, o null")
+    proveedor: str | None = Field(default=None, description="Proveedor/FBO, o null")
+    confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1")
+    legible: bool = Field(default=False, description="true si el ticket se pudo leer")
+    notas: str = Field(default="", description="Observaciones")
+    modelo: str = Field(description="Modelo de Claude usado")

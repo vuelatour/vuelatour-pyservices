@@ -2,10 +2,8 @@
 
 from fastapi import APIRouter, Depends, Response
 
-from app.schemas.cotizacion import CotizacionPdfRequest
 from app.schemas.reparto import RepartoPdfRequest
 from app.security import require_service_token
-from app.services.cotizacion_pdf import render_cotizacion_pdf
 from app.services.reparto_pdf import render_reparto_pdf
 
 router = APIRouter(
@@ -13,18 +11,6 @@ router = APIRouter(
     tags=["pdf"],
     dependencies=[Depends(require_service_token)],
 )
-
-
-@router.post("/cotizacion")
-def cotizacion_pdf(payload: CotizacionPdfRequest) -> Response:
-    """Genera el PDF de una cotizacion y lo devuelve como application/pdf."""
-    pdf_bytes = render_cotizacion_pdf(payload)
-    filename = f"cotizacion-{payload.folio}-v{payload.version}.pdf"
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
-    )
 
 
 @router.post("/reparto")

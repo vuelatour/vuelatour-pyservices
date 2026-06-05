@@ -15,7 +15,12 @@ import logging
 from decimal import Decimal
 
 from app.config import get_settings
-from app.schemas.facturacion import TimbrarRequest, TimbrarResponse
+from app.schemas.facturacion import (
+    CancelarRequest,
+    CancelarResponse,
+    TimbrarRequest,
+    TimbrarResponse,
+)
 
 logger = logging.getLogger("facturacion")
 
@@ -52,6 +57,16 @@ def _construir_y_sellar(req: TimbrarRequest) -> bytes:
         for c in req.conceptos
     ]
 
+    # Relación a otro CFDI (nota de crédito → factura original).
+    relacionados = None
+    if req.cfdi_relacionado_uuid:
+        relacionados = cfdi40.CfdiRelacionados(
+            tipo_relacion=req.tipo_relacion or "01",
+            cfdi_relacionado=[
+                cfdi40.CfdiRelacionado(uuid=req.cfdi_relacionado_uuid)
+            ],
+        )
+
     comprobante = cfdi40.Comprobante(
         emisor=cfdi40.Emisor(
             rfc=req.emisor.rfc,
@@ -59,6 +74,8 @@ def _construir_y_sellar(req: TimbrarRequest) -> bytes:
             regimen_fiscal=req.emisor.regimen_fiscal,
         ),
         lugar_expedicion=req.lugar_expedicion,
+        tipo_de_comprobante=req.tipo_comprobante or "I",
+        cfdi_relacionados=relacionados,
         receptor=cfdi40.Receptor(
             rfc=req.receptor.rfc,
             nombre=req.receptor.nombre,
@@ -126,4 +143,52 @@ def timbrar(req: TimbrarRequest) -> TimbrarResponse:
         fecha_timbrado=str(r["fecha"]) if r["fecha"] else None,
         xml_b64=base64.b64encode(xml_final.encode("utf-8")).decode("ascii"),
         pdf_b64=r["pdf"] or None,
+    )
+
+
+def cancelar(req: CancelarRequest) -> CancelarResponse:
+    """Cancela un CFDI ya timbrado vía FEL (CancelarCFDI).
+
+    NOTA: confirmar la firma exacta del método `CancelarCFDI` contra el WSDL de
+    FEL/Blikon al contratar (nombres de parámetros pueden variar). El CFDI 4.0
+    requiere indicar el motivo (c_MotivoCancelacion) y, si es 01, el UUID que lo
+    sustituye. Validar contra el ambiente de PRUEBAS antes de producción.
+    """
+    s = get_settings()
+    if not s.fel_configurado:
+        return CancelarResponse(
+            ok=False, error="FEL no configurado (faltan credenciales de timbrado)."
+        )
+    try:
+        from zeep import Client, Settings as ZeepSettings
+
+        client = Client(
+            s.fel_wsdl_url, settings=ZeepSettings(strict=False, xml_huge_tree=True)
+        )
+        resp = client.service.CancelarCFDI(
+            usuario=s.fel_usuario,
+            password=s.fel_password,
+            uuid=req.uuid,
+            rfcEmisor=req.rfc_emisor,
+            motivo=req.motivo,
+            folioSustitucion=req.folio_sustitucion or "",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Error cancelando con FEL")
+        return CancelarResponse(ok=False, error=f"FEL no disponible: {e}")
+
+    ok = bool(getattr(resp, "OperacionExitosa", False))
+    return CancelarResponse(
+        ok=ok,
+        estatus=getattr(resp, "Estatus", None)
+        or getattr(resp, "EstatusUUID", None),
+        acuse_xml=getattr(resp, "Acuse", None)
+        or getattr(resp, "XMLResultado", None),
+        error=None
+        if ok
+        else (
+            getattr(resp, "MensajeError", None)
+            or getattr(resp, "MensajeErrorDetallado", None)
+            or "FEL rechazó la cancelación"
+        ),
     )
