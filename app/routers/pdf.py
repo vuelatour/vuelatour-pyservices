@@ -1,15 +1,15 @@
-"""Endpoints de generacion de PDF. Protegidos con el token de servicio."""
+"""Endpoints de generacion de PDF. Protegidos con el token interno (X-Internal-Token)."""
 
 from fastapi import APIRouter, Depends, Response
 
 from app.schemas.reparto import RepartoPdfRequest
-from app.security import require_service_token
+from app.security import require_internal_token
 from app.services.reparto_pdf import render_reparto_pdf
 
 router = APIRouter(
     prefix="/pdf",
     tags=["pdf"],
-    dependencies=[Depends(require_service_token)],
+    dependencies=[Depends(require_internal_token)],
 )
 
 
