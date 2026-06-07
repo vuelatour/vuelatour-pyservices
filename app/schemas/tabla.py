@@ -1,0 +1,19 @@
+"""Schema genérico para exportar cualquier tabla a Excel."""
+
+from pydantic import BaseModel, Field
+
+
+class TablaColumna(BaseModel):
+    label: str
+    # texto | money | numero | entero | pct
+    tipo: str = "texto"
+
+
+class TablaXlsxRequest(BaseModel):
+    titulo: str
+    subtitulo: str | None = None
+    columnas: list[TablaColumna]
+    # Cada fila es una lista de valores alineada a `columnas`.
+    filas: list[list] = Field(default_factory=list)
+    # Fila de totales opcional, alineada a `columnas` (None en celdas vacías).
+    totales: list | None = None

@@ -3,9 +3,11 @@
 from fastapi import APIRouter, Depends, Response
 
 from app.schemas.reparto import RepartoPdfRequest
+from app.schemas.tabla import TablaXlsxRequest
 from app.security import require_internal_token
 from app.services.reparto_pdf import render_reparto_pdf
 from app.services.reparto_xlsx import render_reparto_xlsx
+from app.services.tabla_xlsx import render_tabla_xlsx
 
 router = APIRouter(
     prefix="/pdf",
@@ -37,4 +39,15 @@ def reparto_xlsx(payload: RepartoPdfRequest) -> Response:
         content=xlsx_bytes,
         media_type=XLSX_MEDIA,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/tabla-xlsx")
+def tabla_xlsx(payload: TablaXlsxRequest) -> Response:
+    """Export genérico de cualquier tabla a Excel (inventario, cardex, horas...)."""
+    xlsx_bytes = render_tabla_xlsx(payload)
+    return Response(
+        content=xlsx_bytes,
+        media_type=XLSX_MEDIA,
+        headers={"Content-Disposition": 'attachment; filename="reporte.xlsx"'},
     )
