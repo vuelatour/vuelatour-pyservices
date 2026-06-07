@@ -7,11 +7,15 @@ librería (y sus libs de sistema: pango/cairo) no esté instalada.
 
 from datetime import datetime
 from html import escape
+from zoneinfo import ZoneInfo
 
 from app.schemas.reportes import CotizacionPdfRequest
 
 _BRAND = "#dc2626"
 _NAVY = "#102a43"
+# Todo se muestra en hora de Cancún (Quintana Roo, UTC−5, sin horario de verano).
+_CANCUN = ZoneInfo("America/Cancun")
+TZ_NOTA = "Horarios en hora de Cancún (UTC−5)."
 
 
 def _money(v: float) -> str:
@@ -22,7 +26,11 @@ def _fecha_legible(s: str | None) -> str:
     if not s:
         return "Por confirmar"
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00")).strftime("%d/%m/%Y %H:%M")
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        # Si viene sin zona, se asume UTC; luego se convierte a Cancún.
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+        return dt.astimezone(_CANCUN).strftime("%d/%m/%Y %H:%M")
     except ValueError:
         return s
 
@@ -101,7 +109,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   </tbody></table>
   {notas_html}
 
-  <div class="footer">Gracias por volar con VuelaTour — Aero Charter Cancún.</div>
+  <div class="footer">{TZ_NOTA}<br>Gracias por volar con VuelaTour — Aero Charter Cancún.</div>
 </body></html>"""
 
 

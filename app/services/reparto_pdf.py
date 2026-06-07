@@ -71,7 +71,7 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
                 Paragraph("Aero Charter Cancún S.A. de C.V.", s_sub),
                 Paragraph(
                     f"Periodo: {req.periodo_desde} a {req.periodo_hasta}<br/>"
-                    f"Generado: {req.generado}",
+                    f"Generado: {req.generado} (hora de Cancún, UTC−5)",
                     s_meta,
                 ),
             ],
