@@ -6,14 +6,22 @@ from app.schemas.facturacion import (
     TimbrarRequest,
     TimbrarResponse,
 )
+from app.schemas.recibida import FacturaRecibidaParsed, ParseRecibidaRequest
 from app.security import require_internal_token
 from app.services.cfdi_fel import cancelar, timbrar
+from app.services.recibida_parse import parse_cfdi
 
 router = APIRouter(
     prefix="/facturacion",
     tags=["facturacion"],
     dependencies=[Depends(require_internal_token)],
 )
+
+
+@router.post("/parse-recibida", response_model=FacturaRecibidaParsed)
+def parse_recibida(req: ParseRecibidaRequest) -> FacturaRecibidaParsed:
+    """Parsea un CFDI recibido (XML de proveedor) y extrae sus datos."""
+    return parse_cfdi(req)
 
 
 @router.post("/timbrar", response_model=TimbrarResponse)
