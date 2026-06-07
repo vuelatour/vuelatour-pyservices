@@ -4,10 +4,12 @@ from fastapi import APIRouter, Depends, Response
 
 from app.schemas.reparto import RepartoPdfRequest
 from app.schemas.tabla import TablaXlsxRequest
+from app.schemas.zip import ZipRequest
 from app.security import require_internal_token
 from app.services.reparto_pdf import render_reparto_pdf
 from app.services.reparto_xlsx import render_reparto_xlsx
 from app.services.tabla_xlsx import render_tabla_xlsx
+from app.services.zip_service import render_zip
 
 router = APIRouter(
     prefix="/pdf",
@@ -50,4 +52,15 @@ def tabla_xlsx(payload: TablaXlsxRequest) -> Response:
         content=xlsx_bytes,
         media_type=XLSX_MEDIA,
         headers={"Content-Disposition": 'attachment; filename="reporte.xlsx"'},
+    )
+
+
+@router.post("/zip")
+def zip_archivos(payload: ZipRequest) -> Response:
+    """Ensambla archivos (base64) en un .zip. Usado por el cierre mensual."""
+    zip_bytes = render_zip(payload)
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="cierre.zip"'},
     )
