@@ -165,7 +165,10 @@ _COMBUSTIBLE_SYSTEM = (
     '  "aeropuerto": código IATA/ICAO o nombre del aeropuerto/FBO, o null.\n'
     '  "tipo_combustible": "TURBOSINA" o "AVGAS" según el ticket, o null.\n'
     '  "fecha": fecha YYYY-MM-DD, o null.\n'
+    '  "hora": hora de la carga en formato HH:MM de 24 horas, o null.\n'
     '  "proveedor": nombre del proveedor/FBO, o null.\n'
+    '  "tarjeta_terminacion": ultimos 4 digitos de la tarjeta de pago si aparecen '
+    'en el ticket (p. ej. "**** 1234" o "TARJETA ...1234"), como string de 4 digitos, o null.\n'
     '  "confianza": número entre 0 y 1.\n'
     '  "legible": true/false.\n'
     '  "notas": string breve en español.\n'
@@ -207,7 +210,13 @@ def leer_ticket_combustible(req: GastoTicketRequest) -> CombustibleTicketRespons
         aeropuerto=str(data["aeropuerto"]) if data.get("aeropuerto") else None,
         tipo_combustible=tipo if tipo in ("TURBOSINA", "AVGAS") else None,
         fecha=str(data["fecha"]) if data.get("fecha") else None,
+        hora=str(data["hora"]) if data.get("hora") else None,
         proveedor=str(data["proveedor"]) if data.get("proveedor") else None,
+        tarjeta_terminacion=(
+            str(data["tarjeta_terminacion"]).strip()[-4:]
+            if data.get("tarjeta_terminacion") and str(data["tarjeta_terminacion"]).strip()
+            else None
+        ),
         confianza=float(data.get("confianza", 0.0)),
         legible=bool(data.get("legible", data.get("total") is not None)),
         notas=str(data.get("notas", "")),

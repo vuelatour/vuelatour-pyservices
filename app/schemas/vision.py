@@ -87,7 +87,11 @@ class CombustibleTicketResponse(BaseModel):
         default=None, description="Turbosina (Jet A) o avgas (100LL)"
     )
     fecha: str | None = Field(default=None, description="Fecha del ticket YYYY-MM-DD, o null")
+    hora: str | None = Field(default=None, description="Hora de la carga HH:MM (24h), o null")
     proveedor: str | None = Field(default=None, description="Proveedor/FBO, o null")
+    tarjeta_terminacion: str | None = Field(
+        default=None, description="Ultimos 4 digitos de la tarjeta usada, si aparecen en el ticket"
+    )
     confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1")
     legible: bool = Field(default=False, description="true si el ticket se pudo leer")
     notas: str = Field(default="", description="Observaciones")
