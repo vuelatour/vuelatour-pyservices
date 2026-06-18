@@ -101,7 +101,7 @@ _TICKET_SYSTEM = (
     '  "fecha": fecha del ticket en formato YYYY-MM-DD, o null.\n'
     '  "proveedor": nombre del comercio/proveedor, o null.\n'
     '  "concepto": descripción breve de lo comprado, o null.\n'
-    '  "categoria_sugerida": una de GAS, ATERRIZAJE, TUAS, FBO, COMIDA, HOTEL, '
+    '  "categoria_sugerida": una de GAS, OPERACIONES, COMIDA, HOTEL, '
     "TAXI, REFACCION, PERMISO, FIJO, OTRO (la más probable), o null.\n"
     '  "medio_pago": "EFECTIVO", "TARJETA_CORP" o "TRANSFERENCIA" segun el ticket '
     "(DEBITO/CREDITO/VISA/MASTERCARD/TARJETA = TARJETA_CORP; EFECTIVO/CASH = "
@@ -111,7 +111,7 @@ _TICKET_SYSTEM = (
     '  "legible": true/false según si el ticket se distingue.\n'
     '  "notas": string breve en español con cualquier observación.\n'
     "No inventes datos que no aparezcan: usa null. GAS es combustible/turbosina; "
-    "FBO es servicio de aeropuerto; TUAS es tarifa de uso de aeropuerto."
+    "OPERACIONES agrupa aterrizaje, FBO y servicios de aeropuerto/plataforma."
 )
 
 _TICKET_PROMPT = (
@@ -140,7 +140,7 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
     moneda = data.get("moneda")
     categoria = data.get("categoria_sugerida")
     valid_cats = {
-        "GAS", "ATERRIZAJE", "TUAS", "FBO", "COMIDA", "HOTEL",
+        "GAS", "OPERACIONES", "ATERRIZAJE", "TUAS", "FBO", "COMIDA", "HOTEL",
         "TAXI", "REFACCION", "PERMISO", "FIJO", "OTRO",
     }
     return GastoTicketResponse(
