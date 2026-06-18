@@ -103,6 +103,10 @@ _TICKET_SYSTEM = (
     '  "concepto": descripción breve de lo comprado, o null.\n'
     '  "categoria_sugerida": una de GAS, ATERRIZAJE, TUAS, FBO, COMIDA, HOTEL, '
     "TAXI, REFACCION, PERMISO, FIJO, OTRO (la más probable), o null.\n"
+    '  "medio_pago": "EFECTIVO", "TARJETA_CORP" o "TRANSFERENCIA" segun el ticket '
+    "(DEBITO/CREDITO/VISA/MASTERCARD/TARJETA = TARJETA_CORP; EFECTIVO/CASH = "
+    "EFECTIVO; SPEI/TRANSFERENCIA = TRANSFERENCIA), o null.\n"
+    '  "tarjeta_terminacion": ultimos 4 digitos de la tarjeta si aparecen, como string de 4 digitos, o null.\n'
     '  "confianza": número entre 0 y 1.\n'
     '  "legible": true/false según si el ticket se distingue.\n'
     '  "notas": string breve en español con cualquier observación.\n'
@@ -146,6 +150,16 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         proveedor=str(data["proveedor"]) if data.get("proveedor") else None,
         concepto=str(data["concepto"]) if data.get("concepto") else None,
         categoria_sugerida=categoria if categoria in valid_cats else None,
+        medio_pago=(
+            data.get("medio_pago")
+            if data.get("medio_pago") in ("EFECTIVO", "TARJETA_CORP", "TRANSFERENCIA")
+            else None
+        ),
+        tarjeta_terminacion=(
+            str(data["tarjeta_terminacion"]).strip()[-4:]
+            if data.get("tarjeta_terminacion") and str(data["tarjeta_terminacion"]).strip()
+            else None
+        ),
         confianza=float(data.get("confianza", 0.0)),
         legible=bool(data.get("legible", monto is not None)),
         notas=str(data.get("notas", "")),
@@ -169,6 +183,7 @@ _COMBUSTIBLE_SYSTEM = (
     '  "proveedor": nombre del proveedor/FBO, o null.\n'
     '  "tarjeta_terminacion": ultimos 4 digitos de la tarjeta de pago si aparecen '
     'en el ticket (p. ej. "**** 1234" o "TARJETA ...1234"), como string de 4 digitos, o null.\n'
+    '  "medio_pago": "EFECTIVO", "TARJETA_CORP" o "TRANSFERENCIA" segun el ticket, o null.\n'
     '  "confianza": número entre 0 y 1.\n'
     '  "legible": true/false.\n'
     '  "notas": string breve en español.\n'
@@ -215,6 +230,11 @@ def leer_ticket_combustible(req: GastoTicketRequest) -> CombustibleTicketRespons
         tarjeta_terminacion=(
             str(data["tarjeta_terminacion"]).strip()[-4:]
             if data.get("tarjeta_terminacion") and str(data["tarjeta_terminacion"]).strip()
+            else None
+        ),
+        medio_pago=(
+            data.get("medio_pago")
+            if data.get("medio_pago") in ("EFECTIVO", "TARJETA_CORP", "TRANSFERENCIA")
             else None
         ),
         confianza=float(data.get("confianza", 0.0)),

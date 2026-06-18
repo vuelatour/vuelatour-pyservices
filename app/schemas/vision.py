@@ -69,6 +69,12 @@ class GastoTicketResponse(BaseModel):
     categoria_sugerida: CategoriaGasto | None = Field(
         default=None, description="Categoría sugerida del catálogo"
     )
+    medio_pago: Literal["EFECTIVO", "TARJETA_CORP", "TRANSFERENCIA"] | None = Field(
+        default=None, description="Medio de pago detectado en el ticket"
+    )
+    tarjeta_terminacion: str | None = Field(
+        default=None, description="Ultimos 4 digitos de la tarjeta, si aparecen"
+    )
     confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1 de la extracción")
     legible: bool = Field(default=False, description="true si el ticket se pudo leer")
     notas: str = Field(default="", description="Observaciones")
@@ -91,6 +97,9 @@ class CombustibleTicketResponse(BaseModel):
     proveedor: str | None = Field(default=None, description="Proveedor/FBO, o null")
     tarjeta_terminacion: str | None = Field(
         default=None, description="Ultimos 4 digitos de la tarjeta usada, si aparecen en el ticket"
+    )
+    medio_pago: Literal["EFECTIVO", "TARJETA_CORP", "TRANSFERENCIA"] | None = Field(
+        default=None, description="Medio de pago detectado en el ticket"
     )
     confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1")
     legible: bool = Field(default=False, description="true si el ticket se pudo leer")
