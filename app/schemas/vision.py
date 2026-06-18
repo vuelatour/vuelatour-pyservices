@@ -11,6 +11,10 @@ class TacometroRequest(BaseModel):
     image_base64: str | None = Field(default=None, description="Imagen en base64 (sin prefijo data:)")
     media_type: MediaType | None = Field(default=None, description="Requerido si se usa image_base64")
     image_url: str | None = Field(default=None, description="URL pública o firmada de la imagen")
+    ultimo: float | None = Field(
+        default=None,
+        description="Última lectura conocida de la aeronave (ancla de magnitud). La nueva debe ser similar y nunca menor.",
+    )
 
     @model_validator(mode="after")
     def _check_source(self) -> "TacometroRequest":

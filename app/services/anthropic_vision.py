@@ -14,11 +14,17 @@ from app.schemas.vision import (
 
 _SYSTEM = (
     "Eres un asistente de operaciones de aviación. Lees el HORÓMETRO/TACÓMETRO "
-    "(HOBBS) de una aeronave a partir de una foto del instrumento. El valor es "
-    "un contador de horas de operación con normalmente una décima (ej. 1234.5). "
+    "(HOBBS) de una aeronave a partir de una foto del instrumento.\n"
+    "FORMATO FIJO de la lectura: 4 dígitos enteros + 1 décima, es decir NNNN.N "
+    "(ej. 1555.8). El tambor de la derecha —más pequeño, normalmente recuadrado, "
+    "de otro color y marcado con '1/10'— es SIEMPRE la décima, nunca un entero. "
+    "Lee exactamente 4 ruedas enteras + esa décima.\n"
+    "Si en la foto aparece más de un medidor (p. ej. ENGINE/ELT/otro de "
+    "referencia), IGNORA los secundarios: reporta solo el HOBBS principal. No "
+    "mezcles dígitos de dos medidores distintos.\n"
     "Devuelves SOLO un objeto JSON, sin texto adicional ni ```fences```, con las "
     "claves exactas:\n"
-    '  "lectura": número con la lectura en horas, o null si no se puede leer.\n'
+    '  "lectura": número NNNN.N con la lectura en horas, o null si no se puede leer.\n'
     '  "confianza": número entre 0 y 1.\n'
     '  "legible": true/false según si el display se distingue.\n'
     '  "notas": string breve en español (reflejo, borrosa, dígito parcial, etc.).\n'
@@ -28,7 +34,9 @@ _SYSTEM = (
 
 _USER_PROMPT = (
     "Lee el contador de horas (HOBBS/tacómetro) en esta foto y responde con el "
-    "JSON indicado. Considera el último dígito como décima si el display lo separa."
+    "JSON indicado. Recuerda: 4 enteros + 1 décima (NNNN.N); el tambor pequeño "
+    "marcado '1/10' es la décima, no un entero; ignora cualquier medidor "
+    "secundario que aparezca."
 )
 
 
@@ -68,6 +76,16 @@ def _extract_json(text: str) -> dict:
 
 def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
     s = get_settings()
+    user_text = _USER_PROMPT
+    if isinstance(req.ultimo, (int, float)) and req.ultimo > 0:
+        # Ancla de magnitud: la lectura anterior acota el rango esperado y evita
+        # que la IA confunda la décima con un entero (ej. 1555.8 vs 15558.1).
+        user_text = (
+            f"{_USER_PROMPT}\nLa lectura anterior de esta aeronave fue "
+            f"{req.ultimo:.1f} hrs. La nueva debe ser parecida (sube ~1 a 3 hrs por "
+            f"vuelo) y NUNCA menor; si tu lectura se aleja mucho de ese valor, "
+            f"revisa que no hayas tomado la décima como entero."
+        )
     resp = _client().messages.create(
         model=s.anthropic_model,
         max_tokens=512,
@@ -75,7 +93,7 @@ def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
         messages=[
             {
                 "role": "user",
-                "content": [_image_block(req), {"type": "text", "text": _USER_PROMPT}],
+                "content": [_image_block(req), {"type": "text", "text": user_text}],
             }
         ],
     )
