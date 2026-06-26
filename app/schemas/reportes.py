@@ -28,3 +28,58 @@ class CotizacionPdfRequest(BaseModel):
     total_usd: float = 0
     moneda: str = "USD"
     notas: str | None = None
+
+
+# ===== Reporte consolidado de UN vuelo (cotización + ingreso + combustible +
+# tacómetro + gastos). Lo arma vuelatour-api y lo renderiza pyservices. =====
+class ReporteVueloTramo(BaseModel):
+    orden: int
+    ruta: str
+    pasajeros: int | None = None
+    taco_salida: float | None = None
+    taco_llegada: float | None = None
+    horas: float | None = None
+
+
+class ReporteVueloLinea(BaseModel):
+    fecha: str | None = None
+    concepto: str = ""
+    detalle: str | None = None
+    moneda: str | None = None
+    monto: float | None = None
+
+
+class ReporteVueloRequest(BaseModel):
+    generado: str
+    folio: str
+    cliente: str = ""
+    aeronave: str | None = None
+    piloto: str | None = None
+    copiloto: str | None = None
+    tipo: str = ""
+    estado: str = ""
+    ruta: str = ""
+    fecha_vuelo: str | None = None
+    fecha_traslado_final: str | None = None
+    pasajeros: int = 0
+    # Cotización
+    tarifa_tipo: str | None = None
+    tarifa_hora_usd: float | None = None
+    tiempo_cobrable_hr: float | None = None
+    subtotal_usd: float = 0
+    tuas_usd: float = 0
+    iva_usd: float = 0
+    extras_total_usd: float = 0
+    ajuste_final_usd: float = 0
+    total_usd: float = 0
+    total_mxn: float | None = None
+    tc_usd_mxn: float | None = None
+    metodo_cobro: str | None = None
+    # Secciones
+    tramos: list[ReporteVueloTramo] = Field(default_factory=list)
+    cobros: list[ReporteVueloLinea] = Field(default_factory=list)
+    total_cobrado_usd: float = 0
+    saldo_usd: float = 0
+    combustible: list[ReporteVueloLinea] = Field(default_factory=list)
+    gastos: list[ReporteVueloLinea] = Field(default_factory=list)
+    notas: str | None = None

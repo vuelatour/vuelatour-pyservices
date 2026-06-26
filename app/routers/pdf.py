@@ -3,11 +3,14 @@
 from fastapi import APIRouter, Depends, Response
 
 from app.schemas.reparto import RepartoPdfRequest
+from app.schemas.reportes import ReporteVueloRequest
 from app.schemas.tabla import TablaXlsxRequest
 from app.schemas.zip import ZipRequest
 from app.security import require_internal_token
 from app.services.reparto_pdf import render_reparto_pdf
 from app.services.reparto_xlsx import render_reparto_xlsx
+from app.services.reporte_vuelo_pdf import render_reporte_vuelo_pdf
+from app.services.reporte_vuelo_xlsx import render_reporte_vuelo_xlsx
 from app.services.tabla_xlsx import render_tabla_xlsx
 from app.services.zip_service import render_zip
 
@@ -52,6 +55,28 @@ def tabla_xlsx(payload: TablaXlsxRequest) -> Response:
         content=xlsx_bytes,
         media_type=XLSX_MEDIA,
         headers={"Content-Disposition": 'attachment; filename="reporte.xlsx"'},
+    )
+
+
+@router.post("/reporte-vuelo")
+def reporte_vuelo_pdf(payload: ReporteVueloRequest) -> Response:
+    """Reporte consolidado de un vuelo (cotización, ingreso, tacómetro, gastos)."""
+    pdf_bytes = render_reporte_vuelo_pdf(payload)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="vuelo-{payload.folio}.pdf"'},
+    )
+
+
+@router.post("/reporte-vuelo-xlsx")
+def reporte_vuelo_xlsx(payload: ReporteVueloRequest) -> Response:
+    """Reporte consolidado de un vuelo en Excel."""
+    xlsx_bytes = render_reporte_vuelo_xlsx(payload)
+    return Response(
+        content=xlsx_bytes,
+        media_type=XLSX_MEDIA,
+        headers={"Content-Disposition": f'attachment; filename="vuelo-{payload.folio}.xlsx"'},
     )
 
 
