@@ -39,6 +39,7 @@ class ReporteVueloTramo(BaseModel):
     taco_salida: float | None = None
     taco_llegada: float | None = None
     horas: float | None = None
+    es_ferry: bool = False
 
 
 class ReporteVueloLinea(BaseModel):
@@ -77,6 +78,12 @@ class ReporteVueloRequest(BaseModel):
     metodo_cobro: str | None = None
     # Secciones
     tramos: list[ReporteVueloTramo] = Field(default_factory=list)
+    # Comparación horas cotizadas (ruta comercial) vs voladas (ruta operativa):
+    # el delta positivo es la utilidad operativa que el cliente busca maximizar.
+    horas_cotizadas_hr: float | None = None
+    horas_voladas_hr: float | None = None
+    horas_delta_hr: float | None = None
+    notas_horas: list[str] = Field(default_factory=list)
     cobros: list[ReporteVueloLinea] = Field(default_factory=list)
     total_cobrado_usd: float = 0
     saldo_usd: float = 0

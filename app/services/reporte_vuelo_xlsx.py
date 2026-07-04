@@ -130,6 +130,20 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
         row += 1
     row += 1
 
+    # ===== Horas cotizadas vs voladas (utilidad operativa) =====
+    if r.horas_cotizadas_hr is not None or r.horas_voladas_hr is not None:
+        titulo("Horas cotizadas vs voladas")
+        header(["Horas cotizadas", "Horas voladas", "Diferencia"])
+        ws.cell(row=row, column=1, value=r.horas_cotizadas_hr)
+        ws.cell(row=row, column=2, value=r.horas_voladas_hr)
+        ws.cell(row=row, column=3, value=r.horas_delta_hr)
+        row += 1
+        for nota in r.notas_horas:
+            ws.cell(row=row, column=1, value=nota)
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+            row += 1
+        row += 1
+
     # ===== Combustible =====
     titulo("Combustible")
     header(["Fecha", "Detalle", "Moneda", "Monto"])

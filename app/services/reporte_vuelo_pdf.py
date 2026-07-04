@@ -119,6 +119,32 @@ def _build_html(r: ReporteVueloRequest) -> str:
     else:
         taco = "<p class='muted'>Sin lecturas de tacómetro.</p>"
 
+    # --- Horas cotizadas vs voladas (utilidad operativa) ---
+    if r.horas_cotizadas_hr is not None or r.horas_voladas_hr is not None:
+        delta = r.horas_delta_hr
+        color = "#16a34a" if (delta or 0) > 0 else ("#dc2626" if (delta or 0) < 0 else "#64748b")
+        signo = "+" if (delta or 0) > 0 else ""
+        fmt = lambda v: "—" if v is None else f"{v:.1f} hrs"
+        notas_html = (
+            "<ul style='margin:6px 0 0 16px;padding:0'>"
+            + "".join(f"<li class='muted' style='font-size:11px'>{escape(nt)}</li>" for nt in r.notas_horas)
+            + "</ul>"
+            if r.notas_horas
+            else ""
+        )
+        horas_cmp = (
+            "<table class='grid'><thead><tr>"
+            "<th class='num'>Horas cotizadas</th><th class='num'>Horas voladas</th>"
+            "<th class='num'>Diferencia</th></tr></thead><tbody><tr>"
+            f"<td class='num'>{fmt(r.horas_cotizadas_hr)}</td>"
+            f"<td class='num'>{fmt(r.horas_voladas_hr)}</td>"
+            f"<td class='num' style='color:{color};font-weight:700'>"
+            f"{'—' if delta is None else f'{signo}{delta:.1f} hrs'}</td>"
+            "</tr></tbody></table>" + notas_html
+        )
+    else:
+        horas_cmp = ""
+
     # --- Combustible ---
     if r.combustible:
         filas = "".join(
@@ -186,6 +212,7 @@ def _build_html(r: ReporteVueloRequest) -> str:
   </div>
   {_seccion("Ingreso (cobros)", ingreso)}
   {_seccion("Tacómetro por tramo", taco)}
+  {_seccion("Horas cotizadas vs voladas", horas_cmp) if horas_cmp else ""}
   {_seccion("Combustible", comb)}
   {_seccion("Gastos", gastos)}
   {notas}
