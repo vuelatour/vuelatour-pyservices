@@ -126,9 +126,14 @@ _TICKET_SYSTEM = (
     "EFECTIVO; SPEI/TRANSFERENCIA = TRANSFERENCIA), o null.\n"
     '  "tarjeta_terminacion": ultimos 4 digitos de la tarjeta si aparecen, como string de 4 digitos, o null.\n'
     '  "conceptos": lista [{"concepto": string, "monto": número}] con los RENGLONES '
-    "del ticket SOLO si desglosa claramente varios conceptos relevantes (ej. "
-    "aterrizaje, handling, estacionamiento); máximo 6; [] si es un solo concepto "
-    "o no se distinguen. La suma debe coincidir con el total; si no coincide, [].\n"
+    "del ticket/factura SOLO si desglosa claramente varios conceptos (ej. "
+    "aterrizaje, plataforma de pernocta, embarque, servicio FBO); máximo 8; [] si "
+    "es un solo concepto o no se distinguen. IMPORTANTE: si la factura muestra "
+    "subtotal + IVA por separado, agrega el IVA como un renglón más "
+    '({"concepto": "IVA 16%", "monto": X}) para que la SUMA de renglones sea '
+    "exactamente el TOTAL pagado; si aun así no cuadra, [].\n"
+    '  "matricula": matrícula de la aeronave si aparece en el documento '
+    '(observaciones/referencias; formato XA-ABC, XB-ABC o N123XX), o null.\n'
     '  "confianza": número entre 0 y 1.\n'
     '  "legible": true/false según si el ticket se distingue.\n'
     '  "notas": string breve en español con cualquier observación.\n'
@@ -183,6 +188,7 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
             else None
         ),
         conceptos=_parse_conceptos(data.get("conceptos")),
+        matricula=_parse_matricula(data.get("matricula")),
         confianza=float(data.get("confianza", 0.0)),
         legible=bool(data.get("legible", monto is not None)),
         notas=str(data.get("notas", "")),
@@ -190,12 +196,22 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
     )
 
 
+def _parse_matricula(raw: object) -> str | None:
+    """Matrícula plausible (XA-/XB-/N…): mayúsculas, 4-7 caracteres."""
+    if not isinstance(raw, str):
+        return None
+    m = raw.strip().upper().replace(" ", "")
+    if 4 <= len(m) <= 7 and m[0] in ("X", "N") and any(c.isdigit() for c in m):
+        return m
+    return None
+
+
 def _parse_conceptos(raw: object) -> list[dict]:
-    """Renglones {concepto, monto} válidos (máx 6); lo demás se descarta."""
+    """Renglones {concepto, monto} válidos (máx 8); lo demás se descarta."""
     if not isinstance(raw, list):
         return []
     out: list[dict] = []
-    for item in raw[:6]:
+    for item in raw[:8]:
         if not isinstance(item, dict):
             continue
         concepto = str(item.get("concepto", "")).strip()

@@ -86,7 +86,10 @@ class GastoTicketResponse(BaseModel):
     )
     conceptos: list["ConceptoTicket"] = Field(
         default_factory=list,
-        description="Renglones del ticket (desglose por concepto) si los desglosa claramente; máx 6",
+        description="Renglones del ticket incl. IVA como renglón si viene aparte (suma = total); máx 8",
+    )
+    matricula: str | None = Field(
+        default=None, description="Matrícula de la aeronave si aparece (XA-ABC/N123XX)"
     )
     confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1 de la extracción")
     legible: bool = Field(default=False, description="true si el ticket se pudo leer")
