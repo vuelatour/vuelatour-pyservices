@@ -72,6 +72,8 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
         pil += f" / {r.copiloto} (copiloto)"
     kv("Piloto", pil)
     kv("Pasajeros", r.pasajeros)
+    if r.pasajeros_nombres:
+        kv("Nombres pasajeros", r.pasajeros_nombres)
     kv("Fecha de vuelo", r.fecha_vuelo or "—")
     kv("Traslado final", r.fecha_traslado_final or "—")
     row += 1
@@ -87,6 +89,7 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
     for label, val in [
         ("Subtotal USD", r.subtotal_usd),
         ("TUAS USD", r.tuas_usd),
+        ("Pernocta USD", r.viaticos_pernocta_usd),
         ("Extras USD", r.extras_total_usd),
         ("Ajuste USD", r.ajuste_final_usd),
         ("IVA USD", r.iva_usd),

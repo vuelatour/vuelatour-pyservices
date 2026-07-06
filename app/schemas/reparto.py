@@ -14,12 +14,17 @@ class RepartoAvion(BaseModel):
     modelo: str
     ingresos_cobrado_usd: float
     pendiente_cobro_usd: float = 0.0
+    horas_voladas_hr: float = 0.0
     gastos_directos_usd: float = 0.0
     gastos_indirectos_usd: float = 0.0
     permisos_usd: float = 0.0
     otros_usd: float = 0.0
     reserva_overhaul_usd: float = 0.0
     saldo_usd: float
+    # Advertencias de integridad (montos que no pudieron entrar al balance)
+    gastos_sin_tc_mxn: float = 0.0
+    cobros_sin_tc_mxn: float = 0.0
+    reserva_incompleta: bool = False
     reparto: list[RepartoSocioLinea] = Field(default_factory=list)
 
 

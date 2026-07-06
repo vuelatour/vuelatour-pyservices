@@ -195,6 +195,7 @@ def _bloque_avion(avion: RepartoAvion, estilo_titulo: ParagraphStyle) -> KeepTog
     titulo = Paragraph(f"{avion.matricula} — {avion.modelo}", estilo_titulo)
 
     filas = [
+        ["Horas voladas del periodo", f"{avion.horas_voladas_hr:.1f} hr"],
         ["Ingresos cobrados", _usd(avion.ingresos_cobrado_usd)],
         ["(-) Gastos directos", _usd(-avion.gastos_directos_usd)],
         ["(-) Gastos indirectos", _usd(-avion.gastos_indirectos_usd)],
@@ -221,6 +222,27 @@ def _bloque_avion(avion: RepartoAvion, estilo_titulo: ParagraphStyle) -> KeepTog
     )
 
     bloque: list = [titulo, Spacer(1, 2 * mm), cascada]
+
+    # Advertencias de integridad: dinero que NO pudo entrar al balance. El
+    # supervisor debe verlo aquí mismo, no descubrirlo cuadrando a mano.
+    avisos = []
+    if avion.gastos_sin_tc_mxn > 0:
+        avisos.append(
+            f"Gastos MXN sin tipo de cambio por ${avion.gastos_sin_tc_mxn:,.2f} MXN excluidos del balance."
+        )
+    if avion.cobros_sin_tc_mxn > 0:
+        avisos.append(
+            f"Cobros MXN sin tipo de cambio por ${avion.cobros_sin_tc_mxn:,.2f} MXN excluidos del ingreso."
+        )
+    if avion.reserva_incompleta:
+        avisos.append("Sin tarifa de reserva de overhaul configurada pese a horas voladas.")
+    if avisos:
+        aviso_style = ParagraphStyle(
+            "aviso", fontSize=7.5, textColor=colors.HexColor("#b45309"), leading=10
+        )
+        for a in avisos:
+            bloque.append(Spacer(1, 1 * mm))
+            bloque.append(Paragraph(f"AVISO: {a}", aviso_style))
 
     if avion.reparto:
         rfilas = [["Socio", "%", "Monto"]]

@@ -56,7 +56,10 @@ def _build_html(r: ReporteVueloRequest) -> str:
     if r.copiloto:
         piloto += f" / {r.copiloto} (copiloto)"
     resumen += _row("Piloto", escape(piloto))
-    resumen += _row("Pasajeros", str(r.pasajeros))
+    pax = str(r.pasajeros)
+    if r.pasajeros_nombres:
+        pax += f" — {r.pasajeros_nombres}"
+    resumen += _row("Pasajeros", escape(pax))
     resumen += _row("Fecha de vuelo", _fecha(r.fecha_vuelo))
     resumen += _row("Traslado final", _fecha(r.fecha_traslado_final))
     resumen += "</table>"
@@ -71,6 +74,8 @@ def _build_html(r: ReporteVueloRequest) -> str:
         cot += _row("Tiempo cobrable", f"{r.tiempo_cobrable_hr:.2f} hr")
     cot += _row("Subtotal", _money(r.subtotal_usd))
     cot += _row("TUAS", _money(r.tuas_usd))
+    if r.viaticos_pernocta_usd:
+        cot += _row("Pernocta (vi&aacute;ticos)", _money(r.viaticos_pernocta_usd))
     if r.extras_total_usd:
         cot += _row("Extras", _money(r.extras_total_usd))
     if r.ajuste_final_usd:
@@ -105,7 +110,10 @@ def _build_html(r: ReporteVueloRequest) -> str:
     # --- Tacómetro por tramo ---
     if r.tramos:
         filas = "".join(
-            f"<tr><td>{t.orden}</td><td>{escape(t.ruta)}</td>"
+            f"<tr><td>{t.orden}</td>"
+            f"<td>{escape(t.ruta)}"
+            + (f"<br/><span class='muted' style='font-size:10px'>{escape(t.pasajeros_nombres)}</span>" if t.pasajeros_nombres else "")
+            + "</td>"
             f"<td class='num'>{'' if t.taco_salida is None else f'{t.taco_salida:.1f}'}</td>"
             f"<td class='num'>{'' if t.taco_llegada is None else f'{t.taco_llegada:.1f}'}</td>"
             f"<td class='num'>{'' if t.horas is None else f'{t.horas:.1f}'}</td></tr>"

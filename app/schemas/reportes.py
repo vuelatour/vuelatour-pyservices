@@ -36,6 +36,7 @@ class ReporteVueloTramo(BaseModel):
     orden: int
     ruta: str
     pasajeros: int | None = None
+    pasajeros_nombres: str | None = None
     taco_salida: float | None = None
     taco_llegada: float | None = None
     horas: float | None = None
@@ -63,6 +64,7 @@ class ReporteVueloRequest(BaseModel):
     fecha_vuelo: str | None = None
     fecha_traslado_final: str | None = None
     pasajeros: int = 0
+    pasajeros_nombres: str | None = None
     # Cotización
     tarifa_tipo: str | None = None
     tarifa_hora_usd: float | None = None
@@ -70,6 +72,7 @@ class ReporteVueloRequest(BaseModel):
     subtotal_usd: float = 0
     tuas_usd: float = 0
     iva_usd: float = 0
+    viaticos_pernocta_usd: float = 0
     extras_total_usd: float = 0
     ajuste_final_usd: float = 0
     total_usd: float = 0
