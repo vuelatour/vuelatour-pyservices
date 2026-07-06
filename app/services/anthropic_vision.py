@@ -125,6 +125,10 @@ _TICKET_SYSTEM = (
     "(DEBITO/CREDITO/VISA/MASTERCARD/TARJETA = TARJETA_CORP; EFECTIVO/CASH = "
     "EFECTIVO; SPEI/TRANSFERENCIA = TRANSFERENCIA), o null.\n"
     '  "tarjeta_terminacion": ultimos 4 digitos de la tarjeta si aparecen, como string de 4 digitos, o null.\n'
+    '  "conceptos": lista [{"concepto": string, "monto": número}] con los RENGLONES '
+    "del ticket SOLO si desglosa claramente varios conceptos relevantes (ej. "
+    "aterrizaje, handling, estacionamiento); máximo 6; [] si es un solo concepto "
+    "o no se distinguen. La suma debe coincidir con el total; si no coincide, [].\n"
     '  "confianza": número entre 0 y 1.\n'
     '  "legible": true/false según si el ticket se distingue.\n'
     '  "notas": string breve en español con cualquier observación.\n'
@@ -178,11 +182,27 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
             if data.get("tarjeta_terminacion") and str(data["tarjeta_terminacion"]).strip()
             else None
         ),
+        conceptos=_parse_conceptos(data.get("conceptos")),
         confianza=float(data.get("confianza", 0.0)),
         legible=bool(data.get("legible", monto is not None)),
         notas=str(data.get("notas", "")),
         modelo=s.anthropic_model,
     )
+
+
+def _parse_conceptos(raw: object) -> list[dict]:
+    """Renglones {concepto, monto} válidos (máx 6); lo demás se descarta."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw[:6]:
+        if not isinstance(item, dict):
+            continue
+        concepto = str(item.get("concepto", "")).strip()
+        monto = item.get("monto")
+        if concepto and isinstance(monto, (int, float)) and monto > 0:
+            out.append({"concepto": concepto[:80], "monto": round(float(monto), 2)})
+    return out
 
 
 _COMBUSTIBLE_SYSTEM = (

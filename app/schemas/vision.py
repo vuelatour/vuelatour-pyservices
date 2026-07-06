@@ -64,6 +64,11 @@ CategoriaGasto = Literal[
 ]
 
 
+class ConceptoTicket(BaseModel):
+    concepto: str = Field(description="Nombre del renglón (ej. Aterrizaje, Handling)")
+    monto: float = Field(description="Importe del renglón")
+
+
 class GastoTicketResponse(BaseModel):
     monto: float | None = Field(default=None, description="Total del ticket, o null si ilegible")
     moneda: Literal["MXN", "USD"] | None = Field(default=None, description="Moneda detectada")
@@ -78,6 +83,10 @@ class GastoTicketResponse(BaseModel):
     )
     tarjeta_terminacion: str | None = Field(
         default=None, description="Ultimos 4 digitos de la tarjeta, si aparecen"
+    )
+    conceptos: list["ConceptoTicket"] = Field(
+        default_factory=list,
+        description="Renglones del ticket (desglose por concepto) si los desglosa claramente; máx 6",
     )
     confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1 de la extracción")
     legible: bool = Field(default=False, description="true si el ticket se pudo leer")
