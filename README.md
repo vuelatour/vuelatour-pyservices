@@ -1,72 +1,58 @@
 # vuelatour-pyservices
 
-Microservicio Python (FastAPI) de Vuelatour: generación de PDFs y, a futuro,
-parseo de Excel, conciliación bancaria con IA y migración de datos.
+Microservicio Python (FastAPI) de **VuelaTour**: visión con IA (Claude),
+generación de PDF (WeasyPrint) y Excel (openpyxl), timbrado CFDI (FEL vía
+satcfdi/zeep), parseo de estados de cuenta y conciliación asistida.
+Desplegado en **Railway** (deploy automático al hacer push a `main`);
+lo consume únicamente `vuelatour-api` (nunca los clientes).
+
+> Convenciones para desarrollo: **CLAUDE.md**.
 
 ## Requisitos
 
-- Python 3.12+
+- Python **3.12** (el `Dockerfile` usa `python:3.12-slim`; el código usa
+  sintaxis `X | None`, no corre en 3.9).
 
 ## Setup
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+```bash
+python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-copy .env.example .env
+cp .env.example .env.local
 ```
 
-Edita `.env` y define `SERVICE_TOKEN` con un valor seguro. Ese mismo valor debe
-ir en `PYSERVICES_TOKEN` del API NestJS.
+Variables (`.env.local`, nunca commiteadas):
 
-## Run
+- `ANTHROPIC_API_KEY` · `ANTHROPIC_MODEL` (visión/IA).
+- `INTERNAL_SHARED_TOKEN` — debe coincidir con el del API NestJS; todas las
+  rutas funcionales exigen el header `X-Internal-Token`.
+- `FEL_USUARIO`, `FEL_PASSWORD`, `FEL_WSDL_URL`, `FEL_MODO` (CFDI).
 
-```powershell
-uvicorn app.main:app --reload --port 8000
-```
+## Run / Test
 
-- http://localhost:8000/docs — Swagger
-- http://localhost:8000/health — healthcheck
-
-## Configuración
-
-Copia `.env.example` a `.env.local` y completa:
-
-- `ANTHROPIC_API_KEY` — key de Claude (solo en `.env.local`, nunca se commitea).
-- `ANTHROPIC_MODEL` — por defecto `claude-sonnet-4-6`.
-- `INTERNAL_SHARED_TOKEN` — token compartido con NestJS; debe coincidir en ambos
-  servicios. Genera uno con `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
-
-## Endpoints
-
-- `POST /vision/tacometro` — lee el horómetro/tacómetro (HOBBS) de una foto con
-  Claude Vision. Requiere header `X-Internal-Token`. Body: `image_base64` +
-  `media_type`, o `image_url`. Responde `{lectura, confianza, legible, notas, modelo}`.
-
-## Test
-
-```powershell
-pytest
-ruff check app tests
+```bash
+uvicorn app.main:app --reload --port 8000   # /docs = Swagger, /health = check
+pytest && ruff check app tests
 ```
 
 ## Endpoints
 
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| GET | `/` | Info del servicio |
-| GET | `/health` | Healthcheck |
-| POST | `/reportes/cotizacion` | Genera el PDF de una cotización (requiere `X-Internal-Token`) |
-| POST | `/pdf/reparto` | Genera el PDF de reparto de utilidades (requiere `X-Service-Token`) |
+| Ruta | Qué hace |
+|---|---|
+| `GET /health` | Healthcheck |
+| `POST /vision/tacometro` | Lee el horómetro (HOBBS) de una foto con Claude Vision (usa el último taco del avión como ancla de magnitud) |
+| `POST /vision/gasto` | Extrae monto/fecha/proveedor/categoría de un ticket |
+| `POST /vision/combustible` | Litros / precio-litro / total / aeropuerto |
+| `POST /compras/extraer` | Líneas de producto de un PDF de Aircraft Spruce |
+| `POST /vencimientos/extraer` | Matrícula/tipo/fechas de pólizas y tarjetas |
+| `POST /conciliacion/parse` | Parsea estado de cuenta (CSV/Excel/PDF) |
+| `POST /conciliacion/sugerir` | Propone el gasto más probable para un cargo ambiguo |
+| `POST /reportes/cotizacion` | PDF de cotización |
+| `POST /pdf/reparto` · `/pdf/reparto-xlsx` | Reparto de utilidades (PDF socios / Excel mensual por avión, con horas voladas y avisos de integridad) |
+| `POST /pdf/reporte-vuelo` · `/pdf/reporte-vuelo-xlsx` | Reporte consolidado de UN vuelo (desglose con pernocta, manifiesto de pasajeros, horas cotizadas vs voladas, cobros, combustible, gastos) |
+| `POST /pdf/tabla-xlsx` | Utilitario genérico tabla→Excel (exports de operación) |
+| `POST /pdf/zip` | Ensambla el paquete de cierre (.zip) |
+| `POST /facturacion/*` | Timbrado CFDI 4.0, cancelación, nota de crédito, parseo de CFDI recibidos |
 
-## Autenticación entre servicios
-
-Las rutas funcionales exigen el header `X-Service-Token`, que debe coincidir con
-`SERVICE_TOKEN`. NestJS lo envía automáticamente desde `PyservicesService`.
-
-## Pendiente (roadmap del doc funcional)
-
-- Reportes PDF a socios y mensual por avión.
-- Parseo de Excel (openpyxl) y migración de los 9 archivos históricos.
-- Conciliación bancaria (pandas + Claude API).
-- Archivos de importación para CONTPAQi.
+Todos los payloads los arma `vuelatour-api` (`PyservicesService`); aquí solo
+se validan (pydantic) y se renderiza/infiere.
