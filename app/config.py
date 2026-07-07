@@ -29,11 +29,16 @@ class Settings(BaseSettings):
     service_token: str = ""
 
     # FEL (PAC) — timbrado CFDI 4.0. Vacío = facturación deshabilitada.
+    # OJO: el usuario de timbrado es DISTINTO al usuario del portal FEL En Línea.
     fel_usuario: str = ""
     fel_password: str = ""
     fel_wsdl_url: str = "https://app.fel.mx/WSTimbrado33Test/WSCFDI33.svc?WSDL"  # pruebas por defecto
     fel_modo: str = "test"  # test | prod
     fel_timeout_s: float = 40.0
+    # PFX (PKCS12) de cancelación, generado a partir del CSD del emisor
+    # (guía "creación PFX" de FEL). Sin él no se puede cancelar ante el SAT.
+    fel_pfx_b64: str = ""
+    fel_pfx_password: str = ""
 
     @property
     def fel_configurado(self) -> bool:

@@ -65,6 +65,9 @@ class CancelarRequest(BaseModel):
     # 03 no se llevó a cabo, 04 operación nominativa global.
     motivo: str = "02"
     folio_sustitucion: str | None = None  # UUID sustituto, requerido si motivo=01
+    # FEL exige RFC receptor y total del CFDI en el detalle de cancelación.
+    rfc_receptor: str | None = None
+    total: float | None = None
 
 
 class CancelarResponse(BaseModel):

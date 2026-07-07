@@ -149,15 +149,25 @@ def timbrar(req: TimbrarRequest) -> TimbrarResponse:
 def cancelar(req: CancelarRequest) -> CancelarResponse:
     """Cancela un CFDI ya timbrado vía FEL (CancelarCFDI).
 
-    NOTA: confirmar la firma exacta del método `CancelarCFDI` contra el WSDL de
-    FEL/Blikon al contratar (nombres de parámetros pueden variar). El CFDI 4.0
-    requiere indicar el motivo (c_MotivoCancelacion) y, si es 01, el UUID que lo
-    sustituye. Validar contra el ambiente de PRUEBAS antes de producción.
+    Firma verificada contra el WSDL productivo (WSTimbrado33): recibe el RFC
+    emisor, una listaCFDI de DetalleCFDICancelacion (UUID, Motivo, RFCReceptor,
+    Total y FolioSustitucion si el motivo es 01) y el PFX (PKCS12) de
+    cancelación con su contraseña. El resultado por UUID viene en
+    DetallesCancelacion: 201 = cancelado, 202 = previamente cancelado.
+    El XMLAcuse debe guardarse siempre: el SAT puede no devolverlo después.
     """
     s = get_settings()
     if not s.fel_configurado:
         return CancelarResponse(
             ok=False, error="FEL no configurado (faltan credenciales de timbrado)."
+        )
+    if not (s.fel_pfx_b64 and s.fel_pfx_password):
+        return CancelarResponse(
+            ok=False,
+            error=(
+                "Falta el PFX de cancelación (FEL_PFX_B64 / FEL_PFX_PASSWORD). "
+                "Se genera a partir del CSD del emisor; ver guía de FEL."
+            ),
         )
     try:
         from zeep import Client, Settings as ZeepSettings
@@ -165,29 +175,42 @@ def cancelar(req: CancelarRequest) -> CancelarResponse:
         client = Client(
             s.fel_wsdl_url, settings=ZeepSettings(strict=False, xml_huge_tree=True)
         )
+        detalle = {
+            "UUID": req.uuid,
+            "Motivo": req.motivo,
+            "FolioSustitucion": req.folio_sustitucion or "",
+            "RFCReceptor": req.rfc_receptor or "",
+            "Total": req.total if req.total is not None else 0,
+        }
         resp = client.service.CancelarCFDI(
             usuario=s.fel_usuario,
             password=s.fel_password,
-            uuid=req.uuid,
-            rfcEmisor=req.rfc_emisor,
-            motivo=req.motivo,
-            folioSustitucion=req.folio_sustitucion or "",
+            rFCEmisor=req.rfc_emisor,
+            listaCFDI={"DetalleCFDICancelacion": [detalle]},
+            clavePrivada_Base64=s.fel_pfx_b64,
+            passwordClavePrivada=s.fel_pfx_password,
         )
     except Exception as e:  # noqa: BLE001
         logger.exception("Error cancelando con FEL")
         return CancelarResponse(ok=False, error=f"FEL no disponible: {e}")
 
-    ok = bool(getattr(resp, "OperacionExitosa", False))
+    detalles = getattr(resp, "DetallesCancelacion", None)
+    lista = getattr(detalles, "DetalleCancelacion", None) or []
+    det = lista[0] if lista else None
+    codigo = str(getattr(det, "CodigoResultado", "") or "")
+    mensaje = getattr(det, "MensajeResultado", None)
+    # 201 = Folio Fiscal Cancelado, 202 = Previamente Cancelado: ambos dejan el
+    # CFDI cancelado ante el SAT.
+    ok = bool(getattr(resp, "OperacionExitosa", False)) and codigo in ("201", "202")
     return CancelarResponse(
         ok=ok,
-        estatus=getattr(resp, "Estatus", None)
-        or getattr(resp, "EstatusUUID", None),
-        acuse_xml=getattr(resp, "Acuse", None)
-        or getattr(resp, "XMLResultado", None),
+        estatus=codigo or None,
+        acuse_xml=getattr(resp, "XMLAcuse", None),
         error=None
         if ok
         else (
-            getattr(resp, "MensajeError", None)
+            mensaje
+            or getattr(resp, "MensajeError", None)
             or getattr(resp, "MensajeErrorDetallado", None)
             or "FEL rechazó la cancelación"
         ),
