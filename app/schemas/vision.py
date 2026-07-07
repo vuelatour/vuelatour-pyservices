@@ -51,6 +51,10 @@ class GastoTicketRequest(BaseModel):
 
 CategoriaGasto = Literal[
     "GAS",
+    # Categoría unificada de la app (aterrizaje + FBO + servicios de
+    # aeropuerto). Faltaba aquí y pydantic RECHAZABA toda la lectura de
+    # facturas de FBO ("No se pudo interpretar el ticket").
+    "OPERACIONES",
     "ATERRIZAJE",
     "TUAS",
     "FBO",
