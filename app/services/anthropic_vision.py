@@ -70,8 +70,15 @@ def _extract_json(text: str) -> dict:
         t = t.removeprefix("json").strip()
     start, end = t.find("{"), t.rfind("}")
     if start == -1 or end == -1:
-        raise ValueError(f"Respuesta sin JSON: {text[:200]}")
-    return json.loads(t[start : end + 1])
+        raise ValueError(f"Respuesta sin JSON: {text[:300]}")
+    try:
+        return json.loads(t[start : end + 1])
+    except json.JSONDecodeError as e:
+        # Incluir el contenido en el error: sin esto el log solo decía la
+        # posición del fallo y no QUÉ devolvió el modelo (indepurable).
+        raise ValueError(
+            f"JSON inválido ({e.msg} pos {e.pos}): …{t[max(0, e.pos - 80) : e.pos + 80]}…"
+        ) from e
 
 
 def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
@@ -160,6 +167,8 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
             }
         ],
     )
+    if resp.stop_reason == "max_tokens":
+        raise ValueError("Respuesta truncada por max_tokens (subir el límite)")
     text = next((b.text for b in resp.content if b.type == "text"), "")
     data = _extract_json(text)
 
