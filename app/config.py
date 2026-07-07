@@ -18,8 +18,10 @@ class Settings(BaseSettings):
     # Anthropic (Claude) — vision para lectura de tacómetros y extracción.
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
-    anthropic_timeout_s: float = 30.0
-    anthropic_max_retries: int = 3
+    # Opus tarda 20-60s en una factura densa: 30s cortaba la lectura a medias.
+    # Si la var ANTHROPIC_TIMEOUT_S existe en el entorno, debe ser >= 90.
+    anthropic_timeout_s: float = 90.0
+    anthropic_max_retries: int = 2
 
     # Token compartido pyservices <-> NestJS (header X-Internal-Token).
     internal_shared_token: str = ""
