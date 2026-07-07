@@ -88,7 +88,7 @@ def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
         )
     resp = _client().messages.create(
         model=s.anthropic_model,
-        max_tokens=512,
+        max_tokens=800,
         system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
         messages=[
             {
@@ -151,7 +151,7 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
     s = get_settings()
     resp = _client().messages.create(
         model=s.anthropic_model,
-        max_tokens=512,
+        max_tokens=2000,
         system=[{"type": "text", "text": _TICKET_SYSTEM, "cache_control": {"type": "ephemeral"}}],
         messages=[
             {
@@ -254,7 +254,7 @@ def leer_ticket_combustible(req: GastoTicketRequest) -> CombustibleTicketRespons
     s = get_settings()
     resp = _client().messages.create(
         model=s.anthropic_model,
-        max_tokens=512,
+        max_tokens=1000,
         system=[{"type": "text", "text": _COMBUSTIBLE_SYSTEM, "cache_control": {"type": "ephemeral"}}],
         messages=[
             {
