@@ -134,11 +134,14 @@ _TICKET_SYSTEM = (
     '  "tarjeta_terminacion": ultimos 4 digitos de la tarjeta si aparecen, como string de 4 digitos, o null.\n'
     '  "conceptos": lista [{"concepto": string, "monto": número}] con los RENGLONES '
     "del ticket/factura SOLO si desglosa claramente varios conceptos (ej. "
-    "aterrizaje, plataforma de pernocta, embarque, servicio FBO); máximo 8; [] si "
-    "es un solo concepto o no se distinguen. IMPORTANTE: si la factura muestra "
-    "subtotal + IVA por separado, agrega el IVA como un renglón más "
-    '({"concepto": "IVA 16%", "monto": X}) para que la SUMA de renglones sea '
-    "exactamente el TOTAL pagado; si aun así no cuadra, [].\n"
+    "aterrizaje, plataforma de pernocta, embarque, servicio FBO, T.U.A.); máximo 8; "
+    "[] si es un solo concepto o no se distinguen. OJO CON LOS DESCUENTOS: si un "
+    "renglón tiene columna Descuento (muy común en T.U.A.), el monto del renglón es "
+    "el NETO = importe − descuento (ej. importe $605.18 con descuento $5.18 → monto "
+    "600.00). IMPORTANTE: si la factura muestra subtotal + IVA por separado, agrega "
+    'el IVA como un renglón más ({"concepto": "IVA 16%", "monto": X}) para que la '
+    "SUMA de renglones (ya con descuentos aplicados) sea exactamente el TOTAL "
+    "pagado; si aun así no cuadra, [].\n"
     '  "matricula": matrícula de la aeronave si aparece en el documento '
     '(observaciones/referencias; formato XA-ABC, XB-ABC o N123XX), o null.\n'
     '  "confianza": número entre 0 y 1.\n'
@@ -240,7 +243,8 @@ _COMBUSTIBLE_SYSTEM = (
     '  "total": total pagado, o null.\n'
     '  "moneda": "MXN" o "USD", o null.\n'
     '  "aeropuerto": código IATA/ICAO o nombre del aeropuerto/FBO, o null.\n'
-    '  "tipo_combustible": "TURBOSINA" o "AVGAS" según el ticket, o null.\n'
+    '  "tipo_combustible": "TURBOSINA" o "AVGAS" según el ticket (GASAVION/'
+    'GAS AVION/100LL = AVGAS; JET A/TURBOSINA = TURBOSINA), o null.\n'
     '  "fecha": fecha YYYY-MM-DD, o null.\n'
     '  "hora": hora de la carga en formato HH:MM de 24 horas, o null.\n'
     '  "proveedor": nombre del proveedor/FBO, o null.\n'
