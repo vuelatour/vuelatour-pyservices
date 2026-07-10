@@ -13,6 +13,8 @@ class RepartoAvion(BaseModel):
     matricula: str
     modelo: str
     ingresos_cobrado_usd: float
+    # Comisiones de venta (Itzy/Pablo/broker): se descuentan del ingreso.
+    comisiones_venta_usd: float = 0.0
     pendiente_cobro_usd: float = 0.0
     horas_voladas_hr: float = 0.0
     gastos_directos_usd: float = 0.0

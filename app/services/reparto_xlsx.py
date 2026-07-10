@@ -43,26 +43,27 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     ws = wb.active
     ws.title = "Resumen por avión"
 
-    _title(ws, "VuelaTour — Reporte mensual por avión", 1, 11, size=16)
+    _title(ws, "VuelaTour — Reporte mensual por avión", 1, 12, size=16)
     sub = ws.cell(row=2, column=1, value=f"Periodo: {req.periodo_desde} a {req.periodo_hasta}  ·  Generado: {req.generado}")
     sub.font = Font(italic=True, size=10, color="5B6470")
-    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=11)
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=12)
 
     headers = [
-        "Matrícula", "Modelo", "Horas voladas", "Ingresos cobrado", "Pendiente cobro",
-        "Gastos directos", "Gastos indirectos", "Permisos", "Otros (prorrateo)",
-        "Reserva overhaul", "Saldo disponible",
+        "Matrícula", "Modelo", "Horas voladas", "Ingresos cobrado", "Comisiones venta",
+        "Pendiente cobro", "Gastos directos", "Gastos indirectos", "Permisos",
+        "Otros (prorrateo)", "Reserva overhaul", "Saldo disponible",
     ]
     hrow = 4
     _header_row(ws, hrow, headers)
 
-    money_cols = list(range(4, 12))  # columnas D..K son montos (C = horas)
+    money_cols = list(range(4, 13))  # columnas D..L son montos (C = horas)
     totals = {c: 0.0 for c in money_cols}
 
     r = hrow + 1
     for a in req.aviones:
         valores = [
-            a.matricula, a.modelo, a.horas_voladas_hr, a.ingresos_cobrado_usd, a.pendiente_cobro_usd,
+            a.matricula, a.modelo, a.horas_voladas_hr, a.ingresos_cobrado_usd,
+            a.comisiones_venta_usd, a.pendiente_cobro_usd,
             a.gastos_directos_usd, a.gastos_indirectos_usd, a.permisos_usd,
             a.otros_usd, a.reserva_overhaul_usd, a.saldo_usd,
         ]
@@ -89,7 +90,7 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         c.border = _border
 
     # Anchos de columna.
-    widths = [12, 16, 13, 16, 15, 15, 16, 12, 16, 16, 16]
+    widths = [12, 16, 13, 16, 16, 15, 15, 16, 12, 16, 16, 16]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 

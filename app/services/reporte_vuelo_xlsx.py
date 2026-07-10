@@ -102,6 +102,21 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
         ws.cell(row=row, column=1, value="Total MXN").font = Font(color="627D98")
         money_cell(row, 2, r.total_mxn)
         row += 1
+    # Comisión del vendedor (interna): el cliente paga el total completo;
+    # el neto es lo que queda a VuelaTour.
+    if r.comision_vendedor_usd:
+        quien = f" ({r.comision_vendedor_nombre})" if r.comision_vendedor_nombre else ""
+        ws.cell(row=row, column=1, value=f"Comisión vendedor{quien}").font = Font(color="627D98")
+        money_cell(row, 2, -r.comision_vendedor_usd)
+        row += 1
+        neto = (
+            r.neto_vuelatour_usd
+            if r.neto_vuelatour_usd is not None
+            else r.total_usd - r.comision_vendedor_usd
+        )
+        ws.cell(row=row, column=1, value="Neto VuelaTour USD").font = Font(bold=True)
+        money_cell(row, 2, neto)
+        row += 1
     if r.metodo_cobro:
         kv("Método de cobro", r.metodo_cobro)
     row += 1

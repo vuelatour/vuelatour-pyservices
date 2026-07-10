@@ -78,6 +78,11 @@ class ReporteVueloRequest(BaseModel):
     total_usd: float = 0
     total_mxn: float | None = None
     tc_usd_mxn: float | None = None
+    # Comisión del vendedor (interna): el cliente paga el total completo;
+    # neto = total − comisión es lo que queda a VuelaTour.
+    comision_vendedor_usd: float = 0
+    comision_vendedor_nombre: str | None = None
+    neto_vuelatour_usd: float | None = None
     metodo_cobro: str | None = None
     # Secciones
     tramos: list[ReporteVueloTramo] = Field(default_factory=list)

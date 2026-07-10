@@ -85,6 +85,20 @@ def _build_html(r: ReporteVueloRequest) -> str:
     if r.total_mxn:
         tc = f" (TC {r.tc_usd_mxn:.2f})" if r.tc_usd_mxn else ""
         cot += _row("Total MXN", f"{_money(r.total_mxn, 'MXN')}{escape(tc)}")
+    # Comisión del vendedor (interna): el cliente paga el total completo; el
+    # neto es lo que queda a VuelaTour (lo que fluye al reparto).
+    if r.comision_vendedor_usd:
+        quien = f" ({r.comision_vendedor_nombre})" if r.comision_vendedor_nombre else ""
+        cot += _row(
+            f"Comisi&oacute;n vendedor{escape(quien)}",
+            f"&minus;{_money(r.comision_vendedor_usd)}",
+        )
+        neto = (
+            r.neto_vuelatour_usd
+            if r.neto_vuelatour_usd is not None
+            else r.total_usd - r.comision_vendedor_usd
+        )
+        cot += _row("<b>Neto VuelaTour</b>", f"<b>{_money(neto)}</b>")
     if r.metodo_cobro:
         cot += _row("Método de cobro", escape(r.metodo_cobro))
     cot += "</table>"

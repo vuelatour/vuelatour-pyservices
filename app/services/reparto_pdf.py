@@ -94,7 +94,9 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
     # ---- Resumen global ----
     total_ingresos = sum(a.ingresos_cobrado_usd for a in req.aviones)
     total_saldo = sum(a.saldo_usd for a in req.aviones)
-    total_gastos = sum(_gastos_avion(a) for a in req.aviones)
+    total_gastos = sum(
+        _gastos_avion(a) + a.comisiones_venta_usd for a in req.aviones
+    )
     resumen = Table(
         [
             ["Ingresos cobrados", "Gastos del periodo", "Saldo a repartir"],
@@ -197,6 +199,12 @@ def _bloque_avion(avion: RepartoAvion, estilo_titulo: ParagraphStyle) -> KeepTog
     filas = [
         ["Horas voladas del periodo", f"{avion.horas_voladas_hr:.1f} hr"],
         ["Ingresos cobrados", _usd(avion.ingresos_cobrado_usd)],
+        # Comisiones de venta: parte del cobro que no es de VuelaTour.
+        *(
+            [["(-) Comisiones de venta", _usd(-avion.comisiones_venta_usd)]]
+            if avion.comisiones_venta_usd
+            else []
+        ),
         ["(-) Gastos directos", _usd(-avion.gastos_directos_usd)],
         ["(-) Gastos indirectos", _usd(-avion.gastos_indirectos_usd)],
         ["(-) Permisos", _usd(-avion.permisos_usd)],
