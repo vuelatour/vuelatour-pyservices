@@ -25,6 +25,14 @@ class Concepto(BaseModel):
     tasa_iva: float = 0.16
 
 
+class InformacionGlobal(BaseModel):
+    """Nodo InformacionGlobal del CFDI 4.0 (ventas a PÚBLICO EN GENERAL)."""
+
+    periodicidad: str  # c_Periodicidad: 01 diario, 02 semanal, 03 quincenal, 04 mensual
+    meses: str  # c_Meses (ej. "07")
+    anio: int
+
+
 class TimbrarRequest(BaseModel):
     referencia: str = Field(min_length=4, description="Única por CFDI (idempotencia FEL)")
     serie: str | None = None
@@ -45,6 +53,9 @@ class TimbrarRequest(BaseModel):
     # Relación a otro CFDI (p. ej. nota de crédito 01 → UUID de la factura original).
     cfdi_relacionado_uuid: str | None = None
     tipo_relacion: str | None = None
+    # CFDI 4.0 a PÚBLICO EN GENERAL (RFC XAXX010101000): nodo InformacionGlobal
+    # obligatorio. Aditivo: None = factura nominativa normal.
+    informacion_global: InformacionGlobal | None = None
 
 
 class TimbrarResponse(BaseModel):

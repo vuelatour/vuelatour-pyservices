@@ -67,6 +67,15 @@ def _construir_y_sellar(req: TimbrarRequest) -> bytes:
             ],
         )
 
+    # PÚBLICO EN GENERAL (XAXX010101000): CFDI 4.0 exige InformacionGlobal.
+    info_global = None
+    if req.informacion_global is not None:
+        info_global = cfdi40.InformacionGlobal(
+            periodicidad=req.informacion_global.periodicidad,
+            meses=req.informacion_global.meses,
+            ano=req.informacion_global.anio,
+        )
+
     comprobante = cfdi40.Comprobante(
         emisor=cfdi40.Emisor(
             rfc=req.emisor.rfc,
@@ -75,6 +84,7 @@ def _construir_y_sellar(req: TimbrarRequest) -> bytes:
         ),
         lugar_expedicion=req.lugar_expedicion,
         tipo_de_comprobante=req.tipo_comprobante or "I",
+        informacion_global=info_global,
         cfdi_relacionados=relacionados,
         receptor=cfdi40.Receptor(
             rfc=req.receptor.rfc,
