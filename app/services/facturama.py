@@ -68,11 +68,30 @@ def _request(method: str, path: str, body: dict | None = None) -> tuple[int, dic
             raw = resp.read()
             return resp.status, json.loads(raw) if raw else None
     except urllib.error.HTTPError as e:
+        # 401 = Basic Auth rechazado. Sin este mapeo el error acababa
+        # disfrazado de "No se pudo cargar el CSD" y mandaba a revisar el
+        # certificado cuando el problema son las credenciales de la cuenta.
+        if e.code == 401:
+            return 401, {
+                "Message": (
+                    "Credenciales de Facturama rechazadas (401): "
+                    "revisa FACTURAMA_USER/FACTURAMA_PASSWORD."
+                )
+            }
         raw = e.read()
         try:
             return e.code, json.loads(raw) if raw else None
         except json.JSONDecodeError:
             return e.code, {"Message": raw.decode(errors="replace")[:500]}
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        # Caída de red/DNS/timeout: sin esto la excepción subía hasta FastAPI
+        # como 500 crudo, rompiendo el contrato del repo (todo error del PAC
+        # degrada a respuesta legible, espejo del patrón de cfdi_fel.py).
+        # status=0 nunca pasa los chequeos 2xx de los llamadores, así que
+        # todos los flujos terminan en ok=False con este mensaje.
+        logger.warning("Facturama inaccesible (%s %s): %s", method, path, e)
+        detalle = getattr(e, "reason", None) or e
+        return 0, {"Message": f"Facturama no disponible: {detalle}"}
 
 
 def _error_text(payload: dict | list | None) -> str:
@@ -93,9 +112,13 @@ def _error_text(payload: dict | list | None) -> str:
 def _ensure_csd(req: TimbrarRequest) -> str | None:
     """Garantiza que el CSD del RFC emisor esté cargado. Devuelve error o None."""
     rfc = req.emisor.rfc
-    status, _ = _request("GET", f"/api-lite/csds/{rfc}")
+    status, body = _request("GET", f"/api-lite/csds/{rfc}")
     if status == 200:
         return None
+    # Red caída (0) o credenciales rechazadas (401): reportar la causa real
+    # en vez del engañoso "No se pudo cargar el CSD" — el CSD no es el problema.
+    if status in (0, 401):
+        return _error_text(body)
     payload = {
         "Rfc": rfc,
         "Certificate": req.csd_cer_b64,
@@ -103,6 +126,8 @@ def _ensure_csd(req: TimbrarRequest) -> str | None:
         "PrivateKeyPassword": req.csd_password,
     }
     status, body = _request("POST", "/api-lite/csds", payload)
+    if status in (0, 401):
+        return _error_text(body)
     if status not in (200, 201):
         return f"No se pudo cargar el CSD de {rfc} en Facturama: {_error_text(body)}"
     logger.info("CSD de %s cargado en Facturama", rfc)
@@ -122,7 +147,10 @@ def _to_cfdi_json(req: TimbrarRequest) -> dict:
     items = []
     for c in req.conceptos:
         subtotal = round(c.cantidad * c.valor_unitario, 2)
-        iva = round(subtotal * c.tasa_iva, 2)
+        # El IVA explícito del API (residual del total) manda sobre el
+        # recálculo: en montos frontera round(subtotal×tasa) difiere 1 centavo
+        # y el CFDI dejaría de cuadrar con la factura persistida.
+        iva = c.iva if c.iva is not None else round(subtotal * c.tasa_iva, 2)
         items.append(
             {
                 "ProductCode": c.clave_prod_serv,
@@ -186,6 +214,17 @@ def _to_cfdi_json(req: TimbrarRequest) -> dict:
 
 
 def timbrar_facturama(req: TimbrarRequest) -> TimbrarResponse:
+    s = get_settings()
+    # Sin credenciales el Basic Auth va vacío y Facturama responde 401, que
+    # antes se reportaba como error de CSD: avisar de frente qué falta.
+    if not s.facturama_user or not s.facturama_password:
+        return TimbrarResponse(
+            ok=False,
+            error=(
+                "Facturama no configurado: faltan FACTURAMA_USER/"
+                "FACTURAMA_PASSWORD en el entorno."
+            ),
+        )
     error_csd = _ensure_csd(req)
     if error_csd:
         return TimbrarResponse(ok=False, error=error_csd)
@@ -211,10 +250,23 @@ def timbrar_facturama(req: TimbrarRequest) -> TimbrarResponse:
 
 
 def cancelar_facturama(req: CancelarRequest) -> CancelarResponse:
+    s = get_settings()
+    # Misma guarda que en timbrado: sin credenciales el 401 confunde.
+    if not s.facturama_user or not s.facturama_password:
+        return CancelarResponse(
+            ok=False,
+            error=(
+                "Facturama no configurado: faltan FACTURAMA_USER/"
+                "FACTURAMA_PASSWORD en el entorno."
+            ),
+        )
     if not req.pac_id:
         return CancelarResponse(
             ok=False,
-            error="Falta pac_id (Id de Facturama) de la factura: solo las timbradas con Facturama se cancelan por esta vía.",
+            error=(
+                "Falta pac_id (Id de Facturama) de la factura: solo las "
+                "timbradas con Facturama se cancelan por esta vía."
+            ),
         )
     qs = urllib.parse.urlencode(
         {
@@ -225,7 +277,35 @@ def cancelar_facturama(req: CancelarRequest) -> CancelarResponse:
     status, body = _request("DELETE", f"/api-lite/cfdis/{req.pac_id}?{qs}")
     if status not in (200, 201, 204):
         return CancelarResponse(ok=False, error=_error_text(body))
-    estatus = None
+
+    # Un 2xx NO garantiza cancelación definitiva: con ciertos motivos/receptores
+    # el SAT exige aceptación del receptor y Facturama responde 200 con
+    # Status='pending'/'PendingApproval'. Si aquí devolviéramos ok=True, el API
+    # marcaría la factura CANCELADA y liberaría el vuelo aunque el SAT pueda
+    # rechazar la cancelación. Solo es definitivo un estatus canceled/cancelado/
+    # aceptado (Facturama devuelve 200 con Status en sandbox) o un 204 sin
+    # cuerpo. Reintentar el DELETE cuando el receptor ya aceptó regresa
+    # 'canceled' → ok=True, por eso el mensaje pide reintentar.
+    estatus = ""
     if isinstance(body, dict):
-        estatus = str(body.get("Status") or body.get("CancelationStatus") or "cancelado")
-    return CancelarResponse(ok=True, estatus=estatus or "cancelado")
+        estatus = str(body.get("Status") or body.get("CancelationStatus") or "")
+    definitivo = estatus.strip().lower() in {
+        "canceled",
+        "cancelled",
+        "cancelado",
+        "cancelada",
+        "aceptado",
+        "aceptada",
+        "accepted",
+    } or (body is None and status == 204)
+    if definitivo:
+        return CancelarResponse(ok=True, estatus=estatus or "cancelado")
+    return CancelarResponse(
+        ok=False,
+        estatus=estatus or None,
+        error=(
+            "Cancelación enviada; pendiente de aceptación del receptor. "
+            "Reintenta más tarde para confirmar (la factura sigue TIMBRADA "
+            "en el sistema)."
+        ),
+    )

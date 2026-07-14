@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,6 +48,30 @@ class Settings(BaseSettings):
     # (guía "creación PFX" de FEL). Sin él no se puede cancelar ante el SAT.
     fel_pfx_b64: str = ""
     fel_pfx_password: str = ""
+
+    # Un typo en estas vars ('produccion', 'Facturama ') caía silenciosamente
+    # en el default (fel/sandbox) y se timbraba con el PAC o el ambiente
+    # equivocado sin aviso. Mejor normalizar y reventar al ARRANCAR con un
+    # mensaje claro que descubrirlo en el primer timbrado.
+    @field_validator("facturacion_pac")
+    @classmethod
+    def _valida_facturacion_pac(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in {"fel", "facturama"}:
+            raise ValueError(
+                f"FACTURACION_PAC inválido: '{v}'. Valores permitidos: 'fel' o 'facturama'."
+            )
+        return v
+
+    @field_validator("facturama_modo")
+    @classmethod
+    def _valida_facturama_modo(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in {"sandbox", "prod"}:
+            raise ValueError(
+                f"FACTURAMA_MODO inválido: '{v}'. Valores permitidos: 'sandbox' o 'prod'."
+            )
+        return v
 
     @property
     def fel_configurado(self) -> bool:

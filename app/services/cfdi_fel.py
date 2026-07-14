@@ -179,6 +179,14 @@ def cancelar(req: CancelarRequest) -> CancelarResponse:
                 "Se genera a partir del CSD del emisor; ver guía de FEL."
             ),
         )
+    # FEL exige el RFC del receptor en el detalle de cancelación; si va vacío,
+    # zeep/FEL truenan con un error críptico. El API (NestJS) manda siempre el
+    # receptor persistido de la factura, pero por skew de deploy o datos viejos
+    # puede llegar vacío: degradar a error legible en vez de tumbar la llamada.
+    if not (req.rfc_receptor or "").strip():
+        return CancelarResponse(
+            ok=False, error="Falta RFC del receptor para cancelar en FEL"
+        )
     try:
         from zeep import Client, Settings as ZeepSettings
 

@@ -50,4 +50,9 @@ def nota_credito(req: TimbrarRequest) -> TimbrarResponse:
 
 @router.post("/cancelar", response_model=CancelarResponse)
 def cancelar_cfdi(req: CancelarRequest) -> CancelarResponse:
-    return cancelar_facturama(req) if _usa_facturama() else cancelar(req)
+    # El PAC de cancelación lo decide la FACTURA, no el env: pac_id solo existe
+    # cuando se timbró con Facturama; sin él, se timbró con FEL. Si ruteáramos
+    # por FACTURACION_PAC y el env cambiara de PAC, una factura timbrada con el
+    # PAC anterior se intentaría cancelar donde nunca existió. El env solo
+    # decide el PAC de TIMBRADO (nuevas facturas).
+    return cancelar_facturama(req) if req.pac_id else cancelar(req)

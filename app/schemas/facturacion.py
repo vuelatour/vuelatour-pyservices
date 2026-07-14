@@ -23,6 +23,10 @@ class Concepto(BaseModel):
     valor_unitario: float
     objeto_imp: str = "02"  # sí objeto de impuesto
     tasa_iva: float = 0.16
+    # IVA exacto ya calculado por el API (residual: total − subtotal). Si
+    # viene, manda sobre el recálculo local — evita descuadres de 1 centavo
+    # entre la factura persistida y el CFDI. None = calcular subtotal×tasa.
+    iva: float | None = None
 
 
 class InformacionGlobal(BaseModel):
