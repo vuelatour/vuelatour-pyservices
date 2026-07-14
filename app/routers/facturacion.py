@@ -7,8 +7,10 @@ from app.schemas.facturacion import (
     TimbrarResponse,
 )
 from app.schemas.recibida import FacturaRecibidaParsed, ParseRecibidaRequest
+from app.config import get_settings
 from app.security import require_internal_token
 from app.services.cfdi_fel import cancelar, timbrar
+from app.services.facturama import cancelar_facturama, timbrar_facturama
 from app.services.recibida_parse import parse_cfdi
 
 router = APIRouter(
@@ -24,9 +26,13 @@ def parse_recibida(req: ParseRecibidaRequest) -> FacturaRecibidaParsed:
     return parse_cfdi(req)
 
 
+def _usa_facturama() -> bool:
+    return get_settings().facturacion_pac == "facturama"
+
+
 @router.post("/timbrar", response_model=TimbrarResponse)
 def timbrar_cfdi(req: TimbrarRequest) -> TimbrarResponse:
-    return timbrar(req)
+    return timbrar_facturama(req) if _usa_facturama() else timbrar(req)
 
 
 @router.post("/nota-credito", response_model=TimbrarResponse)
@@ -39,9 +45,9 @@ def nota_credito(req: TimbrarRequest) -> TimbrarResponse:
             error="La nota de crédito requiere cfdi_relacionado_uuid (UUID de la factura).",
         )
     req.tipo_relacion = req.tipo_relacion or "01"
-    return timbrar(req)
+    return timbrar_facturama(req) if _usa_facturama() else timbrar(req)
 
 
 @router.post("/cancelar", response_model=CancelarResponse)
 def cancelar_cfdi(req: CancelarRequest) -> CancelarResponse:
-    return cancelar(req)
+    return cancelar_facturama(req) if _usa_facturama() else cancelar(req)

@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     fel_password: str = ""
     fel_wsdl_url: str = "https://app.fel.mx/WSTimbrado33Test/WSCFDI33.svc?WSDL"  # pruebas por defecto
     fel_modo: str = "test"  # test | prod
+
+    # PAC de timbrado: 'fel' (SOAP, requiere Usuario de Timbrado) o
+    # 'facturama' (REST api-lite multiemisor; Basic Auth con el usuario y
+    # contraseña de la cuenta — Facturama NO usa API key).
+    facturacion_pac: str = "fel"  # fel | facturama
+    facturama_user: str = ""
+    facturama_password: str = ""
+    facturama_modo: str = "sandbox"  # sandbox | prod
     fel_timeout_s: float = 40.0
     # PFX (PKCS12) de cancelación, generado a partir del CSD del emisor
     # (guía "creación PFX" de FEL). Sin él no se puede cancelar ante el SAT.

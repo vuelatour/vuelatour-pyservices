@@ -64,6 +64,8 @@ class TimbrarResponse(BaseModel):
     fecha_timbrado: str | None = None
     xml_b64: str | None = None
     pdf_b64: str | None = None
+    # Id interno del PAC (Facturama): necesario para cancelar por api-lite.
+    pac_id: str | None = None
     error: str | None = None
 
 
@@ -79,6 +81,8 @@ class CancelarRequest(BaseModel):
     # FEL exige RFC receptor y total del CFDI en el detalle de cancelación.
     rfc_receptor: str | None = None
     total: float | None = None
+    # Facturama: Id del CFDI en su plataforma (factura.pac_id).
+    pac_id: str | None = None
 
 
 class CancelarResponse(BaseModel):
