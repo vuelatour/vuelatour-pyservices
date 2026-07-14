@@ -63,6 +63,40 @@ def _image_block(req: TacometroRequest | GastoTicketRequest) -> dict:
     return {"type": "image", "source": {"type": "url", "url": req.image_url}}
 
 
+def _gasto_source_blocks(req: GastoTicketRequest) -> list[dict]:
+    """Bloques de contenido para el ticket: 1 foto, N fotos (hojas del mismo
+    documento) o un PDF como bloque document (visión nativa)."""
+    if req.pdf_base64:
+        return [
+            {
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": req.pdf_base64,
+                },
+            }
+        ]
+    if req.images:
+        blocks: list[dict] = []
+        for img in req.images:
+            if img.image_base64:
+                blocks.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": img.media_type,
+                            "data": img.image_base64,
+                        },
+                    }
+                )
+            else:
+                blocks.append({"type": "image", "source": {"type": "url", "url": img.image_url}})
+        return blocks
+    return [_image_block(req)]
+
+
 def _extract_json(text: str) -> dict:
     t = text.strip()
     if t.startswith("```"):
@@ -159,6 +193,13 @@ _TICKET_PROMPT = (
 
 def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
     s = get_settings()
+    blocks = _gasto_source_blocks(req)
+    prompt = _TICKET_PROMPT
+    if len(blocks) > 1:
+        prompt = (
+            f"Las {len(blocks)} imágenes son HOJAS del MISMO documento (una sola "
+            "factura de varias páginas): léelas en orden como un solo comprobante. "
+        ) + _TICKET_PROMPT
     resp = _client().messages.create(
         model=s.anthropic_model,
         max_tokens=2000,
@@ -166,7 +207,7 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         messages=[
             {
                 "role": "user",
-                "content": [_image_block(req), {"type": "text", "text": _TICKET_PROMPT}],
+                "content": [*blocks, {"type": "text", "text": prompt}],
             }
         ],
     )

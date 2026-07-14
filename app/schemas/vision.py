@@ -33,17 +33,54 @@ class TacometroResponse(BaseModel):
     modelo: str = Field(description="Modelo de Claude usado")
 
 
-class GastoTicketRequest(BaseModel):
-    """Foto de un ticket/recibo de gasto. base64 (preferido) o URL firmada."""
+class ImagenFuente(BaseModel):
+    """Una imagen: base64 (preferido) o URL pública/firmada."""
 
     image_base64: str | None = Field(default=None, description="Imagen en base64 (sin prefijo data:)")
     media_type: MediaType | None = Field(default=None, description="Requerido si se usa image_base64")
     image_url: str | None = Field(default=None, description="URL pública o firmada de la imagen")
 
     @model_validator(mode="after")
-    def _check_source(self) -> "GastoTicketRequest":
+    def _check_source(self) -> "ImagenFuente":
         if not self.image_base64 and not self.image_url:
             raise ValueError("Debes enviar image_base64 o image_url")
+        if self.image_base64 and not self.media_type:
+            raise ValueError("media_type es requerido cuando se envía image_base64")
+        return self
+
+
+class GastoTicketRequest(BaseModel):
+    """Ticket/factura de gasto. Fuentes (exactamente una):
+    - image_base64+media_type o image_url (una foto, contrato original),
+    - images: varias fotos = HOJAS del MISMO documento (facturas multi-página),
+    - pdf_base64: la factura en PDF (visión nativa de documento).
+    Campos nuevos ADITIVOS: el API viejo sigue mandando una sola imagen."""
+
+    image_base64: str | None = Field(default=None, description="Imagen en base64 (sin prefijo data:)")
+    media_type: MediaType | None = Field(default=None, description="Requerido si se usa image_base64")
+    image_url: str | None = Field(default=None, description="URL pública o firmada de la imagen")
+    images: list[ImagenFuente] | None = Field(
+        default=None,
+        max_length=8,
+        description="Varias fotos del MISMO documento (hojas de una factura), máx 8",
+    )
+    pdf_base64: str | None = Field(default=None, description="Factura en PDF (base64, sin prefijo data:)")
+
+    @model_validator(mode="after")
+    def _check_source(self) -> "GastoTicketRequest":
+        fuentes = sum(
+            1
+            for presente in (
+                bool(self.image_base64 or self.image_url),
+                bool(self.images),
+                bool(self.pdf_base64),
+            )
+            if presente
+        )
+        if fuentes != 1:
+            raise ValueError(
+                "Debes enviar exactamente una fuente: image_base64/image_url, images[] o pdf_base64"
+            )
         if self.image_base64 and not self.media_type:
             raise ValueError("media_type es requerido cuando se envía image_base64")
         return self
@@ -63,6 +100,8 @@ CategoriaGasto = Literal[
     "TAXI",
     "REFACCION",
     "PERMISO",
+    # Honorario del piloto externo (freelance): lo captura oficina; aditivo.
+    "PILOTO_EXTERNO",
     "FIJO",
     "OTRO",
 ]
