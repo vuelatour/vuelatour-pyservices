@@ -65,6 +65,13 @@ class GastoTicketRequest(BaseModel):
         description="Varias fotos del MISMO documento (hojas de una factura), máx 8",
     )
     pdf_base64: str | None = Field(default=None, description="Factura en PDF (base64, sin prefijo data:)")
+    excel_base64: str | None = Field(
+        default=None,
+        description="Factura en Excel (.xlsx) o CSV en base64: se convierte a texto y la IA extrae los datos",
+    )
+    excel_filename: str | None = Field(
+        default=None, description="Nombre del archivo Excel/CSV (decide el parser por extensión)"
+    )
 
     @model_validator(mode="after")
     def _check_source(self) -> "GastoTicketRequest":
@@ -74,12 +81,13 @@ class GastoTicketRequest(BaseModel):
                 bool(self.image_base64 or self.image_url),
                 bool(self.images),
                 bool(self.pdf_base64),
+                bool(self.excel_base64),
             )
             if presente
         )
         if fuentes != 1:
             raise ValueError(
-                "Debes enviar exactamente una fuente: image_base64/image_url, images[] o pdf_base64"
+                "Debes enviar exactamente una fuente: image_base64/image_url, images[], pdf_base64 o excel_base64"
             )
         if self.image_base64 and not self.media_type:
             raise ValueError("media_type es requerido cuando se envía image_base64")

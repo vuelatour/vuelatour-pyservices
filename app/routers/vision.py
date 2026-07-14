@@ -54,7 +54,8 @@ def gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         logger.warning("Respuesta de Claude no parseable: %s", e)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="No se pudo interpretar el ticket",
+            # El motivo real ayuda al operador (ej. ".xls no soportado").
+            detail=str(e)[:200] or "No se pudo interpretar el ticket",
         ) from e
 
 

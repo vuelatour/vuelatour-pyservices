@@ -63,6 +63,34 @@ def _image_block(req: TacometroRequest | GastoTicketRequest) -> dict:
     return {"type": "image", "source": {"type": "url", "url": req.image_url}}
 
 
+def _excel_to_text(excel_base64: str, filename: str | None) -> str:
+    """Convierte la factura en Excel/CSV a texto tabular (todas las hojas,
+    truncado) para que Claude extraiga los datos como si leyera el documento."""
+    import base64 as _b64
+    import io
+
+    import pandas as pd
+
+    raw = _b64.b64decode(excel_base64)
+    nombre = (filename or "").lower()
+    partes: list[str] = []
+    if nombre.endswith(".csv"):
+        df = pd.read_csv(io.BytesIO(raw), dtype=str, keep_default_na=False)
+        partes.append(df.to_csv(index=False))
+    elif nombre.endswith(".xls") and not nombre.endswith(".xlsx"):
+        raise ValueError("Formato .xls (Excel viejo) no soportado: guárdalo como .xlsx")
+    else:
+        hojas = pd.read_excel(io.BytesIO(raw), dtype=str, sheet_name=None)
+        for nombre_hoja, df in list(hojas.items())[:3]:
+            df = df.fillna("")
+            partes.append(f"--- HOJA: {nombre_hoja} ---\n{df.to_csv(index=False)}")
+    texto = "\n\n".join(partes).strip()
+    if not texto:
+        raise ValueError("El archivo Excel/CSV está vacío o no se pudo leer")
+    # Techo defensivo: una factura no necesita más; evita reventar tokens.
+    return texto[:15000]
+
+
 def _gasto_source_blocks(req: GastoTicketRequest) -> list[dict]:
     """Bloques de contenido para el ticket: 1 foto, N fotos (hojas del mismo
     documento) o un PDF como bloque document (visión nativa)."""
@@ -193,13 +221,29 @@ _TICKET_PROMPT = (
 
 def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
     s = get_settings()
-    blocks = _gasto_source_blocks(req)
-    prompt = _TICKET_PROMPT
-    if len(blocks) > 1:
+    if req.excel_base64:
+        # Hoja de cálculo: viaja como TEXTO tabular (Claude no lee xlsx nativo).
+        texto = _excel_to_text(req.excel_base64, req.excel_filename)
+        blocks: list[dict] = [
+            {
+                "type": "text",
+                "text": (
+                    "CONTENIDO DE LA FACTURA (hoja de cálculo convertida a texto, "
+                    f"separado por comas):\n{texto}"
+                ),
+            }
+        ]
         prompt = (
-            f"Las {len(blocks)} imágenes son HOJAS del MISMO documento (una sola "
-            "factura de varias páginas): léelas en orden como un solo comprobante. "
+            "El contenido anterior es la factura en formato tabular. "
         ) + _TICKET_PROMPT
+    else:
+        blocks = _gasto_source_blocks(req)
+        prompt = _TICKET_PROMPT
+        if len(blocks) > 1:
+            prompt = (
+                f"Las {len(blocks)} imágenes son HOJAS del MISMO documento (una sola "
+                "factura de varias páginas): léelas en orden como un solo comprobante. "
+            ) + _TICKET_PROMPT
     resp = _client().messages.create(
         model=s.anthropic_model,
         max_tokens=2000,
