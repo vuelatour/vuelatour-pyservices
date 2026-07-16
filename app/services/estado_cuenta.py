@@ -104,7 +104,9 @@ _SYSTEM = (
     "un arreglo de objetos con \"fecha\" (YYYY-MM-DD o null), \"descripcion\" (string), "
     "\"monto\" (número positivo), \"tipo\" (\"CARGO\" si es salida/retiro, \"ABONO\" si es "
     "entrada/depósito) y \"referencia\" (string o null). Incluye solo movimientos "
-    "reales, no encabezados ni saldos."
+    "reales, no encabezados ni saldos. El JSON debe ser COMPACTO (sin espacios ni "
+    "saltos de línea) y las descripciones breves (máx ~10 palabras): los estados de "
+    "cuenta traen cientos de movimientos y TODOS deben caber en la respuesta."
 )
 
 
@@ -131,11 +133,22 @@ def _extract_json(text: str) -> dict:
     return json.loads(t[start : end + 1])
 
 
+_USA_CSV = (
+    "Exporta el estado de cuenta en CSV o Excel desde el portal del banco e "
+    "impórtalo: es el formato exacto y preferido."
+)
+
+
 def _parse_pdf(req: ConciliacionParseRequest) -> ConciliacionParseResponse:
     s = get_settings()
-    resp = _client().messages.create(
+    # Timeout propio: generar cientos de movimientos tarda más que el timeout
+    # global (90s) — la importación es manual y el operador espera.
+    resp = _client().with_options(timeout=240.0).messages.create(
         model=s.anthropic_model,
-        max_tokens=4096,
+        # Un estado de cuenta mensual trae cientos de movimientos: con 4096 la
+        # respuesta se TRUNCABA a media estructura y el json.loads reventaba
+        # con un error críptico ("Expecting ',' delimiter...").
+        max_tokens=16384,
         system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
         messages=[
             {
@@ -154,8 +167,21 @@ def _parse_pdf(req: ConciliacionParseRequest) -> ConciliacionParseResponse:
             }
         ],
     )
+    # Truncado por límite de salida: la conciliación exige el universo COMPLETO
+    # de movimientos — importar una lista parcial en silencio es peor que
+    # fallar con instrucciones claras.
+    if resp.stop_reason == "max_tokens":
+        raise ValueError(
+            f"El PDF tiene demasiados movimientos para leerse completo con IA. {_USA_CSV}"
+        )
     text = next((b.text for b in resp.content if b.type == "text"), "")
-    data = _extract_json(text)
+    try:
+        data = _extract_json(text)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise ValueError(
+            "La IA no devolvió una respuesta interpretable al leer el PDF. "
+            f"Reintenta, o mejor: {_USA_CSV}"
+        ) from e
 
     movimientos: list[MovimientoParseado] = []
     for raw in data.get("movimientos", []):
