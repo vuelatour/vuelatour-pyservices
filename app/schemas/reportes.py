@@ -49,6 +49,8 @@ class ReporteVueloLinea(BaseModel):
     detalle: str | None = None
     moneda: str | None = None
     monto: float | None = None
+    # Litros (solo combustible): el Excel del equipo muestra litros y $/litro.
+    litros: float | None = None
 
 
 class ReporteVueloRequest(BaseModel):
@@ -103,4 +105,17 @@ class ReporteVueloRequest(BaseModel):
     saldo_usd: float = 0
     combustible: list[ReporteVueloLinea] = Field(default_factory=list)
     gastos: list[ReporteVueloLinea] = Field(default_factory=list)
+    # ===== Economía del vuelo (formato de los Excel de control del equipo:
+    # "Balance VGV" / "Dinero <mes>"). Todos aditivos: tolera API viejo. =====
+    taco_inicio: float | None = None
+    taco_fin: float | None = None
+    gastos_total_usd: float = 0
+    combustible_total_usd: float = 0
+    gastos_sin_tc_count: int = 0
+    gastos_sin_tc_mxn: float = 0
+    venta_sin_iva_usd: float = 0
+    remanente_usd: float | None = None
+    ganancia_final_usd: float | None = None
+    ganancia_x_hr_usd: float | None = None
+    ganancia_pct: float | None = None
     notas: str | None = None

@@ -185,17 +185,27 @@ def _build_html(r: ReporteVueloRequest) -> str:
     else:
         horas_cmp = ""
 
-    # --- Combustible ---
+    # --- Combustible (con litros y $/litro, como el control del equipo) ---
     if r.combustible:
+        def _litros(c):
+            if not c.litros:
+                return "<td class='num'>—</td><td class='num'>—</td>"
+            xl = f"{_money(round((c.monto or 0) / c.litros, 2))}" if c.monto else "—"
+            return f"<td class='num'>{c.litros:g} L</td><td class='num'>{xl}</td>"
+
         filas = "".join(
             f"<tr><td>{_fecha(c.fecha)}</td><td>{escape(c.detalle or c.concepto or '—')}</td>"
-            f"<td class='num'>{_money(c.monto, c.moneda or 'MXN')}</td></tr>"
+            + _litros(c)
+            + f"<td class='num'>{_money(c.monto, c.moneda or 'MXN')}</td></tr>"
             for c in r.combustible
         )
         comb = (
             "<table class='grid'><thead><tr><th>Fecha</th><th>Detalle</th>"
+            "<th class='num'>Litros</th><th class='num'>$ x litro</th>"
             f"<th class='num'>Monto</th></tr></thead><tbody>{filas}</tbody></table>"
         )
+        if r.combustible_total_usd:
+            comb += f"<p class='tot'>Total gasolina: <b>{_money(r.combustible_total_usd)}</b></p>"
     else:
         comb = "<p class='muted'>Sin cargas de combustible.</p>"
 
@@ -214,6 +224,78 @@ def _build_html(r: ReporteVueloRequest) -> str:
         )
     else:
         gastos = "<p class='muted'>Sin gastos registrados.</p>"
+    if r.gastos and r.gastos_total_usd:
+        gastos += f"<p class='tot'>Total gastos: <b>{_money(r.gastos_total_usd)}</b></p>"
+    if r.gastos_sin_tc_count:
+        gastos += (
+            f"<p class='muted' style='color:{_BRAND}'>OJO: {r.gastos_sin_tc_count} gasto(s) en MXN "
+            f"por ${r.gastos_sin_tc_mxn:,.2f} SIN tipo de cambio: no entran al balance USD.</p>"
+        )
+
+    # --- Balance del vuelo (remanente → ganancia → %, como el Excel del
+    # equipo). Los montos vienen calculados del API; el MXN es equivalente
+    # al TC del vuelo (solo display). ---
+    tc = r.tc_usd_mxn if (r.tc_usd_mxn or 0) > 0 else None
+
+    def _bal_row(label: str, usd, bold=False, color=None, signo=1):
+        if usd is None:
+            return ""
+        style = f"font-weight:{'700' if bold else '400'};" + (f"color:{color};" if color else "")
+        mxn = (
+            f"<td class='num' style='{style}'>{_money(round(signo * usd * tc, 2))}</td>"
+            if tc
+            else ""
+        )
+        return (
+            f"<tr><td style='{style}'>{escape(label)}</td>"
+            f"<td class='num' style='{style}'>"
+            f"{'&minus;' if signo < 0 else ''}{_money(abs(usd))}</td>{mxn}</tr>"
+        )
+
+    if r.remanente_usd is not None or r.ganancia_final_usd is not None:
+        venta_sin_iva = r.venta_sin_iva_usd or max(r.total_usd - r.iva_usd, 0)
+        g_color = "#16a34a" if (r.ganancia_final_usd or 0) >= 0 else "#dc2626"
+        balance_rows = (
+            _bal_row("Venta total (c/IVA)", r.total_usd, bold=True)
+            + _bal_row("Venta sin IVA", venta_sin_iva)
+            + _bal_row("(−) Gasolina", r.combustible_total_usd or 0, signo=-1)
+            + _bal_row("(−) Gastos del vuelo", r.gastos_total_usd or 0, signo=-1)
+            + _bal_row("REMANENTE (venta − costo)", r.remanente_usd, bold=True)
+            + (
+                _bal_row(
+                    "(−) Comisión vendedor"
+                    + (f" ({r.comision_vendedor_nombre})" if r.comision_vendedor_nombre else ""),
+                    r.comision_vendedor_usd,
+                    signo=-1,
+                )
+                if r.comision_vendedor_usd
+                else ""
+            )
+            + (
+                _bal_row("(−) Comisiones bancarias", r.comision_banco_usd, signo=-1)
+                if r.comision_banco_usd
+                else ""
+            )
+            + _bal_row("GANANCIA DEL VUELO", r.ganancia_final_usd, bold=True, color=g_color)
+            + _bal_row("Ganancia x hora", r.ganancia_x_hr_usd)
+        )
+        pct_html = ""
+        if r.ganancia_pct is not None:
+            pct_html = (
+                f"<tr><td style='font-weight:700'>% de ganancia (sobre venta s/IVA)</td>"
+                f"<td class='num' style='font-weight:700;color:{g_color}'>"
+                f"{r.ganancia_pct * 100:.1f}%</td>"
+                + ("<td></td>" if tc else "")
+                + "</tr>"
+            )
+        head_mxn = f"<th class='num'>MXN (T.C. {tc:g})</th>" if tc else ""
+        balance = (
+            "<table class='grid'><thead><tr><th>Concepto</th>"
+            f"<th class='num'>USD</th>{head_mxn}</tr></thead>"
+            f"<tbody>{balance_rows}{pct_html}</tbody></table>"
+        )
+    else:
+        balance = ""
 
     generado = _fecha(r.generado)
     notas = f"<p class='muted'>{escape(r.notas)}</p>" if r.notas else ""
@@ -255,6 +337,7 @@ def _build_html(r: ReporteVueloRequest) -> str:
   {_seccion("Horas cotizadas vs voladas", horas_cmp) if horas_cmp else ""}
   {_seccion("Combustible", comb)}
   {_seccion("Gastos", gastos)}
+  {_seccion("Balance del vuelo", balance) if balance else ""}
   {notas}
 </body></html>"""
 
