@@ -194,16 +194,23 @@ _TICKET_SYSTEM = (
     "(DEBITO/CREDITO/VISA/MASTERCARD/TARJETA = TARJETA_CORP; EFECTIVO/CASH = "
     "EFECTIVO; SPEI/TRANSFERENCIA = TRANSFERENCIA), o null.\n"
     '  "tarjeta_terminacion": ultimos 4 digitos de la tarjeta si aparecen, como string de 4 digitos, o null.\n'
-    '  "conceptos": lista [{"concepto": string, "monto": número}] con los RENGLONES '
-    "del ticket/factura SOLO si desglosa claramente varios conceptos (ej. "
-    "aterrizaje, plataforma de pernocta, embarque, servicio FBO, T.U.A.); máximo 8; "
-    "[] si es un solo concepto o no se distinguen. OJO CON LOS DESCUENTOS: si un "
-    "renglón tiene columna Descuento (muy común en T.U.A.), el monto del renglón es "
-    "el NETO = importe − descuento (ej. importe $605.18 con descuento $5.18 → monto "
-    "600.00). IMPORTANTE: si la factura muestra subtotal + IVA por separado, agrega "
-    'el IVA como un renglón más ({"concepto": "IVA 16%", "monto": X}) para que la '
-    "SUMA de renglones (ya con descuentos aplicados) sea exactamente el TOTAL "
-    "pagado; si aun así no cuadra, [].\n"
+    '  "conceptos": lista [{"concepto": string, "monto": número}] con el desglose '
+    "de la factura. PRIORIDAD 1 — TABLA RESUMEN: muchas facturas de aeropuerto "
+    "(ASUR/ADO) traen al pie una tabla resumen por SECCIONES (Operaciones, Taxi, "
+    "Autobuses, Tarifa TUA, Combustible, FOB) con columnas SubTotal/IVA/Total; si "
+    "existe, usa ESA tabla: un concepto por sección con Total distinto de cero, "
+    'con "monto" = columna TOTAL (IVA YA INCLUIDO), eligiendo solo las secciones '
+    "cuya suma dé exactamente el TOTAL pagado de la factura, y NO agregues renglón "
+    "de IVA aparte. PRIORIDAD 2 — sin tabla resumen: usa los RENGLONES del "
+    "ticket/factura SOLO si desglosa claramente varios conceptos (ej. aterrizaje, "
+    "plataforma de pernocta, embarque, servicio FBO, T.U.A.); máximo 8; [] si es "
+    "un solo concepto o no se distinguen. OJO CON LOS DESCUENTOS: si un renglón "
+    "tiene columna Descuento (muy común en T.U.A.), el monto del renglón es el "
+    "NETO = importe − descuento (ej. importe $605.18 con descuento $5.18 → monto "
+    "600.00). En este caso, si la factura muestra subtotal + IVA por separado, "
+    'agrega el IVA como un renglón más ({"concepto": "IVA 16%", "monto": X}) para '
+    "que la SUMA de renglones (ya con descuentos aplicados) sea exactamente el "
+    "TOTAL pagado; si aun así no cuadra, [].\n"
     '  "matricula": matrícula de la aeronave si aparece en el documento '
     '(observaciones/referencias; formato XA-ABC, XB-ABC o N123XX), o null.\n'
     '  "confianza": número entre 0 y 1.\n'
