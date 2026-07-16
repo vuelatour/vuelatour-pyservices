@@ -111,6 +111,9 @@ CategoriaGasto = Literal[
     # Honorario del piloto externo (freelance): lo captura oficina; aditivo.
     "PILOTO_EXTERNO",
     "FIJO",
+    # Gasto indirecto de la operación (sin vuelo). La IA no lo sugiere (no
+    # está en el prompt); aditivo para tolerar el enum del API.
+    "INDIRECTO",
     "OTRO",
 ]
 
