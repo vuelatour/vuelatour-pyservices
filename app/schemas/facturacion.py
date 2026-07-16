@@ -48,10 +48,12 @@ class TimbrarRequest(BaseModel):
     emisor: Emisor
     receptor: Receptor
     conceptos: list[Concepto]
-    # CSD del emisor (base64) + contraseña de la llave.
-    csd_cer_b64: str
-    csd_key_b64: str
-    csd_password: str
+    # CSD del emisor (base64) + contraseña de la llave. Default "" (aditivo):
+    # la vista previa (/facturacion/preview) no sella, así que no exige CSD;
+    # timbrar sí lo necesita y el PAC rechaza el vacío con su propio error.
+    csd_cer_b64: str = ""
+    csd_key_b64: str = ""
+    csd_password: str = ""
     # Tipo de comprobante: I=Ingreso (default), E=Egreso (nota de crédito).
     tipo_comprobante: str = "I"
     # Relación a otro CFDI (p. ej. nota de crédito 01 → UUID de la factura original).
@@ -71,6 +73,12 @@ class TimbrarResponse(BaseModel):
     # Id interno del PAC (Facturama): necesario para cancelar por api-lite.
     pac_id: str | None = None
     error: str | None = None
+
+
+class FacturaPreviewResponse(BaseModel):
+    """Vista previa del PDF de la factura (SIN timbrar, sin validez fiscal)."""
+
+    pdf_b64: str
 
 
 class CancelarRequest(BaseModel):

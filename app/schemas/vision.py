@@ -151,6 +151,61 @@ class GastoTicketResponse(BaseModel):
     modelo: str = Field(description="Modelo de Claude usado")
 
 
+class ConstanciaFiscalRequest(BaseModel):
+    """Constancia de Situación Fiscal del SAT. Exactamente UNA fuente:
+    pdf_base64 (documento nativo, mismo patrón que gasto-ticket) o
+    image_base64+media_type (foto/captura de la constancia)."""
+
+    pdf_base64: str | None = Field(
+        default=None, description="Constancia en PDF (base64, sin prefijo data:)"
+    )
+    image_base64: str | None = Field(
+        default=None, description="Imagen en base64 (sin prefijo data:)"
+    )
+    media_type: MediaType | None = Field(
+        default=None, description="Requerido si se usa image_base64"
+    )
+
+    @model_validator(mode="after")
+    def _check_source(self) -> "ConstanciaFiscalRequest":
+        if bool(self.pdf_base64) == bool(self.image_base64):
+            raise ValueError("Debes enviar exactamente una fuente: pdf_base64 o image_base64")
+        if self.image_base64 and not self.media_type:
+            raise ValueError("media_type es requerido cuando se envía image_base64")
+        return self
+
+
+class ConstanciaFiscalResponse(BaseModel):
+    """Datos fiscales extraídos de la constancia. Contrato con el API:
+    los fallos de IA degradan a disponible=false/legible=false, nunca 500."""
+
+    disponible: bool = Field(
+        default=False, description="false si la IA no pudo procesar (Claude caído)"
+    )
+    legible: bool = Field(default=False, description="true si la constancia se pudo leer")
+    rfc: str | None = Field(default=None, description="RFC del contribuyente (12-13 caracteres)")
+    razon_social: str | None = Field(
+        default=None,
+        description="Denominación (PM, SIN régimen societario) o nombre completo (PF)",
+    )
+    regimen_fiscal: str | None = Field(
+        default=None, description="Código c_RegimenFiscal (3 dígitos) del régimen vigente"
+    )
+    regimen_descripcion: str | None = Field(
+        default=None, description="Nombre del régimen tal cual la constancia"
+    )
+    cp: str | None = Field(
+        default=None, description="Código postal del domicilio fiscal (5 dígitos)"
+    )
+    domicilio: str | None = Field(
+        default=None, description="Domicilio fiscal completo en una línea"
+    )
+    confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1 de la extracción")
+    motivo: str | None = Field(
+        default=None, description="Por qué no se pudo leer / observaciones de la extracción"
+    )
+
+
 class CombustibleTicketResponse(BaseModel):
     """Datos extraídos de un ticket de carga de combustible (turbosina/avgas)."""
 

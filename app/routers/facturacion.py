@@ -1,17 +1,24 @@
-from fastapi import APIRouter, Depends
+import base64
+import logging
 
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from app.config import get_settings
 from app.schemas.facturacion import (
     CancelarRequest,
     CancelarResponse,
+    FacturaPreviewResponse,
     TimbrarRequest,
     TimbrarResponse,
 )
 from app.schemas.recibida import FacturaRecibidaParsed, ParseRecibidaRequest
-from app.config import get_settings
 from app.security import require_internal_token
 from app.services.cfdi_fel import cancelar, timbrar
+from app.services.factura_preview_pdf import render_factura_preview_pdf
 from app.services.facturama import cancelar_facturama, timbrar_facturama
 from app.services.recibida_parse import parse_cfdi
+
+logger = logging.getLogger("facturacion")
 
 router = APIRouter(
     prefix="/facturacion",
@@ -28,6 +35,28 @@ def parse_recibida(req: ParseRecibidaRequest) -> FacturaRecibidaParsed:
 
 def _usa_facturama() -> bool:
     return get_settings().facturacion_pac == "facturama"
+
+
+@router.post("/preview", response_model=FacturaPreviewResponse)
+def preview_factura(req: TimbrarRequest) -> FacturaPreviewResponse:
+    """PDF de vista previa de la factura SIN timbrar (sin validez fiscal).
+    Mismo body que /timbrar pero NO requiere CSD (los campos csd_* tienen
+    default vacío): no se sella nada, solo se renderiza para revisión."""
+    try:
+        pdf = render_factura_preview_pdf(req)
+    except ImportError as e:
+        logger.error("WeasyPrint no disponible: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Generador de PDF no instalado (WeasyPrint).",
+        ) from e
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Error generando la vista previa de la factura")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"No se pudo generar la vista previa: {e}",
+        ) from e
+    return FacturaPreviewResponse(pdf_b64=base64.b64encode(pdf).decode("ascii"))
 
 
 @router.post("/timbrar", response_model=TimbrarResponse)

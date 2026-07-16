@@ -6,6 +6,8 @@ import anthropic
 from app.config import get_settings
 from app.schemas.vision import (
     CombustibleTicketResponse,
+    ConstanciaFiscalRequest,
+    ConstanciaFiscalResponse,
     GastoTicketRequest,
     GastoTicketResponse,
     TacometroRequest,
@@ -323,6 +325,155 @@ def _parse_conceptos(raw: object) -> list[dict]:
         if concepto and isinstance(monto, (int, float)) and monto > 0:
             out.append({"concepto": concepto[:80], "monto": round(float(monto), 2)})
     return out
+
+
+# Catálogo c_RegimenFiscal del SAT: la constancia muestra el NOMBRE del
+# régimen; el CFDI 4.0 exige el CÓDIGO. La IA mapea con esta tabla y aquí
+# validamos que el código devuelto exista (parsing defensivo).
+_REGIMENES_SAT: frozenset[str] = frozenset(
+    {
+        "601", "603", "605", "606", "607", "608", "610", "611", "612", "614",
+        "615", "616", "620", "621", "622", "623", "624", "625", "626",
+    }
+)
+
+_CONSTANCIA_SYSTEM = (
+    "Eres un asistente fiscal mexicano. El documento es una CONSTANCIA DE "
+    "SITUACIÓN FISCAL emitida por el SAT (cédula de identificación fiscal). "
+    "Extraes los datos que exige el CFDI 4.0. Devuelves SOLO un objeto JSON, "
+    "sin texto adicional ni ```fences```, con las claves exactas:\n"
+    '  "rfc": el RFC del contribuyente (12-13 caracteres, MAYÚSCULAS), o null.\n'
+    '  "razon_social": para persona MORAL la "Denominación/Razón Social" SIN el '
+    "régimen societario ('S.A. DE C.V.', 'S. DE R.L.', etc.), que en la "
+    "constancia aparece SEPARADO como 'Régimen de capital' — el CFDI 4.0 exige "
+    "el nombre EXACTO sin ese sufijo. Para persona FÍSICA el nombre completo: "
+    "Nombre(s) + Primer Apellido + Segundo Apellido. Mantener tal cual aparece "
+    "en la constancia. O null.\n"
+    '  "regimen_fiscal": el CÓDIGO c_RegimenFiscal de 3 dígitos del régimen '
+    "VIGENTE más reciente del apartado 'Regímenes'. La constancia muestra el "
+    "NOMBRE; mapéalo con este catálogo: 601 General de Ley Personas Morales; "
+    "603 Personas Morales con Fines no Lucrativos; 605 Sueldos y Salarios; "
+    "606 Arrendamiento; 607 Enajenación o Adquisición de Bienes; 608 Demás "
+    "ingresos; 610 Residentes en el Extranjero; 611 Dividendos; 612 Personas "
+    "Físicas con Actividades Empresariales y Profesionales; 614 Intereses; "
+    "615 Obtención de premios; 616 Sin obligaciones fiscales; 620 Sociedades "
+    "Cooperativas; 621 Incorporación Fiscal; 622 Actividades AGAPES; 623 "
+    "Opcional para Grupos de Sociedades; 624 Coordinados; 625 Plataformas "
+    "Tecnológicas; 626 Régimen Simplificado de Confianza (RESICO). O null si "
+    "no puedes mapearlo.\n"
+    '  "regimen_descripcion": el nombre del régimen tal cual aparece en la '
+    "constancia, o null.\n"
+    '  "cp": código postal del domicilio fiscal (5 dígitos, como string), o null.\n'
+    '  "domicilio": el domicilio fiscal completo en UNA línea (calle, número, '
+    "colonia, municipio/alcaldía, estado), o null.\n"
+    '  "confianza": número entre 0 y 1.\n'
+    '  "legible": true/false según si el documento se distingue.\n'
+    '  "motivo": string breve en español (por qué no es legible, u '
+    "observaciones), o null.\n"
+    "No inventes datos que no aparezcan en el documento: usa null. Si el "
+    "documento NO es una constancia de situación fiscal del SAT, devuelve "
+    "legible=false y explica en motivo."
+)
+
+_CONSTANCIA_PROMPT = (
+    "Extrae los datos fiscales de esta Constancia de Situación Fiscal del SAT "
+    "y responde con el JSON indicado. Recuerda: razón social SIN régimen "
+    "societario para persona moral, y el código de 3 dígitos del régimen "
+    "VIGENTE más reciente."
+)
+
+
+def _constancia_blocks(req: ConstanciaFiscalRequest) -> list[dict]:
+    """PDF como bloque document (visión nativa, igual que gasto-ticket) o
+    una imagen base64."""
+    if req.pdf_base64:
+        return [
+            {
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": req.pdf_base64,
+                },
+            }
+        ]
+    return [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": req.media_type,
+                "data": req.image_base64,
+            },
+        }
+    ]
+
+
+def _parse_rfc(raw: object) -> str | None:
+    """RFC plausible: 12 (moral) o 13 (física) caracteres alfanuméricos."""
+    if not isinstance(raw, str):
+        return None
+    rfc = raw.strip().upper().replace(" ", "").replace("-", "")
+    if 12 <= len(rfc) <= 13 and rfc.isalnum():
+        return rfc
+    return None
+
+
+def _parse_cp(raw: object) -> str | None:
+    """CP mexicano: exactamente 5 dígitos (acepta int del modelo)."""
+    if raw is None:
+        return None
+    cp = str(raw).strip()
+    if len(cp) == 4 and cp.isdigit():
+        # El modelo a veces devuelve int y pierde el cero inicial (CDMX).
+        cp = f"0{cp}"
+    return cp if len(cp) == 5 and cp.isdigit() else None
+
+
+def _str_or_none(raw: object) -> str | None:
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def leer_constancia_fiscal(req: ConstanciaFiscalRequest) -> ConstanciaFiscalResponse:
+    s = get_settings()
+    resp = _client().messages.create(
+        model=s.anthropic_model,
+        max_tokens=1000,
+        system=[
+            {"type": "text", "text": _CONSTANCIA_SYSTEM, "cache_control": {"type": "ephemeral"}}
+        ],
+        messages=[
+            {
+                "role": "user",
+                "content": [*_constancia_blocks(req), {"type": "text", "text": _CONSTANCIA_PROMPT}],
+            }
+        ],
+    )
+    text = next((b.text for b in resp.content if b.type == "text"), "")
+    data = _extract_json(text)
+
+    regimen = _str_or_none(data.get("regimen_fiscal"))
+    rfc = _parse_rfc(data.get("rfc"))
+    # Confianza defensiva: un valor raro del modelo (null/string) no debe
+    # tirar la extracción completa — el contrato es degradar, nunca 500.
+    conf = data.get("confianza")
+    confianza = min(max(float(conf), 0.0), 1.0) if isinstance(conf, (int, float)) else 0.0
+    return ConstanciaFiscalResponse(
+        disponible=True,
+        legible=bool(data.get("legible", rfc is not None)),
+        rfc=rfc,
+        razon_social=_str_or_none(data.get("razon_social")),
+        # Solo códigos del catálogo c_RegimenFiscal: un código inventado
+        # rompería el timbrado; mejor null y que el operador lo elija.
+        regimen_fiscal=regimen if regimen in _REGIMENES_SAT else None,
+        regimen_descripcion=_str_or_none(data.get("regimen_descripcion")),
+        cp=_parse_cp(data.get("cp")),
+        domicilio=_str_or_none(data.get("domicilio")),
+        confianza=confianza,
+        motivo=_str_or_none(data.get("motivo")),
+    )
 
 
 _COMBUSTIBLE_SYSTEM = (
