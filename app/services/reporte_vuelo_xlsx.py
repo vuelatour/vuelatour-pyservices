@@ -130,11 +130,33 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
         ws.cell(row=row, column=3, value=c.moneda or "")
         money_cell(row, 4, c.monto)
         row += 1
+        # Comisión bancaria del cobro (el banco depositó monto − comisión).
+        if c.detalle:
+            ws.cell(row=row, column=2, value=c.detalle).font = Font(
+                color="627D98", size=9
+            )
+            row += 1
     ws.cell(row=row, column=1, value="Cobrado USD").font = Font(bold=True)
     money_cell(row, 2, r.total_cobrado_usd)
     ws.cell(row=row, column=3, value="Saldo USD").font = Font(bold=True)
     money_cell(row, 4, r.saldo_usd)
-    row += 2
+    row += 1
+    # Total ANTES de comisión vs neto DESPUÉS (lo que entró a la cuenta).
+    if r.comision_banco_usd:
+        ws.cell(row=row, column=1, value="Comisiones bancarias").font = Font(color="627D98")
+        money_cell(row, 2, -r.comision_banco_usd)
+        row += 1
+        neto_banco = (
+            r.total_cobrado_neto_usd
+            if r.total_cobrado_neto_usd is not None
+            else r.total_cobrado_usd - r.comision_banco_usd
+        )
+        ws.cell(
+            row=row, column=1, value="Neto recibido USD (después de comisión)"
+        ).font = Font(bold=True)
+        money_cell(row, 2, neto_banco)
+        row += 1
+    row += 1
 
     # ===== Tacómetro =====
     titulo("Tacómetro por tramo")

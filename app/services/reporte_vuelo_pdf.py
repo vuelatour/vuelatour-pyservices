@@ -106,7 +106,14 @@ def _build_html(r: ReporteVueloRequest) -> str:
     # --- Ingreso (cobros) ---
     if r.cobros:
         filas = "".join(
-            f"<tr><td>{_fecha(c.fecha)}</td><td>{escape(c.concepto or '—')}</td>"
+            f"<tr><td>{_fecha(c.fecha)}</td><td>{escape(c.concepto or '—')}"
+            # Comisión bancaria del cobro (el banco depositó monto − comisión).
+            + (
+                f"<br/><span class='muted' style='font-size:10px'>{escape(c.detalle)}</span>"
+                if c.detalle
+                else ""
+            )
+            + "</td>"
             f"<td class='num'>{_money(c.monto, c.moneda or 'USD')}</td></tr>"
             for c in r.cobros
         )
@@ -120,6 +127,17 @@ def _build_html(r: ReporteVueloRequest) -> str:
         f"<p class='tot'>Cobrado: <b>{_money(r.total_cobrado_usd)}</b> · "
         f"Saldo: <b>{_money(r.saldo_usd)}</b></p>"
     )
+    # Total ANTES de comisión bancaria vs neto DESPUÉS (lo que entró al banco).
+    if r.comision_banco_usd:
+        neto_banco = (
+            r.total_cobrado_neto_usd
+            if r.total_cobrado_neto_usd is not None
+            else r.total_cobrado_usd - r.comision_banco_usd
+        )
+        ingreso += (
+            f"<p class='tot'>Comisiones bancarias: <b>&minus;{_money(r.comision_banco_usd)}</b> · "
+            f"Neto recibido (después de comisión): <b>{_money(neto_banco)}</b></p>"
+        )
 
     # --- Tacómetro por tramo ---
     if r.tramos:

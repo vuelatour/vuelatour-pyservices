@@ -94,6 +94,12 @@ class ReporteVueloRequest(BaseModel):
     notas_horas: list[str] = Field(default_factory=list)
     cobros: list[ReporteVueloLinea] = Field(default_factory=list)
     total_cobrado_usd: float = 0
+    # Comisiones bancarias de los cobros (terminal/transferencia): el banco
+    # deposita menos de lo que pagó el cliente. Neto = cobrado − comisiones =
+    # lo que realmente entró a la cuenta (pedido del cliente: el reporte no
+    # cuadraba con el estado de cuenta).
+    comision_banco_usd: float = 0
+    total_cobrado_neto_usd: float | None = None
     saldo_usd: float = 0
     combustible: list[ReporteVueloLinea] = Field(default_factory=list)
     gastos: list[ReporteVueloLinea] = Field(default_factory=list)

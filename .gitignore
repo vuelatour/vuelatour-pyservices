@@ -21,3 +21,6 @@ htmlcov/
 .vscode/
 *.swp
 .DS_Store
+
+# Lockfile de uv (validación local; el deploy usa requirements.txt)
+uv.lock
