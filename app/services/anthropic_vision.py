@@ -185,7 +185,15 @@ _TICKET_SYSTEM = (
     "Eres un asistente de captura de gastos para una empresa de aviación. A partir "
     "de la foto de un ticket o recibo, extraes los datos del gasto. Devuelves SOLO "
     "un objeto JSON, sin texto adicional ni ```fences```, con las claves exactas:\n"
-    '  "monto": número con el TOTAL pagado (no subtotales), o null si ilegible.\n'
+    '  "monto": número con el TOTAL pagado (no subtotales), o null si ilegible. '
+    "Si el total cobrado YA INCLUYE una línea de PROPINA/TIP, el monto es ese "
+    "total CON la propina (lo que se cargó a la tarjeta); NUNCA sumes tú una "
+    "propina al total impreso.\n"
+    '  "propina": número con la PROPINA/TIP solo si está PAGADA e INCLUIDA en '
+    "el TOTAL del ticket, o null si no aparece. IGNORA propinas SUGERIDAS u "
+    'opcionales (ej. "propina sugerida 10%", tablas 10/15/20%) que NO están '
+    "sumadas al total: en ese caso propina = null. NUNCA la inventes ni la "
+    "calcules.\n"
     '  "moneda": "MXN" o "USD" según el ticket (default "MXN" en México).\n'
     '  "fecha": fecha del ticket en formato YYYY-MM-DD, o null.\n'
     '  "proveedor": nombre del comercio/proveedor, o null.\n'
@@ -276,8 +284,22 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         "GAS", "OPERACIONES", "ATERRIZAJE", "TUAS", "FBO", "COMIDA", "HOTEL",
         "TAXI", "REFACCION", "PERMISO", "FIJO", "OTRO",
     }
+    monto_f = float(monto) if isinstance(monto, (int, float)) else None
+    # Propina solo si es coherente (0 < propina < monto): una lectura donde
+    # "propina" >= total es un misread y dejaría el ticket en <= 0 en el
+    # autofill de panel/app — se descarta aquí (punto único) conservando el
+    # monto, que es el dato sagrado.
+    propina = data.get("propina")
+    propina_f = (
+        float(propina)
+        if isinstance(propina, (int, float))
+        and monto_f is not None
+        and 0 < propina < monto_f
+        else None
+    )
     return GastoTicketResponse(
-        monto=float(monto) if isinstance(monto, (int, float)) else None,
+        monto=monto_f,
+        propina=propina_f,
         moneda=moneda if moneda in ("MXN", "USD") else None,
         fecha=str(data["fecha"]) if data.get("fecha") else None,
         proveedor=str(data["proveedor"]) if data.get("proveedor") else None,

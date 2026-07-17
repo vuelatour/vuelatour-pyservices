@@ -125,6 +125,10 @@ class ConceptoTicket(BaseModel):
 
 class GastoTicketResponse(BaseModel):
     monto: float | None = Field(default=None, description="Total del ticket, o null si ilegible")
+    propina: float | None = Field(
+        default=None,
+        description="Propina/tip si el ticket la muestra como línea (null si no aparece)",
+    )
     moneda: Literal["MXN", "USD"] | None = Field(default=None, description="Moneda detectada")
     fecha: str | None = Field(default=None, description="Fecha del ticket YYYY-MM-DD, o null")
     proveedor: str | None = Field(default=None, description="Nombre del comercio/proveedor")
