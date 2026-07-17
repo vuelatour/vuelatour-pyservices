@@ -7,6 +7,7 @@ from app.config import get_settings
 from app.schemas.facturacion import (
     CancelarRequest,
     CancelarResponse,
+    FacturacionHealthResponse,
     FacturaPreviewResponse,
     TimbrarRequest,
     TimbrarResponse,
@@ -15,7 +16,7 @@ from app.schemas.recibida import FacturaRecibidaParsed, ParseRecibidaRequest
 from app.security import require_internal_token
 from app.services.cfdi_fel import cancelar, timbrar
 from app.services.factura_preview_pdf import render_factura_preview_pdf
-from app.services.facturama import cancelar_facturama, timbrar_facturama
+from app.services.facturama import cancelar_facturama, probar_conexion, timbrar_facturama
 from app.services.recibida_parse import parse_cfdi
 
 logger = logging.getLogger("facturacion")
@@ -31,6 +32,25 @@ router = APIRouter(
 def parse_recibida(req: ParseRecibidaRequest) -> FacturaRecibidaParsed:
     """Parsea un CFDI recibido (XML de proveedor) y extrae sus datos."""
     return parse_cfdi(req)
+
+
+@router.get("/health", response_model=FacturacionHealthResponse)
+def health() -> FacturacionHealthResponse:
+    """Prueba las credenciales del PAC sin timbrar (no consume folios)."""
+    s = get_settings()
+    if not _usa_facturama():
+        return FacturacionHealthResponse(
+            ok=False,
+            pac="fel",
+            detalle=(
+                "El health-check solo está implementado para Facturama "
+                "(pon FACTURACION_PAC=facturama en Railway pyservices)."
+            ),
+        )
+    ok, detalle = probar_conexion()
+    return FacturacionHealthResponse(
+        ok=ok, pac="facturama", modo=s.facturama_modo, detalle=detalle
+    )
 
 
 def _usa_facturama() -> bool:

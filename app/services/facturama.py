@@ -52,7 +52,12 @@ def _auth_header() -> str:
     return f"Basic {tok}"
 
 
-def _request(method: str, path: str, body: dict | None = None) -> tuple[int, dict | list | None]:
+def _request(
+    method: str,
+    path: str,
+    body: dict | None = None,
+    timeout_s: float = _TIMEOUT_S,
+) -> tuple[int, dict | list | None]:
     url = f"{_base_url()}{path}"
     req = urllib.request.Request(
         url,
@@ -64,7 +69,7 @@ def _request(method: str, path: str, body: dict | None = None) -> tuple[int, dic
         method=method,
     )
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             raw = resp.read()
             return resp.status, json.loads(raw) if raw else None
     except urllib.error.HTTPError as e:
@@ -309,3 +314,38 @@ def cancelar_facturama(req: CancelarRequest) -> CancelarResponse:
             "en el sistema)."
         ),
     )
+
+
+def probar_conexion() -> tuple[bool, str]:
+    """Valida las credenciales contra Facturama SIN consumir timbres.
+
+    GET /api-lite/csds lista los CSD cargados: si responde 200 las
+    credenciales sirven; 401 = usuario/contraseña rechazados.
+    """
+    s = get_settings()
+    # Misma guarda que timbrar/cancelar: sin credenciales el 401 confunde.
+    if not s.facturama_user or not s.facturama_password:
+        return False, (
+            "Facturama no configurado: faltan FACTURAMA_USER/"
+            "FACTURAMA_PASSWORD en el entorno."
+        )
+    # Timeout corto propio: es un diagnóstico interactivo y el caller del
+    # API aborta a los 30 s — responder antes con el detalle preciso.
+    status, body = _request("GET", "/api-lite/csds", timeout_s=20.0)
+    if status == 200:
+        n = len(body) if isinstance(body, list) else 0
+        rfcs = (
+            ", ".join(str(c.get("Rfc", "?")) for c in body if isinstance(c, dict))
+            if isinstance(body, list) and n
+            else ""
+        )
+        detalle = f"Credenciales válidas; {n} CSD cargado(s) en Facturama"
+        return True, detalle + (f" ({rfcs})." if rfcs else ".")
+    if status == 401:
+        return False, (
+            "Facturama rechazó el usuario/contraseña "
+            "(revisa FACTURAMA_USER / FACTURAMA_PASSWORD en Railway)."
+        )
+    if status == 0:
+        return False, f"Sin conexión con Facturama: {_error_text(body)}"
+    return False, f"Respuesta inesperada de Facturama ({status}): {_error_text(body)}"

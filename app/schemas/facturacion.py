@@ -81,6 +81,15 @@ class FacturaPreviewResponse(BaseModel):
     pdf_b64: str
 
 
+class FacturacionHealthResponse(BaseModel):
+    """Diagnóstico de conexión con el PAC sin consumir timbres."""
+
+    ok: bool = False
+    pac: str = ""
+    modo: str = ""
+    detalle: str = ""
+
+
 class CancelarRequest(BaseModel):
     uuid: str = Field(
         min_length=36, max_length=36, description="UUID (folio fiscal) del CFDI a cancelar"
