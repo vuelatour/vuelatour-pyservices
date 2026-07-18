@@ -209,8 +209,11 @@ def parsear_estado_cuenta(req: ConciliacionParseRequest) -> ConciliacionParseRes
     name = req.filename.lower()
     if name.endswith(".csv"):
         return _parse_tabular(req, "csv")
-    if name.endswith((".xlsx", ".xls")):
+    if name.endswith(".xlsx"):
         return _parse_tabular(req, "excel")
+    if name.endswith(".xls"):
+        # pandas necesitaría xlrd (no instalado) → mismo mensaje que visión.
+        raise ValueError("Formato .xls (Excel viejo) no soportado: guárdalo como .xlsx")
     if name.endswith(".pdf"):
         return _parse_pdf(req)
     raise ValueError(f"Formato no soportado: {req.filename}")

@@ -1,6 +1,6 @@
 """Endpoints de generacion de PDF. Protegidos con el token interno (X-Internal-Token)."""
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.schemas.reparto import RepartoPdfRequest
 from app.schemas.reportes import ReporteVueloRequest
@@ -83,7 +83,13 @@ def reporte_vuelo_xlsx(payload: ReporteVueloRequest) -> Response:
 @router.post("/zip")
 def zip_archivos(payload: ZipRequest) -> Response:
     """Ensambla archivos (base64) en un .zip. Usado por el cierre mensual."""
-    zip_bytes = render_zip(payload)
+    try:
+        zip_bytes = render_zip(payload)
+    except ValueError as e:
+        # Archivos ilegibles: mejor un error claro que un cierre incompleto.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        ) from e
     return Response(
         content=zip_bytes,
         media_type="application/zip",

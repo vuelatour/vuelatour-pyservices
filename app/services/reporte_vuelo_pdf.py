@@ -244,19 +244,24 @@ def _build_html(r: ReporteVueloRequest) -> str:
     # al TC del vuelo (solo display). ---
     tc = r.tc_usd_mxn if (r.tc_usd_mxn or 0) > 0 else None
 
+    def _signed(v: float, moneda: str = "USD") -> str:
+        # Signo real en el número (no solo color): una ganancia negativa debe
+        # verse negativa, igual que en el XLSX del mismo vuelo.
+        return ("&minus;" if v < 0 else "") + _money(abs(v), moneda)
+
     def _bal_row(label: str, usd, bold=False, color=None, signo=1):
         if usd is None:
             return ""
+        val = signo * usd  # las deducciones llegan positivas con signo=-1
         style = f"font-weight:{'700' if bold else '400'};" + (f"color:{color};" if color else "")
         mxn = (
-            f"<td class='num' style='{style}'>{_money(round(signo * usd * tc, 2))}</td>"
+            f"<td class='num' style='{style}'>{_signed(round(val * tc, 2), 'MXN')}</td>"
             if tc
             else ""
         )
         return (
             f"<tr><td style='{style}'>{escape(label)}</td>"
-            f"<td class='num' style='{style}'>"
-            f"{'&minus;' if signo < 0 else ''}{_money(abs(usd))}</td>{mxn}</tr>"
+            f"<td class='num' style='{style}'>{_signed(val)}</td>{mxn}</tr>"
         )
 
     if r.remanente_usd is not None or r.ganancia_final_usd is not None:

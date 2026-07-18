@@ -23,7 +23,9 @@ router = APIRouter(
 def parse(req: ConciliacionParseRequest) -> ConciliacionParseResponse:
     try:
         return parsear_estado_cuenta(req)
-    except ModuleNotFoundError as e:
+    # ImportError (no solo ModuleNotFoundError): pandas relanza ImportError
+    # plano cuando falta una dependencia opcional de lectura.
+    except ImportError as e:
         logger.warning("Dependencia faltante: %s", e)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
