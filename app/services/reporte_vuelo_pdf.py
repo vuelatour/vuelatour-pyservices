@@ -74,6 +74,13 @@ def _build_html(r: ReporteVueloRequest) -> str:
         cot += _row("Tiempo cobrable", f"{r.tiempo_cobrable_hr:.2f} hr")
     cot += _row("Subtotal", _money(r.subtotal_usd))
     cot += _row("TUAS", _money(r.tuas_usd))
+    # Detalle de TUAS por aeropuerto CON su moneda (requisito del cliente):
+    # sub-líneas informativas — la fila numérica de arriba cuadra la suma.
+    for det in r.tuas_detalle:
+        cot += (
+            "<tr><td colspan='2' class='muted' "
+            f"style='font-size:10px;padding:0 4px 3px 14px'>{escape(det)}</td></tr>"
+        )
     if r.viaticos_pernocta_usd:
         cot += _row("Pernocta (vi&aacute;ticos)", _money(r.viaticos_pernocta_usd))
     if r.extras_total_usd:

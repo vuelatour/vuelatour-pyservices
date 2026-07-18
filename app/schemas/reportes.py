@@ -7,6 +7,19 @@ class EscalaPdf(BaseModel):
     destino: str
 
 
+class ExtraPdf(BaseModel):
+    """Extra cobrado al cliente (línea del cotizador). Todo con default:
+    los payloads viejos del API no mandaban extras (aditivo)."""
+
+    concepto: str = ""
+    monto_usd: float = 0
+    # Moneda NATIVA del extra: los pagados en pesos se muestran "· $X MXN"
+    # (requisito del cliente: cada concepto ligado a su moneda real).
+    moneda: str = "USD"
+    monto_nativo: float | None = None
+    aplica_iva: bool = True
+
+
 class CotizacionPdfRequest(BaseModel):
     folio: str
     fecha: str | None = None  # fecha de la cotización (texto ya formateado o ISO)
@@ -23,9 +36,23 @@ class CotizacionPdfRequest(BaseModel):
     tarifa_hora_usd: float | None = None
     subtotal_usd: float = 0
     tuas_usd: float = 0
+    # Detalle de TUAS por aeropuerto CON su moneda (strings ya formateados del
+    # desglose canónico del motor, p. ej. "TUA PCE · $330.60 MXN × 4 pax = …").
+    # Vacío en cotizaciones viejas → la plantilla conserva la línea única "TUAS".
+    tuas_detalle: list[str] = Field(default_factory=list)
+    extras: list[ExtraPdf] = Field(default_factory=list)
+    extras_total_usd: float = 0
+    viaticos_pernocta_usd: float = 0
+    # Descuento YA en positivo (el API manda |ajuste| solo si fue descuento;
+    # el redondeo hacia arriba nunca se muestra al cliente).
+    descuento_usd: float = 0
     iva_pct: float = 0
     iva_usd: float = 0
     total_usd: float = 0
+    # Total MXN EXACTO por composición (USD×TC + nativos MXN tal cual) y el TC
+    # congelado de la cotización, para la línea final "Total MXN".
+    total_mxn: float | None = None
+    tc_usd_mxn: float | None = None
     moneda: str = "USD"
     notas: str | None = None
 
@@ -73,6 +100,9 @@ class ReporteVueloRequest(BaseModel):
     tiempo_cobrable_hr: float | None = None
     subtotal_usd: float = 0
     tuas_usd: float = 0
+    # Sub-líneas INFORMATIVAS bajo la fila "TUAS" (una por aeropuerto, con su
+    # moneda). La fila numérica tuas_usd sigue siendo la que cuadra la suma.
+    tuas_detalle: list[str] = Field(default_factory=list)
     iva_usd: float = 0
     viaticos_pernocta_usd: float = 0
     extras_total_usd: float = 0

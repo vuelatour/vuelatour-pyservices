@@ -53,6 +53,54 @@ def _build_html(r: CotizacionPdfRequest) -> str:
         f'<div class="notas"><strong>Notas:</strong> {escape(r.notas)}</div>' if r.notas else ""
     )
 
+    # ----- Desglose: cada renglón que compone el total (mismo orden que el
+    # motor). Los TUAS se pintan POR AEROPUERTO con su moneda (requisito del
+    # cliente); sin detalle (cotización vieja) se conserva la línea única. -----
+    filas: list[str] = []
+
+    def fila(lbl: str, val: str) -> None:
+        filas.append(f'<tr><td class="lbl">{escape(lbl)}</td><td class="val">{val}</td></tr>')
+
+    fila("Tiempo cobrable", tiempo)
+    fila("Tarifa por hora", tarifa)
+    fila("Subtotal", _money(r.subtotal_usd))
+    if not r.tuas_detalle:
+        fila("TUAS", _money(r.tuas_usd))
+    elif len(r.tuas_detalle) == 1:
+        # Caso común (un aeropuerto): el concepto detallado sustituye a "TUAS".
+        fila(r.tuas_detalle[0], _money(r.tuas_usd))
+    else:
+        # Varios aeropuertos: detalle por línea + total USD para que la columna
+        # de montos siga sumando el total exacto.
+        for det in r.tuas_detalle:
+            fila(det, "")
+        fila("TUAS (total)", _money(r.tuas_usd))
+    for e in r.extras:
+        lbl = e.concepto or "Extra"
+        if e.moneda == "MXN" and e.monto_nativo is not None:
+            lbl += f" · ${e.monto_nativo:,.2f} MXN"
+        fila(lbl, _money(e.monto_usd))
+    if r.viaticos_pernocta_usd > 0:
+        fila("Viáticos por pernocta", _money(r.viaticos_pernocta_usd))
+    if r.descuento_usd > 0:
+        fila("Descuento", f"&minus;{_money(r.descuento_usd)}")
+    fila(f"IVA ({r.iva_pct:.0f}%)", _money(r.iva_usd))
+    desglose_html = "".join(filas)
+    total_row_html = (
+        f'<tr class="total-row"><td>Total ({escape(r.moneda)})</td>'
+        f'<td class="val">{_money(r.total_usd)}</td></tr>'
+    )
+
+    # Línea final en pesos: total MXN EXACTO por composición (viene calculado
+    # del motor; aquí solo se muestra) con el TC congelado de la cotización.
+    total_mxn_html = ""
+    if r.total_mxn is not None:
+        tc_txt = f" (T.C. {r.tc_usd_mxn:g})" if r.tc_usd_mxn else ""
+        total_mxn_html = (
+            f'<tr class="total-mxn"><td>Total MXN{escape(tc_txt)}</td>'
+            f'<td class="val">{_money(r.total_mxn)} MXN</td></tr>'
+        )
+
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
   @page {{ size: Letter; margin: 2cm; }}
@@ -72,6 +120,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   .totales .val {{ text-align: right; font-weight: 600; }}
   .total-row td {{ border-top: 2px solid {_NAVY}; padding-top: 12px; font-size: 18px;
                    font-weight: 800; color: {_BRAND}; }}
+  .total-mxn td {{ font-size: 13px; font-weight: 700; color: {_NAVY}; }}
   .notas {{ margin-top: 22px; font-size: 12px; color: #374151; }}
   .footer {{ margin-top: 30px; font-size: 11px; color: #9ca3af; text-align: center; }}
 </style></head><body>
@@ -100,12 +149,9 @@ def _build_html(r: CotizacionPdfRequest) -> str:
 
   <h2>Desglose</h2>
   <table class="totales"><tbody>
-    <tr><td class="lbl">Tiempo cobrable</td><td class="val">{tiempo}</td></tr>
-    <tr><td class="lbl">Tarifa por hora</td><td class="val">{tarifa}</td></tr>
-    <tr><td class="lbl">Subtotal</td><td class="val">{_money(r.subtotal_usd)}</td></tr>
-    <tr><td class="lbl">TUAS</td><td class="val">{_money(r.tuas_usd)}</td></tr>
-    <tr><td class="lbl">IVA ({r.iva_pct:.0f}%)</td><td class="val">{_money(r.iva_usd)}</td></tr>
-    <tr class="total-row"><td>Total ({escape(r.moneda)})</td><td class="val">{_money(r.total_usd)}</td></tr>
+    {desglose_html}
+    {total_row_html}
+    {total_mxn_html}
   </tbody></table>
   {notas_html}
 

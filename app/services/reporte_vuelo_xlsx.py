@@ -158,6 +158,15 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
         ws.cell(row=row, column=1, value=label).font = Font(color=MUTED)
         money_cell(row, 2, val)
         row += 1
+        # Detalle de TUAS por aeropuerto CON su moneda (requisito del cliente).
+        # Sub-filas INFORMATIVAS (el monto viene en el propio texto): la fila
+        # numérica "TUAS USD" de arriba sigue cuadrando la suma del desglose.
+        if label == "TUAS USD" and r.tuas_detalle:
+            for det in r.tuas_detalle:
+                c = ws.cell(row=row, column=1, value=f"    {det}")
+                c.font = Font(color=MUTED, size=9, italic=True)
+                ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=N_COLS)
+                row += 1
     ws.cell(row=row, column=1, value="Total USD").font = Font(bold=True)
     money_cell(row, 2, r.total_usd, bold=True)
     row += 1
