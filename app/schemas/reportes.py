@@ -238,6 +238,7 @@ class BalanceAvionTotales(BaseModel):
     por_cobrar_usd: float | None = None
     tc_promedio: float | None = None  # AVERAGE de los TC de costos no nulos
     costo_hr_prom_usd: float | None = None  # AVERAGE de costo/hr USD no nulos
+    otros_ingresos_usd: float | None = None  # TUAs/extras/pernocta → a la general
 
 
 class BalanceAvionGastoFila(BaseModel):

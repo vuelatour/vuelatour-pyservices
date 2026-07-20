@@ -237,12 +237,30 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         cell.border = _border
         if cell.value is not None or i == 1:
             cell.font = Font(bold=True)
-    row += 2
+    row += 1
+
+    # Otros ingresos del periodo (TUAs/extras/pernocta cobrados al cliente):
+    # informativo — NO suman en las columnas de la fila por vuelo; se
+    # trasladan al control GENERAL (regla del libro del cliente).
+    otros = getattr(t, "otros_ingresos_usd", None)
+    if otros is not None and otros != 0:
+        ws.cell(
+            row=row,
+            column=1,
+            value="OTROS INGRESOS del periodo (TUAs, extras, pernocta, transportes)"
+            " — trasladar al control general:",
+        ).font = Font(bold=True, size=9)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
+        _num(ws, row, 9, otros, MONEY, bold=True)
+        ws.cell(row=row, column=10, value="USD").font = Font(bold=True, size=9)
+        row += 1
+    row += 1
 
     # Notas al pie.
     for nota in (
-        "* TOTAL COBRADO AL CLIENTE incluye TUAS/extras/pernocta según cotización "
-        "(no es horas × tarifa).",
+        "* VENTA de cada fila = horas cobradas × tarifa (con o sin IVA según el "
+        "vuelo). TUAs/extras/pernocta NO van en la fila: son OTROS INGRESOS y se "
+        "registran en el control general.",
         "TIPO CAMBIO COSTOS y COSTO X HORA USD de la fila TOTALES son PROMEDIOS "
         "(los demás son sumas).",
     ):
