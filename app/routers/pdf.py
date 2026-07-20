@@ -3,10 +3,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.schemas.reparto import RepartoPdfRequest
-from app.schemas.reportes import ReporteVueloRequest
+from app.schemas.reportes import BalanceAvionRequest, ReporteVueloRequest
 from app.schemas.tabla import TablaXlsxRequest
 from app.schemas.zip import ZipRequest
 from app.security import require_internal_token
+from app.services.balance_avion_xlsx import render_balance_avion_xlsx
 from app.services.reparto_pdf import render_reparto_pdf
 from app.services.reparto_xlsx import render_reparto_xlsx
 from app.services.reporte_vuelo_pdf import render_reporte_vuelo_pdf
@@ -77,6 +78,24 @@ def reporte_vuelo_xlsx(payload: ReporteVueloRequest) -> Response:
         content=xlsx_bytes,
         media_type=XLSX_MEDIA,
         headers={"Content-Disposition": f'attachment; filename="vuelo-{payload.folio}.xlsx"'},
+    )
+
+
+@router.post("/balance-avion-xlsx")
+def balance_avion_xlsx(payload: BalanceAvionRequest) -> Response:
+    """Balance mensual por avión en Excel (réplica del control del equipo).
+
+    El API manda todo precalculado; aquí SOLO se renderiza el libro.
+    """
+    xlsx_bytes = render_balance_avion_xlsx(payload)
+    filename = (
+        f"balance-{payload.matricula or 'avion'}-"
+        f"{payload.periodo_desde or 's-f'}-{payload.periodo_hasta or 's-f'}.xlsx"
+    )
+    return Response(
+        content=xlsx_bytes,
+        media_type=XLSX_MEDIA,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
