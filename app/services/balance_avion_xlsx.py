@@ -33,6 +33,7 @@ MUTED = "627D98"
 LIGHT = "EEF2F7"
 GREEN = "15803D"
 RED = "DC2626"
+AMBER = "FCD34D"  # horas cobradas < voladas (regla: nunca cobrar de menos)
 # Colores suaves por bloque (ayuda visual pedida en el contrato).
 FILL_VENTA = "E8F0FB"  # azul suave
 FILL_COSTOS = "FDF3E7"  # ámbar suave
@@ -201,6 +202,15 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
     row = 3
     for v in req.vuelos:
         cobros = _cobros_a_4(v.cobros)
+        # Regla del cliente: lo cobrado nunca puede ser menor a lo volado.
+        # Resalta HORAS COBRADAS en ámbar cuando el taco registró más horas
+        # (solo señal visual; el pendiente del API explica el caso).
+        horas_menores = (
+            v.horas_cobradas is not None
+            and v.tiempo_vuelo is not None
+            and v.horas_cobradas > 0
+            and v.tiempo_vuelo - v.horas_cobradas > 0.01
+        )
         for i, (grupo, _header, attr, fmt) in enumerate(_COLS, start=1):
             fill = _GROUP_FILLS.get(grupo)
             if attr is not None:
@@ -213,6 +223,8 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
                         cell.font = Font(color=MUTED, size=9)
                 else:
                     cell = _num(ws, row, i, val, fmt)
+                if attr == "horas_cobradas" and horas_menores:
+                    fill = AMBER
             else:  # parcialidades de cobro (pares fecha/monto desde _COBRO1_COL)
                 idx = (i - _COBRO1_COL) // 2
                 cobro = cobros[idx] if idx < len(cobros) else None
