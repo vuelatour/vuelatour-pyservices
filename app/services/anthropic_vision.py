@@ -207,6 +207,10 @@ _TICKET_SYSTEM = (
     "(DEBITO/CREDITO/VISA/MASTERCARD/TARJETA = TARJETA_CORP; EFECTIVO/CASH = "
     "EFECTIVO; SPEI/TRANSFERENCIA = TRANSFERENCIA), o null.\n"
     '  "tarjeta_terminacion": ultimos 4 digitos de la tarjeta si aparecen, como string de 4 digitos, o null.\n'
+    '  "litros": SOLO si es ticket de COMBUSTIBLE (gasavión/AVGAS/turbosina/'
+    "Jet A): litros cargados; si viene en galones conviértelo (1 gal = "
+    "3.78541 L). Cualquier otro ticket: null. Las horas del balance dependen "
+    "de este dato: no lo inventes.\n"
     '  "conceptos": lista [{"concepto": string, "monto": número}] con el desglose '
     "de la factura. PRIORIDAD 1 — TABLA RESUMEN: muchas facturas de aeropuerto "
     "(ASUR/ADO) traen al pie una tabla resumen por SECCIONES (Operaciones, Taxi, "
@@ -326,6 +330,11 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         tarjeta_terminacion=(
             str(data["tarjeta_terminacion"]).strip()[-4:]
             if data.get("tarjeta_terminacion") and str(data["tarjeta_terminacion"]).strip()
+            else None
+        ),
+        litros=(
+            float(data["litros"])
+            if isinstance(data.get("litros"), (int, float)) and data["litros"] > 0
             else None
         ),
         conceptos=_parse_conceptos(data.get("conceptos")),

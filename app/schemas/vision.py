@@ -142,6 +142,10 @@ class GastoTicketResponse(BaseModel):
     tarjeta_terminacion: str | None = Field(
         default=None, description="Ultimos 4 digitos de la tarjeta, si aparecen"
     )
+    litros: float | None = Field(
+        default=None,
+        description="Litros cargados si es ticket de combustible (galones→L), o null",
+    )
     conceptos: list["ConceptoTicket"] = Field(
         default_factory=list,
         description="Renglones del ticket incl. IVA como renglón si viene aparte (suma = total); máx 8",
