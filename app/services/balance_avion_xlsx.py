@@ -17,6 +17,7 @@ from datetime import datetime
 from io import BytesIO
 
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
@@ -140,6 +141,14 @@ _COLS: list[tuple[str, str, str | None, str | None]] = [
     ("STATUS DE COBROS", "POR COBRAR\nUSD", "por_cobrar_usd", MONEY),
 ]
 _COBRO1_COL = next(i for i, c in enumerate(_COLS, start=1) if c[1] == "COBRO 1\nFECHA")
+# Celdas de costos con NOTA de desglose (comentario de Excel): al pasar el
+# cursor se ve qué gastos componen el total ("Comida · Starbucks — $206.00").
+_DETALLE_ATTR = {
+    "gas_mxn": "gas_detalle",
+    "op_mxn": "op_detalle",
+    "piloto_mxn": "piloto_detalle",
+    "otros_mxn": "otros_detalle",
+}
 _GROUP_FILLS = {"VENTA": FILL_VENTA, "COSTOS DIRECTOS (MXN)": FILL_COSTOS,
                 "STATUS DE COBROS": FILL_COBROS}
 # Columnas de la fila TOTALES: atributo del vuelo → atributo de totales.
@@ -225,6 +234,16 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
                     cell = _num(ws, row, i, val, fmt)
                 if attr == "horas_cobradas" and horas_menores:
                     fill = AMBER
+                # Nota con el desglose del total de la celda (gastos que la
+                # componen), visible al pasar el cursor en Excel.
+                det_attr = _DETALLE_ATTR.get(attr)
+                if det_attr:
+                    lineas = getattr(v, det_attr, None) or []
+                    if lineas:
+                        nota = Comment("\n".join(lineas), "VuelaTour")
+                        nota.width = 340
+                        nota.height = min(260, 40 + 16 * len(lineas))
+                        cell.comment = nota
             else:  # parcialidades de cobro (pares fecha/monto desde _COBRO1_COL)
                 idx = (i - _COBRO1_COL) // 2
                 cobro = cobros[idx] if idx < len(cobros) else None

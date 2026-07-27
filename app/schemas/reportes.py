@@ -190,6 +190,12 @@ class BalanceAvionVuelo(BaseModel):
     op_mxn: float | None = None
     piloto_mxn: float | None = None
     otros_mxn: float | None = None
+    # Desglose por celda (nota de Excel): una línea por gasto, p. ej.
+    # "Comida · Starbucks — $206.00". Vacío = sin nota en la celda.
+    gas_detalle: list[str] = Field(default_factory=list)
+    op_detalle: list[str] = Field(default_factory=list)
+    piloto_detalle: list[str] = Field(default_factory=list)
+    otros_detalle: list[str] = Field(default_factory=list)
     permiso_afac_mxn: float | None = None
     costo_total_mxn: float | None = None
     tc_costos: float | None = None
