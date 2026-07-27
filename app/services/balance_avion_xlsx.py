@@ -145,6 +145,9 @@ _COBRO1_COL = next(i for i, c in enumerate(_COLS, start=1) if c[1] == "COBRO 1\n
 # cursor se ve qué gastos componen el total ("Comida · Starbucks — $206.00").
 _DETALLE_ATTR = {
     "gas_mxn": "gas_detalle",
+    # GAS LITROS comparte la nota del gas: cada línea trae sus litros
+    # ("Gas · ASA — $4,857.30 · 164 L"), así se ve cuántas cargas son.
+    "gas_litros": "gas_detalle",
     "op_mxn": "op_detalle",
     "piloto_mxn": "piloto_detalle",
     "otros_mxn": "otros_detalle",
