@@ -332,3 +332,90 @@ class BitacoraTacoRequest(BaseModel):
     hasta: str | None = None
     generado: str | None = None
     filas: list[BitacoraTacoFila] = Field(default_factory=list)
+
+
+class DineroCobroPago(BaseModel):
+    """Parcialidad de cobro (o pago a proveedor) de la hoja dinero-vlos."""
+
+    fecha: str | None = None
+    monto_mxn: float | None = None
+
+
+class DineroVueloFila(BaseModel):
+    """Una fila de la hoja 'dinero-vlos' (un vuelo del periodo).
+
+    Las columnas SIN regla todavía (costo proveedor, comisiones, pagos)
+    viajan en None y se pintan vacías conservando su columna del libro.
+    """
+
+    clave: str = ""
+    matricula: str | None = None  # nota de la celda CLAVE
+    color: str | None = None  # color de fila (hex del avión, #RRGGBB)
+    fecha: str | None = None
+    ruta: str = ""
+    tiempo: float | None = None  # horas cobradas (calzos/hobs)
+    venta_hr_usd: float | None = None
+    venta_hr_mxn: float | None = None
+    iva_hr_usd: float | None = None
+    venta_hr_masiva_usd: float | None = None
+    total_cobrado_usd: float | None = None
+    iva_total_usd: float | None = None
+    tc_venta: float | None = None
+    total_cobrado_mxn: float | None = None
+    iva_total_mxn: float | None = None
+    total_siva_mxn: float | None = None
+    status_cobro: str | None = None  # COBRADO | PENDIENTE
+    cobros: list[DineroCobroPago] = Field(default_factory=list)
+    total_cobros_mxn: float | None = None
+    me_deben_mxn: float | None = None
+    factura_vuelatour: str | None = None
+
+
+class DineroOtroIngresoFila(BaseModel):
+    """Fila de la hoja 'Otros ingresos' (TUAs/extras/pernocta por vuelo)."""
+
+    clave: str = ""
+    fecha_vuelo: str | None = None
+    concepto_egreso: str | None = None
+    egreso_mxn: float | None = None
+    fecha_egreso: str | None = None
+    concepto_ingreso: str | None = None
+    ingreso_mxn: float | None = None
+    fecha_ingreso: str | None = None
+    remanente_mxn: float | None = None
+    factura: str | None = None
+
+
+class DineroOtroGastoFila(BaseModel):
+    """Fila de la hoja 'otros gastos' (gastos del mes sin vuelo)."""
+
+    fecha: str | None = None
+    concepto: str = ""
+    monto_mxn: float | None = None
+    acumulado_mxn: float | None = None
+
+
+class DineroUtilidadAvion(BaseModel):
+    """Columna por avión de la hoja 'utilidades' (lo computable hoy)."""
+
+    matricula: str = ""
+    gastos_indirectos_mxn: float | None = None
+    otros_gastos_mxn: float | None = None
+    permisos_mxn: float | None = None
+
+
+class DineroXlsxRequest(BaseModel):
+    """Libro 'Dinero <periodo>' (réplica del control manual del equipo)."""
+
+    periodo_desde: str | None = None
+    periodo_hasta: str | None = None
+    generado: str | None = None
+    # Leyenda de colores por avión (matrícula → hex).
+    leyenda_colores: list[dict] = Field(default_factory=list)
+    vuelos: list[DineroVueloFila] = Field(default_factory=list)
+    otros_ingresos: list[DineroOtroIngresoFila] = Field(default_factory=list)
+    otros_gastos: list[DineroOtroGastoFila] = Field(default_factory=list)
+    utilidades_otros_ingresos_mxn: float | None = None
+    utilidades_otros_gastos_mxn: float | None = None
+    utilidades_tc: float | None = None
+    utilidades_aviones: list[DineroUtilidadAvion] = Field(default_factory=list)

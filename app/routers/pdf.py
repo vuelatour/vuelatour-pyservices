@@ -6,6 +6,7 @@ from app.schemas.reparto import RepartoPdfRequest
 from app.schemas.reportes import (
     BalanceAvionRequest,
     BitacoraTacoRequest,
+    DineroXlsxRequest,
     ReporteVueloRequest,
 )
 from app.schemas.tabla import TablaXlsxRequest
@@ -13,6 +14,7 @@ from app.schemas.zip import ZipRequest
 from app.security import require_internal_token
 from app.services.balance_avion_xlsx import render_balance_avion_xlsx
 from app.services.bitacora_taco_pdf import render_bitacora_taco_pdf
+from app.services.dinero_xlsx import render_dinero_xlsx
 from app.services.reparto_pdf import render_reparto_pdf
 from app.services.reparto_xlsx import render_reparto_xlsx
 from app.services.reporte_vuelo_pdf import render_reporte_vuelo_pdf
@@ -61,6 +63,18 @@ def tabla_xlsx(payload: TablaXlsxRequest) -> Response:
         content=xlsx_bytes,
         media_type=XLSX_MEDIA,
         headers={"Content-Disposition": 'attachment; filename="reporte.xlsx"'},
+    )
+
+
+@router.post("/dinero-xlsx")
+def dinero_xlsx(payload: DineroXlsxRequest) -> Response:
+    """Libro «Dinero» del periodo (réplica del control manual del equipo)."""
+    xlsx_bytes = render_dinero_xlsx(payload)
+    filename = f"dinero-{payload.periodo_desde}-a-{payload.periodo_hasta}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type=XLSX_MEDIA,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
