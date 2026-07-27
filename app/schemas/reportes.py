@@ -292,3 +292,28 @@ class BalanceAvionRequest(BaseModel):
     permisos: BalanceAvionHojaGastos = Field(default_factory=BalanceAvionHojaGastos)
     balance: BalanceAvionBalanceBloque = Field(default_factory=BalanceAvionBalanceBloque)
     pendientes: list[str] = Field(default_factory=list)
+
+
+class BitacoraTacoFila(BaseModel):
+    """Una fila = UN vuelo: fecha, tacómetro inicial→final, horas y ruta.
+
+    Mismo renglón que el equipo llenaba a mano en la plantilla Excel
+    ("Imprimir planeador") para recortar y pegar en la bitácora física.
+    """
+
+    fecha: str  # ISO (date o datetime); se formatea dd-mmm en hora Cancún
+    taco_inicial: float
+    horas: float
+    taco_final: float
+    ruta: str  # "cun-pps-cun" (minúsculas, guiones)
+
+
+class BitacoraTacoRequest(BaseModel):
+    """Tira imprimible de bitácora de tacómetros (formato monomotor)."""
+
+    matricula: str = ""
+    modelo: str | None = None
+    desde: str | None = None
+    hasta: str | None = None
+    generado: str | None = None
+    filas: list[BitacoraTacoFila] = Field(default_factory=list)
