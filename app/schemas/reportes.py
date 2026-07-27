@@ -298,7 +298,8 @@ class BitacoraTacoFila(BaseModel):
     """Una fila = UN vuelo: fecha, tacómetro inicial→final, horas y ruta.
 
     Mismo renglón que el equipo llenaba a mano en la plantilla Excel
-    ("Imprimir planeador") para recortar y pegar en la bitácora física.
+    ("Imprimir planeador" / "MOTOR - HÉLICE") para recortar y pegar en la
+    bitácora física. Los tiempos de hélice solo vienen en formato bimotor.
     """
 
     fecha: str  # ISO (date o datetime); se formatea dd-mmm en hora Cancún
@@ -306,13 +307,21 @@ class BitacoraTacoFila(BaseModel):
     horas: float
     taco_final: float
     ruta: str  # "cun-pps-cun" (minúsculas, guiones)
+    helice_inicial: float | None = None
+    helice_final: float | None = None
 
 
 class BitacoraTacoRequest(BaseModel):
-    """Tira imprimible de bitácora de tacómetros (formato monomotor)."""
+    """Tira imprimible de bitácora de tacómetros.
+
+    formato PLANEADOR (monomotor): Fecha | Taco inicial | Horas | Taco final
+    | Ruta. formato MOTOR_HELICE (bimotor): agrega Tiempo hélice inicial y
+    final junto a cada tacómetro (offset que arrastra el equipo en su hoja).
+    """
 
     matricula: str = ""
     modelo: str | None = None
+    formato: str = "PLANEADOR"  # PLANEADOR | MOTOR_HELICE
     desde: str | None = None
     hasta: str | None = None
     generado: str | None = None

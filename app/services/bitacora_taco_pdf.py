@@ -48,19 +48,77 @@ def _num(v: float) -> str:
     return f"{v:,.1f}"
 
 
+def _anio(r: BitacoraTacoRequest) -> str:
+    """Año del encabezado "Fecha 2026" (del rango o de la primera fila)."""
+    for s in (r.desde, r.filas[0].fecha if r.filas else None):
+        if s and len(s) >= 4 and s[:4].isdigit():
+            return s[:4]
+    return ""
+
+
 def _build_html(r: BitacoraTacoRequest) -> str:
-    filas = "".join(
-        "<tr>"
-        f"<td class='c'>{escape(_fecha_corta(f.fecha))}</td>"
-        f"<td class='n'>{_num(f.taco_inicial)}</td>"
-        f"<td class='n'>{_num(f.horas)}</td>"
-        f"<td class='n'>{_num(f.taco_final)}</td>"
-        f"<td class='r'>{escape(f.ruta)}</td>"
-        "</tr>"
-        for f in r.filas
-    )
+    bimotor = r.formato == "MOTOR_HELICE"
+    ancho = 520 if bimotor else 440
+
+    def _hel(v: float | None) -> str:
+        return _num(v) if v is not None else "—"
+
+    if bimotor:
+        filas = "".join(
+            "<tr>"
+            f"<td class='c'>{escape(_fecha_corta(f.fecha))}</td>"
+            f"<td class='n'>{_num(f.taco_inicial)}</td>"
+            f"<td class='n'>{_hel(f.helice_inicial)}</td>"
+            f"<td class='n'>{_num(f.horas)}</td>"
+            f"<td class='n'>{_num(f.taco_final)}</td>"
+            f"<td class='n'>{_hel(f.helice_final)}</td>"
+            f"<td class='r'>{escape(f.ruta)}</td>"
+            "</tr>"
+            for f in r.filas
+        )
+        cols = 7
+    else:
+        filas = "".join(
+            "<tr>"
+            f"<td class='c'>{escape(_fecha_corta(f.fecha))}</td>"
+            f"<td class='n'>{_num(f.taco_inicial)}</td>"
+            f"<td class='n'>{_num(f.horas)}</td>"
+            f"<td class='n'>{_num(f.taco_final)}</td>"
+            f"<td class='r'>{escape(f.ruta)}</td>"
+            "</tr>"
+            for f in r.filas
+        )
+        cols = 5
     if not filas:
-        filas = "<tr><td colspan='5' class='c muted'>Sin vuelos con tacómetro en el periodo</td></tr>"
+        filas = f"<tr><td colspan='{cols}' class='c muted'>Sin vuelos con tacómetro en el periodo</td></tr>"
+
+    anio = _anio(r)
+    fecha_head = f"Fecha<br/>{anio}" if anio else "Fecha"
+    if bimotor:
+        # Réplica de la hoja "MOTOR - HÉLICE" del equipo (bimotor).
+        thead = (
+            "<tr>"
+            f"<th style='width:52px'>{fecha_head}</th>"
+            "<th style='width:64px'>Tacómetro<br/>inicial</th>"
+            "<th style='width:64px'>Tiempo<br/>hélice inicial</th>"
+            "<th style='width:44px'>Tiempo<br/>de vuelo</th>"
+            "<th style='width:64px'>Tacómetro<br/>final</th>"
+            "<th style='width:64px'>Tiempo<br/>hélice final</th>"
+            "<th>Ruta</th>"
+            "</tr>"
+        )
+        titulo = f"Bitácora motor–hélice · {escape(r.matricula)}"
+    else:
+        thead = (
+            "<tr>"
+            f"<th style='width:58px'>{fecha_head}</th>"
+            "<th style='width:66px'>Tacómetro<br/>inicial</th>"
+            "<th style='width:44px'>Horas</th>"
+            "<th style='width:66px'>Tacómetro<br/>final</th>"
+            "<th>Ruta</th>"
+            "</tr>"
+        )
+        titulo = f"Bitácora de tacómetro · {escape(r.matricula)}"
 
     rango = ""
     if r.desde or r.hasta:
@@ -68,18 +126,18 @@ def _build_html(r: BitacoraTacoRequest) -> str:
     generado = _fecha_larga(r.generado) if r.generado else ""
     modelo = f" · {escape(r.modelo)}" if r.modelo else ""
 
-    # La tira mide ~11.6 cm de ancho (como el área de impresión de la
+    # La tira es angosta a propósito (como el área de impresión de la
     # plantilla): cabe en la página de la bitácora tras recortarla. El thead
     # se repite solo en cada página (WeasyPrint).
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
   @page {{ size: letter; margin: 36px 40px; }}
   * {{ font-family: 'Helvetica Neue', Arial, sans-serif; color: {_NAVY}; }}
-  .head {{ width: 440px; display: flex; justify-content: space-between;
+  .head {{ width: {ancho}px; display: flex; justify-content: space-between;
            align-items: baseline; margin-bottom: 6px; }}
   .titulo {{ font-size: 12px; font-weight: 800; }}
   .sub {{ font-size: 9px; color: #627d98; }}
-  table {{ width: 440px; border-collapse: collapse; font-size: 10px; }}
+  table {{ width: {ancho}px; border-collapse: collapse; font-size: 10px; }}
   th, td {{ border: 1px solid #9aa8b5; padding: 2.5px 6px; }}
   th {{ background: #f0f4f8; font-size: 8.5px; text-transform: uppercase;
         letter-spacing: .4px; text-align: center; }}
@@ -87,20 +145,14 @@ def _build_html(r: BitacoraTacoRequest) -> str:
   td.n {{ text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }}
   td.r {{ text-transform: lowercase; }}
   .muted {{ color: #829ab1; }}
-  .pie {{ width: 440px; font-size: 8px; color: #829ab1; margin-top: 4px; }}
+  .pie {{ width: {ancho}px; font-size: 8px; color: #829ab1; margin-top: 4px; }}
 </style></head><body>
   <div class="head">
-    <div class="titulo">Bitácora de tacómetro · {escape(r.matricula)}{modelo}</div>
+    <div class="titulo">{titulo}{modelo}</div>
     <div class="sub">{escape(rango)}</div>
   </div>
   <table>
-    <thead><tr>
-      <th style="width:58px">Fecha</th>
-      <th style="width:66px">Tacómetro<br/>inicial</th>
-      <th style="width:44px">Horas</th>
-      <th style="width:66px">Tacómetro<br/>final</th>
-      <th>Ruta</th>
-    </tr></thead>
+    <thead>{thead}</thead>
     <tbody>{filas}</tbody>
   </table>
   <div class="pie">Generado {escape(generado)} · hora de Cancún (UTC−5) · VuelaTour</div>
