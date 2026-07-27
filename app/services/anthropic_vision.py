@@ -198,8 +198,11 @@ _TICKET_SYSTEM = (
     '  "fecha": fecha del ticket en formato YYYY-MM-DD, o null.\n'
     '  "proveedor": nombre del comercio/proveedor, o null.\n'
     '  "concepto": descripción breve de lo comprado, o null.\n'
-    '  "categoria_sugerida": una de GAS, OPERACIONES, COMIDA, HOTEL, '
-    "TAXI, REFACCION, PERMISO, FIJO, OTRO (la más probable), o null.\n"
+    '  "categoria_sugerida": una de GAS, OPERACIONES, ATERRIZAJE, TUAS, FBO, '
+    "COMIDA, HOTEL, TAXI, REFACCION, PERMISO, FIJO, OTRO (la más probable), o "
+    "null. Guía: ATERRIZAJE = cuotas de aterrizaje/estacionamiento de pista; "
+    "TUAS = tarifa de uso de aeropuerto (TUA); FBO = servicios FBO/handling; "
+    "HOTEL = hospedaje; comisariato o compras varias = OTRO.\n"
     '  "medio_pago": "EFECTIVO", "TARJETA_CORP" o "TRANSFERENCIA" segun el ticket '
     "(DEBITO/CREDITO/VISA/MASTERCARD/TARJETA = TARJETA_CORP; EFECTIVO/CASH = "
     "EFECTIVO; SPEI/TRANSFERENCIA = TRANSFERENCIA), o null.\n"

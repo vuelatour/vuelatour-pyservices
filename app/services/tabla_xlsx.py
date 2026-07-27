@@ -50,6 +50,30 @@ def render_tabla_xlsx(req: TablaXlsxRequest) -> bytes:
         ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncols)
         hrow = 3
 
+    # Bloque RESUMEN (opcional) arriba de la tabla: pares etiqueta → valor,
+    # p. ej. el total del periodo por categoría de gasto.
+    if req.resumen:
+        hrow += 1
+        if req.resumen_titulo:
+            rt = ws.cell(row=hrow, column=1, value=req.resumen_titulo)
+            rt.font = Font(bold=True, size=11, color=BRAND)
+            hrow += 1
+        for par in req.resumen:
+            etiqueta = par[0] if len(par) > 0 else None
+            valor = par[1] if len(par) > 1 else None
+            e = ws.cell(row=hrow, column=1, value=etiqueta)
+            e.fill = PatternFill("solid", fgColor=LIGHT)
+            e.border = _border
+            v = ws.cell(row=hrow, column=2, value=valor)
+            v.border = _border
+            if isinstance(valor, (int, float)):
+                v.number_format = MONEY
+            # Celdas extra del par (p. ej. conteo) tal cual.
+            for col in range(3, len(par) + 1):
+                x = ws.cell(row=hrow, column=col, value=par[col - 1])
+                x.border = _border
+            hrow += 1
+
     hrow += 1  # una fila en blanco antes del encabezado
 
     # Encabezado.

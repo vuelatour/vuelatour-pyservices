@@ -17,3 +17,7 @@ class TablaXlsxRequest(BaseModel):
     filas: list[list] = Field(default_factory=list)
     # Fila de totales opcional, alineada a `columnas` (None en celdas vacías).
     totales: list | None = None
+    # Bloque RESUMEN opcional arriba de la tabla: pares [etiqueta, valor]
+    # (el valor numérico se pinta como moneda). P. ej. total por categoría.
+    resumen_titulo: str | None = None
+    resumen: list[list] | None = None
