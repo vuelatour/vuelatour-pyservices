@@ -29,9 +29,17 @@ _SYSTEM = (
     '  "lectura": número NNNN.N con la lectura en horas, o null si no se puede leer.\n'
     '  "confianza": número entre 0 y 1.\n'
     '  "legible": true/false según si el display se distingue.\n'
-    '  "notas": string breve en español (reflejo, borrosa, dígito parcial, etc.).\n'
-    "Si dudas entre dos dígitos, elige el más probable y baja la confianza. "
-    "No inventes dígitos que no ves: si faltan, usa null y explica en notas."
+    '  "calidad_foto": "ALTA" si los dígitos se ven nítidos y completos; "MEDIA" '
+    "si se leen pero hay reflejo, ángulo, sombra o algo de desenfoque; \"BAJA\" si "
+    "la foto está borrosa/oscura/movida y algún dígito PODRÍA estar equivocado "
+    "(en especial la décima del tambor pequeño).\n"
+    '  "notas": string breve en español. OBLIGATORIO cuando calidad_foto no es '
+    '"ALTA": di QUÉ estorba y CUÁL dígito es el dudoso (ej. "foto borrosa: la '
+    'décima podría ser 8 o 9").\n'
+    "Si dudas entre dos dígitos, elige el más probable, baja la confianza y "
+    'reporta calidad_foto "BAJA". No inventes dígitos que no ves: si faltan, usa '
+    "null y explica en notas. Es MUCHO peor entregar una lectura equivocada como "
+    "segura que admitir la duda: de esa lectura salen las horas de toda la flota."
 )
 
 _USER_PROMPT = (
@@ -172,11 +180,18 @@ def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
     data = _extract_json(text)
 
     lectura = data.get("lectura")
+    confianza = float(data.get("confianza", 0.0))
+    calidad = str(data.get("calidad_foto", "") or "").strip().upper()
+    if calidad not in {"ALTA", "MEDIA", "BAJA"}:
+        # Modelo viejo o respuesta sin el campo: se deduce de la confianza para
+        # no perder el aviso (nunca se asume ALTA "por defecto").
+        calidad = "ALTA" if confianza >= 0.9 else "BAJA" if confianza < 0.7 else "MEDIA"
     return TacometroResponse(
         lectura=float(lectura) if isinstance(lectura, (int, float)) else None,
-        confianza=float(data.get("confianza", 0.0)),
+        confianza=confianza,
         legible=bool(data.get("legible", lectura is not None)),
         notas=str(data.get("notas", "")),
+        calidad_foto=calidad,
         modelo=s.anthropic_model,
     )
 

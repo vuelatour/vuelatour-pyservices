@@ -30,6 +30,14 @@ class TacometroResponse(BaseModel):
     confianza: float = Field(ge=0, le=1, description="Confianza 0..1 de la lectura")
     legible: bool = Field(description="true si el display se pudo leer")
     notas: str = Field(default="", description="Observaciones (borrosa, reflejo, dígitos parciales, etc.)")
+    calidad_foto: str = Field(
+        default="MEDIA",
+        description=(
+            "Calidad de la FOTO para leer el instrumento: ALTA (dígitos nítidos), "
+            "MEDIA (se lee pero con reflejo/ángulo/algo de desenfoque) o BAJA "
+            "(borrosa/oscura: la lectura puede tener dígitos equivocados)."
+        ),
+    )
     modelo: str = Field(description="Modelo de Claude usado")
 
 
