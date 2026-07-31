@@ -33,9 +33,10 @@ _SYSTEM = (
     "si se leen pero hay reflejo, ángulo, sombra o algo de desenfoque; \"BAJA\" si "
     "la foto está borrosa/oscura/movida y algún dígito PODRÍA estar equivocado "
     "(en especial la décima del tambor pequeño).\n"
-    '  "notas": string breve en español. OBLIGATORIO cuando calidad_foto no es '
-    '"ALTA": di QUÉ estorba y CUÁL dígito es el dudoso (ej. "foto borrosa: la '
-    'décima podría ser 8 o 9").\n'
+    '  "notas": string BREVE en español (máximo ~200 caracteres, UNA o dos '
+    'frases). OBLIGATORIO cuando calidad_foto no es "ALTA": di QUÉ estorba y '
+    'CUÁL dígito es el dudoso (ej. "foto borrosa: la décima podría ser 8 o 9"). '
+    'No repitas la lectura ni narres todo el dial.\n'
     "Si dudas entre dos dígitos, elige el más probable, baja la confianza y "
     'reporta calidad_foto "BAJA". No inventes dígitos que no ves: si faltan, usa '
     "null y explica en notas. Es MUCHO peor entregar una lectura equivocada como "
@@ -190,7 +191,9 @@ def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
         lectura=float(lectura) if isinstance(lectura, (int, float)) else None,
         confianza=confianza,
         legible=bool(data.get("legible", lectura is not None)),
-        notas=str(data.get("notas", "")),
+        # Tope duro además del prompt: una nota kilométrica rompía la captura
+        # aguas abajo (el API la valida por largo).
+        notas=str(data.get("notas", ""))[:400],
         calidad_foto=calidad,
         modelo=s.anthropic_model,
     )
