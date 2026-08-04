@@ -14,6 +14,16 @@ from openpyxl.utils import get_column_letter
 
 from app.schemas.tabla import TablaXlsxRequest
 
+# Excel prohíbe estos caracteres en el NOMBRE de la hoja (no en las celdas):
+# un titulo como "Gastos por avión / categoría" tronaba el export completo.
+_SHEET_ILEGALES = str.maketrans({c: "-" for c in "\\/*?:[]"})
+
+
+def sheet_title(nombre: str, respaldo: str = "Reporte") -> str:
+    """Nombre de hoja válido para Excel (sin caracteres ilegales, máx 31)."""
+    limpio = (nombre or respaldo).translate(_SHEET_ILEGALES).strip()
+    return (limpio or respaldo)[:31]
+
 BRAND = "0F4C81"
 LIGHT = "EEF2F7"
 WHITE = "FFFFFF"
@@ -35,7 +45,7 @@ def _fmt_for(tipo: str) -> str | None:
 def render_tabla_xlsx(req: TablaXlsxRequest) -> bytes:
     wb = Workbook()
     ws = wb.active
-    ws.title = (req.titulo or "Reporte")[:31]
+    ws.title = sheet_title(req.titulo)
 
     ncols = max(len(req.columnas), 1)
 

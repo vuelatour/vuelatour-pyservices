@@ -18,6 +18,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from app.schemas.reportes import ReporteVueloRequest
+from app.services.tabla_xlsx import sheet_title
 
 _CANCUN = ZoneInfo("America/Cancun")
 
@@ -50,7 +51,7 @@ N_COLS = 8
 def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
     wb = Workbook()
     ws = wb.active
-    ws.title = f"Vuelo {r.folio}"[:31]
+    ws.title = sheet_title(f"Vuelo {r.folio}")
     ws.column_dimensions["A"].width = 26
     for col in ("B", "C", "D", "E", "F", "G", "H"):
         ws.column_dimensions[col].width = 15

@@ -27,6 +27,7 @@ from app.schemas.reportes import (
     BalanceAvionHojaGastos,
     BalanceAvionRequest,
 )
+from app.services.tabla_xlsx import sheet_title
 
 BRAND = "0F4C81"
 NAVY = "102A43"
@@ -184,7 +185,7 @@ def _cobros_a_4(cobros: list[BalanceAvionCobro]) -> list[BalanceAvionCobro]:
 
 
 def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
-    ws.title = f"reporte horas {req.matricula}".strip()[:31]
+    ws.title = sheet_title(f"reporte horas {req.matricula}")
     n = len(_COLS)
 
     # Encabezado compacto de 2 filas: grupo (merged) / columna.
