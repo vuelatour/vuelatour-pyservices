@@ -282,8 +282,8 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         ws.cell(
             row=row,
             column=1,
-            value="OTROS INGRESOS del periodo (TUAs, extras, pernocta, transportes)"
-            " — trasladar al control general:",
+            value="De lo cobrado, TUAs/extras/pernocta/ajustes del periodo"
+            " (YA INCLUIDOS en las filas — informativo, no se traslada):",
         ).font = Font(bold=True, size=9)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
         _num(ws, row, 9, otros, MONEY, bold=True)
@@ -293,9 +293,9 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
 
     # Notas al pie.
     for nota in (
-        "* VENTA de cada fila = horas cobradas × tarifa (con o sin IVA según el "
-        "vuelo). TUAs/extras/pernocta NO van en la fila: son OTROS INGRESOS y se "
-        "registran en el control general.",
+        "* TOTAL COBRADO AL CLIENTE de cada fila = el desglose COMPLETO de la "
+        "cotización (tiempo + TUAs + extras + pernocta + ajustes, con su IVA) — "
+        "cuadra con los cobros del vuelo. Sin cotización: horas × tarifa.",
         "TIPO CAMBIO COSTOS y COSTO X HORA USD de la fila TOTALES son PROMEDIOS "
         "(los demás son sumas).",
     ):
