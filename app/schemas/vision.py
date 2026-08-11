@@ -137,6 +137,10 @@ class GastoTicketResponse(BaseModel):
         default=None,
         description="Propina/tip si el ticket la muestra como línea (null si no aparece)",
     )
+    folio: str | None = Field(
+        default=None,
+        description="Folio/remisión impreso en el ticket (llave anti-duplicados), o null",
+    )
     moneda: Literal["MXN", "USD"] | None = Field(default=None, description="Moneda detectada")
     fecha: str | None = Field(default=None, description="Fecha del ticket YYYY-MM-DD, o null")
     proveedor: str | None = Field(default=None, description="Nombre del comercio/proveedor")
@@ -228,6 +232,10 @@ class CombustibleTicketResponse(BaseModel):
     litros: float | None = Field(default=None, description="Litros cargados (galones→L si aplica), o null")
     precio_litro: float | None = Field(default=None, description="Precio por litro, o null")
     total: float | None = Field(default=None, description="Total pagado, o null")
+    folio: str | None = Field(
+        default=None,
+        description="Folio/remisión impreso en el ticket (ej. remisión ASA), o null",
+    )
     moneda: Literal["MXN", "USD"] | None = Field(default=None, description="Moneda detectada")
     aeropuerto: str | None = Field(default=None, description="Código/nombre del aeropuerto o FBO, o null")
     tipo_combustible: Literal["TURBOSINA", "AVGAS"] | None = Field(

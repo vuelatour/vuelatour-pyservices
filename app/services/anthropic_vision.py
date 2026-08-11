@@ -215,6 +215,11 @@ _TICKET_SYSTEM = (
     '  "moneda": "MXN" o "USD" según el ticket (default "MXN" en México).\n'
     '  "fecha": fecha del ticket en formato YYYY-MM-DD, o null.\n'
     '  "proveedor": nombre del comercio/proveedor, o null.\n'
+    '  "folio": numero de folio/remision/ticket/factura impreso en el documento '
+    '(ej. "Remision: 2622242310" → "2622242310"; "Folio A-1234" → "A-1234"). Solo '
+    "el identificador, sin la palabra Folio/Remision. Si hay varios, el de la "
+    "remision o folio principal. Si no aparece: null. Este dato evita capturas "
+    "duplicadas: no lo inventes.\n"
     '  "concepto": descripción breve de lo comprado, o null.\n'
     '  "categoria_sugerida": una de GAS, OPERACIONES, ATERRIZAJE, TUAS, FBO, '
     "COMIDA, HOTEL, TAXI, REFACCION, PERMISO, FIJO, OTRO (la más probable), o "
@@ -553,6 +558,10 @@ _COMBUSTIBLE_SYSTEM = (
     '  "fecha": fecha YYYY-MM-DD, o null.\n'
     '  "hora": hora de la carga en formato HH:MM de 24 horas, o null.\n'
     '  "proveedor": nombre del proveedor/FBO, o null.\n'
+    '  "folio": numero de folio/remision impreso en el ticket (ej. '
+    '"Remision: 2622242310" → "2622242310"). Solo el identificador, sin la '
+    "palabra Folio/Remision. Si no aparece: null. Este dato evita capturas "
+    "duplicadas: no lo inventes.\n"
     '  "tarjeta_terminacion": ultimos 4 digitos de la tarjeta de pago si aparecen '
     'en el ticket (p. ej. "**** 1234" o "TARJETA ...1234"), como string de 4 digitos, o null.\n'
     '  "medio_pago": "EFECTIVO", "TARJETA_CORP" o "TRANSFERENCIA" segun el ticket, o null.\n'
