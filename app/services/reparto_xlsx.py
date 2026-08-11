@@ -111,6 +111,19 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
             mc.number_format = MONEY
             mc.border = _border
             r += 1
+        # Vigencias traslapadas/incompletas: mismo aviso que el PDF y el badge
+        # de la web — el Excel dispersable no puede salir doble en silencio.
+        if a.reparto and round(a.reparto_porcentaje_total, 2) != 100:
+            aviso = ws.cell(
+                row=r,
+                column=1,
+                value=(
+                    f"AVISO {a.matricula}: los porcentajes suman "
+                    f"{a.reparto_porcentaje_total:g}% (no 100%) — revisar vigencias de socios."
+                ),
+            )
+            aviso.font = Font(color="B45309", italic=True, size=9)
+            r += 1
 
     buf = BytesIO()
     wb.save(buf)

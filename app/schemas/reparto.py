@@ -27,6 +27,10 @@ class RepartoAvion(BaseModel):
     gastos_sin_tc_mxn: float = 0.0
     cobros_sin_tc_mxn: float = 0.0
     reserva_incompleta: bool = False
+    # Suma de porcentajes de socios vigentes en el periodo. ≠ 100 = vigencias
+    # traslapadas o incompletas: el reparto impreso estaría doble o corto.
+    # Default 100 (payloads viejos no disparan la advertencia).
+    reparto_porcentaje_total: float = 100.0
     reparto: list[RepartoSocioLinea] = Field(default_factory=list)
 
 

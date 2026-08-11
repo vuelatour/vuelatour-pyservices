@@ -244,6 +244,13 @@ def _bloque_avion(avion: RepartoAvion, estilo_titulo: ParagraphStyle) -> KeepTog
         )
     if avion.reserva_incompleta:
         avisos.append("Sin tarifa de reserva de overhaul configurada pese a horas voladas.")
+    # Vigencias de socios traslapadas o incompletas: el reparto impreso saldría
+    # doble (o corto). La web lo delata con un badge; el papel debe decirlo igual.
+    if avion.reparto and round(avion.reparto_porcentaje_total, 2) != 100:
+        avisos.append(
+            f"Los porcentajes de socios suman {avion.reparto_porcentaje_total:g}% (no 100%): "
+            "revisar vigencias en el catálogo de socios antes de dispersar."
+        )
     if avisos:
         aviso_style = ParagraphStyle(
             "aviso", fontSize=7.5, textColor=colors.HexColor("#b45309"), leading=10
