@@ -298,6 +298,10 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "cuadra con los cobros del vuelo. Sin cotización: horas × tarifa.",
         "TIPO CAMBIO COSTOS y COSTO X HORA USD de la fila TOTALES son PROMEDIOS "
         "(los demás son sumas).",
+        "** El TUA pagado al aeropuerto NO suma al costo (es un traslado al "
+        "pasajero; regla del libro, ago 2026) — queda desglosado en la nota de "
+        "la celda de OPERACIONES/OTROS. El ingreso de la fila sí incluye los "
+        "TUAs cobrados al cliente (cuadra contra los cobros).",
     ):
         ws.cell(row=row, column=1, value=nota).font = Font(color=MUTED, size=9, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=14)
