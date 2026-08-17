@@ -302,13 +302,17 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "pasajero; regla del libro, ago 2026) — queda desglosado en la nota de "
         "la celda de OPERACIONES/OTROS. El ingreso de la fila sí incluye los "
         "TUAs cobrados al cliente (cuadra contra los cobros).",
+        "*** Filas 'COMPARTIDO': el vuelo mezcló aviones — aquí van SOLO los "
+        "tramos, horas y costos de esta matrícula; la VENTA completa está en "
+        "el balance del avión principal (el prorrateo del precio entre "
+        "aviones está pendiente de decisión).",
     ):
         ws.cell(row=row, column=1, value=nota).font = Font(color=MUTED, size=9, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=14)
         row += 1
 
     # Anchos + paneles congelados (bajo el encabezado, a la derecha de RUTA).
-    anchos = {1: 16, 2: 12, 3: 24, 4: 12}
+    anchos = {1: 16, 2: 12, 3: 34, 4: 12}
     for i in range(1, n + 1):
         ws.column_dimensions[get_column_letter(i)].width = anchos.get(i, 13)
     ws.freeze_panes = "D3"
