@@ -235,12 +235,14 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
             and v.horas_cobradas > 0
             and v.tiempo_vuelo - v.horas_cobradas > 0.01
         )
-        # Balance GENERAL: la fila entera se tiñe con el color del avión
-        # (así identifica el equipo en su libro manual); en el individual
-        # avion_color viene vacío y mandan los colores por bloque.
+        # Balance GENERAL: SOLO la celda de la CLAVE se tiñe con el color del
+        # avión (así lo maneja el equipo en su libro — el resto de la fila
+        # conserva los colores por bloque); en el individual viene vacío.
         avion_fill = _hex(v.avion_color)
         for i, (grupo, _header, attr, fmt) in enumerate(_COLS, start=1):
-            fill = avion_fill or _GROUP_FILLS.get(grupo)
+            fill = _GROUP_FILLS.get(grupo)
+            if i == 1 and avion_fill:
+                fill = avion_fill
             if attr is not None:
                 val = getattr(v, attr)
                 if fmt is None:
@@ -358,13 +360,13 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
             # Moneda/monto original solo cuando el gasto NO se capturó en MXN.
             ws.cell(row=row, column=4, value=f.moneda_original).border = _border
             _num(ws, row, 5, f.monto_original).border = _border
-            # Balance GENERAL: fila teñida con el color del avión.
+            # Balance GENERAL: SOLO la celda del DETALLE (lleva la matrícula
+            # al frente) se tiñe con el color del avión — como su libro.
             avion_fill = _hex(f.avion_color)
             if avion_fill:
-                for c in range(1, 6):
-                    ws.cell(row=row, column=c).fill = PatternFill(
-                        "solid", fgColor=avion_fill
-                    )
+                ws.cell(row=row, column=2).fill = PatternFill(
+                    "solid", fgColor=avion_fill
+                )
             row += 1
     else:
         ws.cell(row=row, column=1, value="Sin gastos registrados en el periodo.").font = Font(
@@ -568,12 +570,10 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
         for avion in req.aviones:
             tc = ws_b.cell(row=row, column=1, value=avion.matricula or "—")
             tc.font = Font(bold=True, size=12, color=NAVY)
+            # Solo la celda de la matrícula lleva el color (como su libro).
             swatch = _hex(avion.avion_color)
             if swatch:
-                for c in range(1, 4):
-                    ws_b.cell(row=row, column=c).fill = PatternFill(
-                        "solid", fgColor=swatch
-                    )
+                tc.fill = PatternFill("solid", fgColor=swatch)
             row = _bloque_balance(ws_b, avion, row + 1) + 2
         for i, w in enumerate([46, 14, 16], start=1):
             ws_b.column_dimensions[get_column_letter(i)].width = w
