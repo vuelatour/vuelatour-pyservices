@@ -26,6 +26,8 @@ from app.schemas.reportes import (
     BalanceAvionCobro,
     BalanceAvionHojaGastos,
     BalanceAvionRequest,
+    BalanceGeneralRequest,
+    BalanceGeneralResumenFila,
 )
 from app.services.tabla_xlsx import sheet_title
 
@@ -443,6 +445,89 @@ def render_balance_avion_xlsx(req: BalanceAvionRequest) -> bytes:
     _hoja_gastos(wb.create_sheet("permisos"), "Permisos", req.permisos, req)
     _hoja_balance(wb.create_sheet("balance"), req)
     _hoja_pendientes(wb.create_sheet("pendientes de captura"), req)
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _fila_resumen(ws: Worksheet, row: int, f: BalanceGeneralResumenFila,
+                  *, bold: bool = False) -> None:
+    c = ws.cell(row=row, column=1, value=f.matricula)
+    if bold:
+        c.font = Font(bold=True)
+    _num(ws, row, 2, f.vuelos, "0", **({"bold": True} if bold else {}))
+    _num(ws, row, 3, f.horas, HORAS, **({"bold": True} if bold else {}))
+    _num(ws, row, 4, f.horas_cobradas, HORAS, **({"bold": True} if bold else {}))
+    _num(ws, row, 5, f.venta_mxn, MONEY, **({"bold": True} if bold else {}))
+    _num(ws, row, 6, f.costo_mxn, MONEY, **({"bold": True} if bold else {}))
+    _num(ws, row, 7, f.ganancia_mxn, MONEY, **({"bold": True} if bold else {}))
+    _num(ws, row, 8, f.cobrado_mxn, MONEY, **({"bold": True} if bold else {}))
+    _num(ws, row, 9, f.por_cobrar_mxn, MONEY, **({"bold": True} if bold else {}))
+    _num(ws, row, 10, f.pendientes, "0", **({"bold": True} if bold else {}))
+
+
+def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
+    """Índice de la flota: una fila por avión (los números vienen del API —
+    son los TOTALES del libro de cada avión, jamás se recalculan aquí)."""
+    ws.title = "RESUMEN flota"
+    _title(
+        ws,
+        f"Balance general de flota · {req.periodo_desde or ''} a {req.periodo_hasta or ''}",
+        1,
+        10,
+    )
+    _header_row(ws, 3, [
+        "AVIÓN", "VUELOS", "HORAS\nVOLADAS", "HORAS\nCOBRADAS", "VENTA\nMXN",
+        "COSTO TOTAL\nMXN", "GANANCIA\nMXN", "COBRADO\nMXN",
+        "POR COBRAR\nMXN", "PENDIENTES",
+    ])
+    row = 4
+    for f in req.resumen:
+        _fila_resumen(ws, row, f)
+        row += 1
+    if req.resumen_totales is not None:
+        _fila_resumen(ws, row, req.resumen_totales, bold=True)
+        row += 1
+    row += 1
+    ws.cell(
+        row=row,
+        column=1,
+        value="El detalle de cada avión está en sus hojas (misma estructura "
+        "que el libro individual, prefijadas con su matrícula).",
+    ).font = Font(color=MUTED, size=9, italic=True)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=10)
+    for i in range(1, 11):
+        ws.column_dimensions[get_column_letter(i)].width = 10 if i == 1 else 14
+    ws.freeze_panes = "A4"
+
+
+def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
+    """Balance GENERAL: la MISMA estructura del libro individual, para todos
+    los aviones en un solo workbook — cada avión conserva sus 6 hojas
+    intactas (prefijadas con la matrícula) y al frente va el RESUMEN."""
+    wb = Workbook()
+    _hoja_resumen_general(wb.active, req)
+    for avion in req.aviones:
+        mat = avion.matricula or "avion"
+        # La hoja maestra se titula sola ("reporte horas <MAT>").
+        _hoja_maestra(wb.create_sheet(), avion)
+        _hoja_gastos(
+            wb.create_sheet(sheet_title(f"{mat} gastos indirectos")),
+            "Gastos indirectos", avion.gastos_indirectos, avion,
+        )
+        _hoja_gastos(
+            wb.create_sheet(sheet_title(f"{mat} otros gastos")),
+            "Otros gastos", avion.otros_gastos, avion,
+        )
+        _hoja_gastos(
+            wb.create_sheet(sheet_title(f"{mat} permisos")),
+            "Permisos", avion.permisos, avion,
+        )
+        _hoja_balance(wb.create_sheet(sheet_title(f"{mat} balance")), avion)
+        _hoja_pendientes(
+            wb.create_sheet(sheet_title(f"{mat} pendientes")), avion,
+        )
 
     buf = BytesIO()
     wb.save(buf)

@@ -300,6 +300,34 @@ class BalanceAvionRequest(BaseModel):
     pendientes: list[str] = Field(default_factory=list)
 
 
+class BalanceGeneralResumenFila(BaseModel):
+    """Fila del RESUMEN del balance general (viene YA calculada del API —
+    aquí jamás se recalcula dinero)."""
+
+    matricula: str = ""
+    vuelos: int = 0
+    horas: float | None = None
+    horas_cobradas: float | None = None
+    venta_mxn: float | None = None
+    costo_mxn: float | None = None
+    ganancia_mxn: float | None = None
+    cobrado_mxn: float | None = None
+    por_cobrar_mxn: float | None = None
+    pendientes: int = 0
+
+
+class BalanceGeneralRequest(BaseModel):
+    """Balance GENERAL de flota: los libros individuales de varios aviones
+    (misma estructura de hojas) concatenados en un workbook + hoja RESUMEN."""
+
+    generado: str | None = None
+    periodo_desde: str | None = None
+    periodo_hasta: str | None = None
+    resumen: list[BalanceGeneralResumenFila] = Field(default_factory=list)
+    resumen_totales: BalanceGeneralResumenFila | None = None
+    aviones: list[BalanceAvionRequest] = Field(default_factory=list)
+
+
 class BitacoraTacoFila(BaseModel):
     """Una fila = UN vuelo: fecha, tacómetro inicial→final, horas y ruta.
 

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from app.schemas.reparto import RepartoPdfRequest
 from app.schemas.reportes import (
     BalanceAvionRequest,
+    BalanceGeneralRequest,
     BitacoraTacoRequest,
     DineroXlsxRequest,
     ReporteVueloRequest,
@@ -12,7 +13,10 @@ from app.schemas.reportes import (
 from app.schemas.tabla import TablaXlsxRequest
 from app.schemas.zip import ZipRequest
 from app.security import require_internal_token
-from app.services.balance_avion_xlsx import render_balance_avion_xlsx
+from app.services.balance_avion_xlsx import (
+    render_balance_avion_xlsx,
+    render_balance_general_xlsx,
+)
 from app.services.bitacora_taco_pdf import render_bitacora_taco_pdf
 from app.services.dinero_xlsx import render_dinero_xlsx
 from app.services.reparto_pdf import render_reparto_pdf
@@ -121,6 +125,25 @@ def balance_avion_xlsx(payload: BalanceAvionRequest) -> Response:
     xlsx_bytes = render_balance_avion_xlsx(payload)
     filename = (
         f"balance-{payload.matricula or 'avion'}-"
+        f"{payload.periodo_desde or 's-f'}-{payload.periodo_hasta or 's-f'}.xlsx"
+    )
+    return Response(
+        content=xlsx_bytes,
+        media_type=XLSX_MEDIA,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/balance-general-xlsx")
+def balance_general_xlsx(payload: BalanceGeneralRequest) -> Response:
+    """Balance GENERAL de flota: los libros individuales concatenados en un
+    workbook (misma estructura de hojas por avión) + hoja RESUMEN al frente.
+
+    El API manda todo precalculado; aquí SOLO se renderiza.
+    """
+    xlsx_bytes = render_balance_general_xlsx(payload)
+    filename = (
+        f"balance-general-"
         f"{payload.periodo_desde or 's-f'}-{payload.periodo_hasta or 's-f'}.xlsx"
     )
     return Response(
