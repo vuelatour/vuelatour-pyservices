@@ -318,7 +318,9 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "** El TUA pagado al aeropuerto NO suma al costo (es un traslado al "
         "pasajero; regla del libro, ago 2026) — queda desglosado en la nota de "
         "la celda de OPERACIONES/OTROS. El ingreso de la fila sí incluye los "
-        "TUAs cobrados al cliente (cuadra contra los cobros).",
+        "TUAs cobrados al cliente (cuadra contra los cobros). Los servicios "
+        "FBO de una factura de aeródromo también se separan: SÍ son costo, "
+        "pero van a la columna OTROS (la operación queda sola en OPERACIONES).",
         "*** Filas 'COMPARTIDO': el vuelo mezcló aviones — aquí van SOLO los "
         "tramos, horas y costos de esta matrícula; la VENTA completa está en "
         "el balance del avión principal (el prorrateo del precio entre "

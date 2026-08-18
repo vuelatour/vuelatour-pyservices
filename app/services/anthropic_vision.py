@@ -216,9 +216,11 @@ _TICKET_SYSTEM = (
     '  "fecha": fecha del ticket en formato YYYY-MM-DD, o null.\n'
     '  "proveedor": nombre del comercio/proveedor, o null.\n'
     '  "folio": numero de folio/remision/ticket/factura impreso en el documento '
-    '(ej. "Remision: 2622242310" → "2622242310"; "Folio A-1234" → "A-1234"). Solo '
-    "el identificador, sin la palabra Folio/Remision. Si hay varios, el de la "
-    "remision o folio principal. Si no aparece: null. Este dato evita capturas "
+    '(ej. "Remision: 2622242310" → "2622242310"; "Folio A-1234" → "A-1234"; '
+    '"FACTURA No. FEDCUN 193422" → "FEDCUN 193422" — las facturas de aeropuerto '
+    "lo traen en el recuadro superior derecho). Solo el identificador, sin la "
+    "palabra Folio/Remision. Si hay varios, el de la remision o folio principal "
+    "(NO el folio fiscal UUID). Si no aparece: null. Este dato evita capturas "
     "duplicadas: no lo inventes.\n"
     '  "concepto": descripción breve de lo comprado, o null.\n'
     '  "categoria_sugerida": una de GAS, OPERACIONES, ATERRIZAJE, TUAS, FBO, '
@@ -228,8 +230,15 @@ _TICKET_SYSTEM = (
     "HOTEL = hospedaje; comisariato o compras varias = OTRO.\n"
     '  "medio_pago": "EFECTIVO", "TARJETA_CORP" o "TRANSFERENCIA" segun el ticket '
     "(DEBITO/CREDITO/VISA/MASTERCARD/TARJETA = TARJETA_CORP; EFECTIVO/CASH = "
-    "EFECTIVO; SPEI/TRANSFERENCIA = TRANSFERENCIA), o null.\n"
-    '  "tarjeta_terminacion": ultimos 4 digitos de la tarjeta si aparecen, como string de 4 digitos, o null.\n'
+    "EFECTIVO; SPEI/TRANSFERENCIA = TRANSFERENCIA), o null. OJO: muchas fotos "
+    "traen ENGRAPADO o encimado sobre la factura un voucher chico de terminal "
+    'bancaria (Banamex/Global Payments/EVO: "TOTAL $", "TARJETA", '
+    '"AUTORIZACION", "Debit/Credit", "COPIA CLIENTE/NEGOCIO") — ese voucher ES '
+    "la evidencia del pago: medio_pago = TARJETA_CORP aunque la factura no "
+    "mencione el medio.\n"
+    '  "tarjeta_terminacion": ultimos 4 digitos de la tarjeta si aparecen, como '
+    "string de 4 digitos, o null. Tambien se leen del voucher bancario "
+    'engrapado (ej. "TARJETA 6250 Debito" → "6250").\n'
     '  "litros": SOLO si es ticket de COMBUSTIBLE (gasavión/AVGAS/turbosina/'
     "Jet A): litros cargados; si viene en galones conviértelo (1 gal = "
     "3.78541 L). Cualquier otro ticket: null. Las horas del balance dependen "
@@ -563,8 +572,11 @@ _COMBUSTIBLE_SYSTEM = (
     "palabra Folio/Remision. Si no aparece: null. Este dato evita capturas "
     "duplicadas: no lo inventes.\n"
     '  "tarjeta_terminacion": ultimos 4 digitos de la tarjeta de pago si aparecen '
-    'en el ticket (p. ej. "**** 1234" o "TARJETA ...1234"), como string de 4 digitos, o null.\n'
-    '  "medio_pago": "EFECTIVO", "TARJETA_CORP" o "TRANSFERENCIA" segun el ticket, o null.\n'
+    'en el ticket o en un voucher bancario engrapado (p. ej. "**** 1234" o '
+    '"TARJETA ...1234"), como string de 4 digitos, o null.\n'
+    '  "medio_pago": "EFECTIVO", "TARJETA_CORP" o "TRANSFERENCIA" segun el ticket, '
+    "o null. Un voucher de terminal bancaria engrapado/encimado (TOTAL, TARJETA, "
+    "AUTORIZACION, Debit/Credit) = TARJETA_CORP.\n"
     '  "confianza": número entre 0 y 1.\n'
     '  "legible": true/false.\n'
     '  "notas": string breve en español.\n'
@@ -582,7 +594,9 @@ def leer_ticket_combustible(req: GastoTicketRequest) -> CombustibleTicketRespons
     resp = _client().messages.create(
         model=s.anthropic_model,
         max_tokens=1000,
-        system=[{"type": "text", "text": _COMBUSTIBLE_SYSTEM, "cache_control": {"type": "ephemeral"}}],
+        system=[
+            {"type": "text", "text": _COMBUSTIBLE_SYSTEM, "cache_control": {"type": "ephemeral"}}
+        ],
         messages=[
             {
                 "role": "user",
