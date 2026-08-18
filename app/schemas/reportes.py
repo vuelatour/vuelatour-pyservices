@@ -169,6 +169,9 @@ class BalanceAvionVuelo(BaseModel):
     fecha: str | None = None  # ISO date o texto libre (multi-día: "9-10 sep")
     ruta: str | None = None
     estado: str | None = None  # COMPLETADO / CANCELADO / ... (se pinta tal cual)
+    # Balance GENERAL (flota): la fila se tiñe con el color del avión
+    # (aeronave.color_calendario — así identifica el equipo en su libro).
+    avion_color: str | None = None
     # --- Bloque VENTA ---
     horas_cobradas: float | None = None
     tarifa_usd: float | None = None
@@ -255,6 +258,8 @@ class BalanceAvionGastoFila(BaseModel):
     monto_mxn: float | None = None
     moneda_original: str | None = None  # solo si ≠ MXN
     monto_original: float | None = None
+    # Balance GENERAL: fila teñida con el color del avión.
+    avion_color: str | None = None
 
 
 class BalanceAvionHojaGastos(BaseModel):
@@ -289,6 +294,9 @@ class BalanceAvionRequest(BaseModel):
     generado: str | None = None
     matricula: str = ""
     modelo: str | None = None
+    # Color del avión (aeronave.color_calendario) — lo usa el balance
+    # GENERAL para teñir su bloque en la hoja "balance".
+    avion_color: str | None = None
     periodo_desde: str | None = None
     periodo_hasta: str | None = None
     vuelos: list[BalanceAvionVuelo] = Field(default_factory=list)
@@ -305,6 +313,9 @@ class BalanceGeneralResumenFila(BaseModel):
     aquí jamás se recalcula dinero)."""
 
     matricula: str = ""
+    # Color del avión (aeronave.color_calendario): la celda de la matrícula
+    # se tiñe con él — es la LEYENDA de colores del libro general.
+    color: str | None = None
     vuelos: int = 0
     horas: float | None = None
     horas_cobradas: float | None = None
@@ -325,6 +336,11 @@ class BalanceGeneralRequest(BaseModel):
     periodo_hasta: str | None = None
     resumen: list[BalanceGeneralResumenFila] = Field(default_factory=list)
     resumen_totales: BalanceGeneralResumenFila | None = None
+    # CONSOLIDADO (regla del cliente, 18-ago): UN solo juego de hojas con los
+    # datos de TODOS los aviones juntos (filas teñidas con el color de cada
+    # avión). `aviones` se usa solo para los bloques de la hoja "balance"
+    # (los socios son POR avión).
+    consolidado: BalanceAvionRequest | None = None
     aviones: list[BalanceAvionRequest] = Field(default_factory=list)
 
 

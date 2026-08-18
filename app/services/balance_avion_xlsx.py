@@ -52,6 +52,15 @@ _thin = Side(style="thin", color="D5DBE3")
 _border = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
 
 
+def _hex(color: str | None) -> str | None:
+    """#RRGGBB → RRGGBB tal cual (mismo criterio que el Libro Dinero: el
+    equipo usa sus colores saturados por avión, no se aclaran)."""
+    if not color:
+        return None
+    c = color.lstrip("#").strip()
+    return c.upper() if len(c) == 6 else None
+
+
 def _fecha(s: str | None) -> str | None:
     """ISO date → dd/mm/aaaa; texto libre (multi-día '9-10 sep') tal cual."""
     if not s:
@@ -226,8 +235,12 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
             and v.horas_cobradas > 0
             and v.tiempo_vuelo - v.horas_cobradas > 0.01
         )
+        # Balance GENERAL: la fila entera se tiñe con el color del avión
+        # (así identifica el equipo en su libro manual); en el individual
+        # avion_color viene vacío y mandan los colores por bloque.
+        avion_fill = _hex(v.avion_color)
         for i, (grupo, _header, attr, fmt) in enumerate(_COLS, start=1):
-            fill = _GROUP_FILLS.get(grupo)
+            fill = avion_fill or _GROUP_FILLS.get(grupo)
             if attr is not None:
                 val = getattr(v, attr)
                 if fmt is None:
@@ -345,6 +358,13 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
             # Moneda/monto original solo cuando el gasto NO se capturó en MXN.
             ws.cell(row=row, column=4, value=f.moneda_original).border = _border
             _num(ws, row, 5, f.monto_original).border = _border
+            # Balance GENERAL: fila teñida con el color del avión.
+            avion_fill = _hex(f.avion_color)
+            if avion_fill:
+                for c in range(1, 6):
+                    ws.cell(row=row, column=c).fill = PatternFill(
+                        "solid", fgColor=avion_fill
+                    )
             row += 1
     else:
         ws.cell(row=row, column=1, value="Sin gastos registrados en el periodo.").font = Font(
@@ -358,11 +378,19 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
 
 
 def _hoja_balance(ws: Worksheet, req: BalanceAvionRequest) -> None:
-    b = req.balance
     _title(ws, f"Balance — {req.matricula}".strip(" —"), 1, 3)
     periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'} (todo en USD)"
     ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
+    _bloque_balance(ws, req, 4)
+    for i, w in enumerate([46, 14, 16], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
 
+
+def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int) -> int:
+    """Bloque utilidad + reparto de socios de UN avión, empezando en `row`.
+    Devuelve la siguiente fila libre (el balance GENERAL apila un bloque por
+    avión — los socios son POR avión, no hay un reparto de flota)."""
+    b = req.balance
     filas: list[tuple[str, float | None, bool]] = [
         ("UTILIDAD ANTES DE GASTOS USD", b.utilidad_antes_usd, False),
         ("(−) GASTOS INDIRECTOS USD", b.gastos_indirectos_usd, False),
@@ -372,7 +400,6 @@ def _hoja_balance(ws: Worksheet, req: BalanceAvionRequest) -> None:
         ("(−) PENDIENTE DE PAGO (COBRANZA PENDIENTE) USD", b.por_cobrar_usd, False),
         ("UTILIDAD COBRADA USD", b.utilidad_cobrada_usd, True),
     ]
-    row = 4
     for label, val, bold in filas:
         lc = ws.cell(row=row, column=1, value=label)
         lc.font = Font(bold=bold, color=NAVY if bold else MUTED)
@@ -402,9 +429,8 @@ def _hoja_balance(ws: Worksheet, req: BalanceAvionRequest) -> None:
             row=row, column=1, value="Sin socios configurados para este avión (ver pendientes)."
         ).font = Font(color=RED, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
-
-    for i, w in enumerate([46, 14, 16], start=1):
-        ws.column_dimensions[get_column_letter(i)].width = w
+        row += 1
+    return row
 
 
 def _hoja_pendientes(ws: Worksheet, req: BalanceAvionRequest) -> None:
@@ -456,6 +482,11 @@ def _fila_resumen(ws: Worksheet, row: int, f: BalanceGeneralResumenFila,
     c = ws.cell(row=row, column=1, value=f.matricula)
     if bold:
         c.font = Font(bold=True)
+    # La celda de la matrícula teñida con el color del avión = la LEYENDA del
+    # libro (tabla "Color calendario" del equipo).
+    swatch = _hex(f.color)
+    if swatch:
+        c.fill = PatternFill("solid", fgColor=swatch)
     _num(ws, row, 2, f.vuelos, "0", **({"bold": True} if bold else {}))
     _num(ws, row, 3, f.horas, HORAS, **({"bold": True} if bold else {}))
     _num(ws, row, 4, f.horas_cobradas, HORAS, **({"bold": True} if bold else {}))
@@ -503,31 +534,51 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
 
 
 def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
-    """Balance GENERAL: la MISMA estructura del libro individual, para todos
-    los aviones en un solo workbook — cada avión conserva sus 6 hojas
-    intactas (prefijadas con la matrícula) y al frente va el RESUMEN."""
+    """Balance GENERAL (regla del cliente, 18-ago): la MISMA estructura de
+    hojas que el libro individual pero con los datos de TODOS los aviones
+    JUNTOS — 1 reporte de horas, 1 gastos indirectos, 1 otros gastos, 1
+    permisos, 1 balance (bloques por avión: los socios son por avión) y 1
+    pendientes. Cada fila se identifica por su clave y el COLOR del avión
+    (aeronave.color_calendario, editable en el apartado del avión)."""
     wb = Workbook()
     _hoja_resumen_general(wb.active, req)
-    for avion in req.aviones:
-        mat = avion.matricula or "avion"
-        # La hoja maestra se titula sola ("reporte horas <MAT>").
-        _hoja_maestra(wb.create_sheet(), avion)
+    cons = req.consolidado
+    if cons is not None:
+        # La hoja maestra se titula sola ("reporte horas FLOTA").
+        _hoja_maestra(wb.create_sheet(), cons)
         _hoja_gastos(
-            wb.create_sheet(sheet_title(f"{mat} gastos indirectos")),
-            "Gastos indirectos", avion.gastos_indirectos, avion,
-        )
-        _hoja_gastos(
-            wb.create_sheet(sheet_title(f"{mat} otros gastos")),
-            "Otros gastos", avion.otros_gastos, avion,
+            wb.create_sheet("gastos indirectos"),
+            "Gastos indirectos", cons.gastos_indirectos, cons,
         )
         _hoja_gastos(
-            wb.create_sheet(sheet_title(f"{mat} permisos")),
-            "Permisos", avion.permisos, avion,
+            wb.create_sheet("otros gastos"), "Otros gastos",
+            cons.otros_gastos, cons,
         )
-        _hoja_balance(wb.create_sheet(sheet_title(f"{mat} balance")), avion)
-        _hoja_pendientes(
-            wb.create_sheet(sheet_title(f"{mat} pendientes")), avion,
-        )
+        _hoja_gastos(wb.create_sheet("permisos"), "Permisos", cons.permisos, cons)
+
+        # Hoja balance: un BLOQUE por avión (título teñido con su color).
+        ws_b = wb.create_sheet("balance")
+        _title(ws_b, "Balance por avión", 1, 3)
+        ws_b.cell(
+            row=2, column=1,
+            value=f"Periodo: {req.periodo_desde or '—'} a "
+            f"{req.periodo_hasta or '—'} (todo en USD) · los socios son POR avión",
+        ).font = Font(italic=True, size=10, color=MUTED)
+        row = 4
+        for avion in req.aviones:
+            tc = ws_b.cell(row=row, column=1, value=avion.matricula or "—")
+            tc.font = Font(bold=True, size=12, color=NAVY)
+            swatch = _hex(avion.avion_color)
+            if swatch:
+                for c in range(1, 4):
+                    ws_b.cell(row=row, column=c).fill = PatternFill(
+                        "solid", fgColor=swatch
+                    )
+            row = _bloque_balance(ws_b, avion, row + 1) + 2
+        for i, w in enumerate([46, 14, 16], start=1):
+            ws_b.column_dimensions[get_column_letter(i)].width = w
+
+        _hoja_pendientes(wb.create_sheet("pendientes de captura"), cons)
 
     buf = BytesIO()
     wb.save(buf)
