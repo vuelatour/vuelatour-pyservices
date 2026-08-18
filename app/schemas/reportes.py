@@ -165,6 +165,9 @@ class BalanceAvionCobro(BaseModel):
 class BalanceAvionVuelo(BaseModel):
     """Una fila de la hoja maestra 'reporte horas <MATRÍCULA>' (1 vuelo)."""
 
+    # Llave interna de orden cronológico (el API ya manda las filas
+    # ordenadas); NO se pinta.
+    orden_ts: str | None = None
     clave: str | None = None  # folio + clave del cliente (estilo "vt...")
     fecha: str | None = None  # ISO date o texto libre (multi-día: "9-10 sep")
     ruta: str | None = None
