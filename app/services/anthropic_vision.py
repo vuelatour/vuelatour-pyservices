@@ -226,8 +226,23 @@ _TICKET_SYSTEM = (
     '  "categoria_sugerida": una de GAS, OPERACIONES, ATERRIZAJE, TUAS, FBO, '
     "COMIDA, HOTEL, TAXI, REFACCION, PERMISO, FIJO, OTRO (la más probable), o "
     "null. Guía: ATERRIZAJE = cuotas de aterrizaje/estacionamiento de pista; "
-    "TUAS = tarifa de uso de aeropuerto (TUA); FBO = servicios FBO/handling; "
-    "HOTEL = hospedaje; comisariato o compras varias = OTRO.\n"
+    "TUAS = tarifa de uso de aeropuerto (TUA); FBO = servicios FBO/handling. "
+    "Los VIÁTICOS de la tripulación tienen categoría propia — NO los mandes a "
+    "OTRO: COMIDA = restaurante, desayuno/comida/cena, torta, café, alimentos "
+    "de la tripulación (aunque sea tienda de conveniencia u OXXO); TAXI = "
+    "taxi, Uber/DiDi, mototaxi, autobús, ferry y cualquier transporte "
+    "terrestre/marítimo de la tripulación; HOTEL = hospedaje de la "
+    "tripulación (incluye impuestos del hotel como saneamiento). OTRO es solo "
+    "para lo que no es de la tripulación: comisariato (snacks/bebidas para "
+    "los PASAJEROS), mensajería/paquetería, papelería, compras de oficina y "
+    "varios sin categoría clara. Desempate: si el ticket no deja ver para "
+    "quién es (súper/OXXO, ferry, restaurante sin más señas), asume "
+    "TRIPULACIÓN (COMIDA/TAXI/HOTEL); señales de PASAJEROS mandan a OTRO "
+    "(varios boletos en el mismo ticket, consumo a nombre del cliente, "
+    "leyendas que mencionen pasajeros). OJO: gasolina/diésel de un VEHÍCULO "
+    "TERRESTRE (gasolinera Pemex, OXXO GAS — que NO es la tienda OXXO) NUNCA "
+    "es GAS ni COMIDA: es TAXI si es transporte de la tripulación u OTRO si "
+    "es de oficina.\n"
     '  "medio_pago": "EFECTIVO", "TARJETA_CORP" o "TRANSFERENCIA" segun el ticket '
     "(DEBITO/CREDITO/VISA/MASTERCARD/TARJETA = TARJETA_CORP; EFECTIVO/CASH = "
     "EFECTIVO; SPEI/TRANSFERENCIA = TRANSFERENCIA), o null. OJO: muchas fotos "
@@ -280,8 +295,12 @@ _TICKET_SYSTEM = (
     '  "confianza": número entre 0 y 1.\n'
     '  "legible": true/false según si el ticket se distingue.\n'
     '  "notas": string breve en español con cualquier observación.\n'
-    "No inventes datos que no aparezcan: usa null. GAS es combustible/turbosina; "
-    "OPERACIONES agrupa aterrizaje, FBO y servicios de aeropuerto/plataforma."
+    "No inventes datos que no aparezcan: usa null. GAS es SOLO combustible de "
+    "AVIACIÓN (gasavión/AVGAS/turbosina/Jet A). Para facturas de aeropuerto: "
+    "OPERACIONES es la categoría de las MIXTAS o generales (aterrizaje + "
+    "servicios + FBO juntos, prefiérela sobre la legada ATERRIZAJE); usa TUAS "
+    "solo si la factura es PURAMENTE TUA, y FBO solo si es puramente "
+    "handling/FBO."
 )
 
 _TICKET_PROMPT = (
