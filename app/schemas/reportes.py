@@ -20,6 +20,19 @@ class ExtraPdf(BaseModel):
     aplica_iva: bool = True
 
 
+class MapaPuntoPdf(BaseModel):
+    """Tramo con coordenadas para el mapa de ruta del PDF (26-ago)."""
+
+    orden: int
+    origen_iata: str
+    destino_iata: str
+    o_lat: float
+    o_lon: float
+    d_lat: float
+    d_lon: float
+    es_ferry: bool = False
+
+
 class CotizacionPdfRequest(BaseModel):
     folio: str
     fecha: str | None = None  # fecha de la cotización (texto ya formateado o ISO)
@@ -55,6 +68,13 @@ class CotizacionPdfRequest(BaseModel):
     tc_usd_mxn: float | None = None
     moneda: str = "USD"
     notas: str | None = None
+    # ===== PDF profesional (26-ago): mapa, matrícula y fotos del avión =====
+    matricula: str | None = None
+    # Data-URIs (base64) firmadas y descargadas por el API; None = sin foto.
+    foto_exterior: str | None = None
+    foto_interior: str | None = None
+    mapa_puntos: list[MapaPuntoPdf] = Field(default_factory=list)
+
 
 
 # ===== Reporte consolidado de UN vuelo (cotización + ingreso + combustible +
