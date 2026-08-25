@@ -144,7 +144,7 @@ def _mapa_svg(puntos: list[MapaPuntoPdf]) -> str:
             f'font-weight="700" fill="{_NAVY}">{escape(iata)}</text>'
         )
     return (
-        '<h2>Ruta</h2><div class="mapa">'
+        '<div class="mapa">'
         f'<svg viewBox="0 0 {_VIEW_W} {_VIEW_H}" xmlns="http://www.w3.org/2000/svg">'
         f"{fondo}{''.join(arcos)}{''.join(marcadores)}</svg></div>"
     )
@@ -232,10 +232,8 @@ def _build_html(r: CotizacionPdfRequest) -> str:
         )
         titulo_av = f" · {escape(r.matricula)}" if r.matricula else ""
         fotos_html = f"""
-        <div class="fotos">
-          <h2>La aeronave{titulo_av}</h2>
-          <div class="fotos-grid cols-{len(fotos)}">{celdas}</div>
-        </div>"""
+        <h2>La aeronave{titulo_av}</h2>
+        <div class="fotos-grid cols-{len(fotos)}">{celdas}</div>"""
 
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
@@ -269,7 +267,10 @@ def _build_html(r: CotizacionPdfRequest) -> str:
                    font-weight: 800; color: {_BRAND}; }}
   .total-mxn td {{ font-size: 13px; font-weight: 700; color: {_NAVY}; }}
   .notas {{ margin-top: 20px; font-size: 12px; color: #374151; }}
-  .fotos {{ page-break-before: always; }}
+  /* Página 2 (26-ago): los DETALLES del vuelo (mapa, traslados, itinerario
+     y fotos) van en su propia página; la página 1 es solo la cotización. */
+  .detalles {{ page-break-before: always; }}
+  .fotos-grid figure {{ page-break-inside: avoid; }}
   .fotos-grid {{ display: flex; gap: 12px; }}
   .fotos-grid figure {{ margin: 0; flex: 1; }}
   .fotos-grid.cols-1 figure {{ flex: none; width: 100%; }}
@@ -298,15 +299,6 @@ def _build_html(r: CotizacionPdfRequest) -> str:
     {r.pasajeros} {'pasajero' if r.pasajeros == 1 else 'pasajeros'}{f" · {escape(r.matricula)}" if r.matricula else ""}
   </div>
 
-  {mapa_html}
-
-  <h2>Traslados</h2>
-  <table class="grid"><tbody>
-    <tr><td>Traslado inicial</td><td>{_fecha_legible(r.fecha_traslado_inicial)}</td></tr>
-    <tr><td>Traslado final</td><td>{_fecha_legible(r.fecha_traslado_final)}</td></tr>
-  </tbody></table>
-  {escalas_html}
-
   <h2>Desglose</h2>
   <table class="totales"><tbody>
     {desglose_html}
@@ -314,7 +306,18 @@ def _build_html(r: CotizacionPdfRequest) -> str:
     {total_mxn_html}
   </tbody></table>
   {notas_html}
-  {fotos_html}
+
+  <div class="detalles">
+    <h2>Detalles del vuelo</h2>
+    {mapa_html}
+    <h2>Traslados</h2>
+    <table class="grid"><tbody>
+      <tr><td>Traslado inicial</td><td>{_fecha_legible(r.fecha_traslado_inicial)}</td></tr>
+      <tr><td>Traslado final</td><td>{_fecha_legible(r.fecha_traslado_final)}</td></tr>
+    </tbody></table>
+    {escalas_html}
+    {fotos_html}
+  </div>
 
   <div class="footer">{TZ_NOTA}<br>Gracias por volar con VuelaTour — Aero Charter Cancún.</div>
 </body></html>"""
