@@ -258,8 +258,9 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
   .grid th, .grid td {{ border: 1px solid #e5e5e5; padding: 6px 10px; text-align: left; }}
   .grid th {{ background: #f7f7f8; }}
-  .mapa {{ border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden;
-           background: #f8fafc; }}
+  /* Un CUARTO de la hoja (pedido 26-ago): mitad de ancho, centrado. */
+  .mapa {{ width: 50%; margin: 0 auto; border: 1px solid #e5e7eb;
+           border-radius: 10px; overflow: hidden; background: #f8fafc; }}
   .mapa svg {{ width: 100%; display: block; }}
   .totales td {{ padding: 7px 0; }}
   .totales .lbl {{ color: #6b7280; }}
