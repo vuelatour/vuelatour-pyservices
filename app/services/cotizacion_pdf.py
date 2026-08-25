@@ -284,10 +284,13 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   /* Página 2 (26-ago): SOLO imágenes (mapa de la ruta + fotos del avión);
      la página 1 lleva cotización + traslados + itinerario. */
   .detalles {{ page-break-before: always; }}
-  .fotos-grid figure {{ page-break-inside: avoid; }}
-  .fotos-grid {{ display: flex; gap: 12px; }}
-  .fotos-grid figure {{ margin: 0; flex: 1; }}
-  .fotos-grid.cols-1 figure {{ flex: none; width: 100%; }}
+  /* Fotos APILADAS (26-ago): exterior arriba, interior abajo, con altura
+     fija + object-fit para llenar la hoja 2 sin huecos exagerados
+     (mapa ~6.2cm + 2 fotos de 7.4cm ≈ página completa). */
+  .fotos-grid figure {{ page-break-inside: avoid; margin: 0 0 10px; }}
+  .fotos-grid img {{ height: 7.4cm; object-fit: cover; }}
+  .fotos-grid.cols-1 img {{ height: 12cm; }}
+  .fotos-grid figure {{ width: 100%; }}
   .fotos-grid img {{ width: 100%; border-radius: 10px; border: 1px solid #e5e7eb; }}
   .fotos-grid figcaption {{ font-size: 11px; color: #6b7280; margin-top: 4px;
                             text-align: center; }}
@@ -313,6 +316,13 @@ def _build_html(r: CotizacionPdfRequest) -> str:
     {r.pasajeros} {'pasajero' if r.pasajeros == 1 else 'pasajeros'}{f" · {escape(r.matricula)}" if mostrar_matricula else ""}
   </div>
 
+  <h2>Traslados</h2>
+  <table class="grid"><tbody>
+    <tr><td>Traslado inicial</td><td>{_fecha_legible(r.fecha_traslado_inicial)}</td></tr>
+    <tr><td>Traslado final</td><td>{_fecha_legible(r.fecha_traslado_final)}</td></tr>
+  </tbody></table>
+  {escalas_html}
+
   <h2>Desglose</h2>
   <table class="totales"><tbody>
     {desglose_html}
@@ -320,13 +330,6 @@ def _build_html(r: CotizacionPdfRequest) -> str:
     {total_mxn_html}
   </tbody></table>
   {notas_html}
-
-  <h2>Traslados</h2>
-  <table class="grid"><tbody>
-    <tr><td>Traslado inicial</td><td>{_fecha_legible(r.fecha_traslado_inicial)}</td></tr>
-    <tr><td>Traslado final</td><td>{_fecha_legible(r.fecha_traslado_final)}</td></tr>
-  </tbody></table>
-  {escalas_html}
 
   <div class="detalles">
     {mapa_html}
