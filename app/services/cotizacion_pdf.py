@@ -252,6 +252,19 @@ def _build_html(r: CotizacionPdfRequest) -> str:
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
   @page {{ size: Letter; margin: 1.8cm 2cm; }}
+  /* Pie SOLO en la hoja 1 (26-ago): anclado abajo aunque el contenido
+     termine a media hoja — el texto de horarios/gracias vive aquí. */
+  @page :first {{
+    margin-bottom: 2.4cm;
+    @bottom-center {{
+      content: "{TZ_NOTA} \A Gracias por volar con VuelaTour, Aero Charter Cancún.";
+      white-space: pre;
+      font-size: 10px;
+      color: #9ca3af;
+      text-align: center;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+    }}
+  }}
   * {{ font-family: 'Helvetica Neue', Arial, sans-serif; color: #1d1d1d; }}
   /* Marca de agua: fija = se repite en TODAS las páginas (WeasyPrint). */
   .marca {{ position: fixed; top: 34%; left: 0; right: 0; text-align: center;
@@ -294,7 +307,6 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   .fotos-grid img {{ width: 100%; border-radius: 10px; border: 1px solid #e5e7eb; }}
   .fotos-grid figcaption {{ font-size: 11px; color: #6b7280; margin-top: 4px;
                             text-align: center; }}
-  .footer {{ margin-top: 28px; font-size: 11px; color: #9ca3af; text-align: center; }}
 </style></head><body>
   {marca_html}
   <div class="header">
@@ -336,7 +348,6 @@ def _build_html(r: CotizacionPdfRequest) -> str:
     {fotos_html}
   </div>
 
-  <div class="footer">{TZ_NOTA}<br>Gracias por volar con VuelaTour — Aero Charter Cancún.</div>
 </body></html>"""
 
 
