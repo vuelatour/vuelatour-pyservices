@@ -151,6 +151,9 @@ def _mapa_svg(puntos: list[MapaPuntoPdf]) -> str:
 
 
 def _build_html(r: CotizacionPdfRequest) -> str:
+    # Matrículas OCULTAS en la cotización (regla 26-ago): el cliente no debe
+    # ver qué avión es — EXCEPTO el VGV, que sí se comercializa por matrícula.
+    mostrar_matricula = bool(r.matricula and "VGV" in r.matricula.upper())
     # Título con la RUTA COMPLETA (26-ago): "CUN → CTM → CUN", no solo
     # origen→destino. Fuente más chica si la ruta es larga (multiescala).
     if r.escalas:
@@ -241,7 +244,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
             f'<figure><img src="{f}" alt=""/><figcaption>{escape(t)}</figcaption></figure>'
             for t, f in fotos
         )
-        titulo_av = f" · {escape(r.matricula)}" if r.matricula else ""
+        titulo_av = f" · {escape(r.matricula)}" if mostrar_matricula else ""
         fotos_html = f"""
         <h2>La aeronave{titulo_av}</h2>
         <div class="fotos-grid cols-{len(fotos)}">{celdas}</div>"""
@@ -278,8 +281,8 @@ def _build_html(r: CotizacionPdfRequest) -> str:
                    font-weight: 800; color: {_BRAND}; }}
   .total-mxn td {{ font-size: 13px; font-weight: 700; color: {_NAVY}; }}
   .notas {{ margin-top: 20px; font-size: 12px; color: #374151; }}
-  /* Página 2 (26-ago): los DETALLES del vuelo (mapa, traslados, itinerario
-     y fotos) van en su propia página; la página 1 es solo la cotización. */
+  /* Página 2 (26-ago): SOLO imágenes (mapa de la ruta + fotos del avión);
+     la página 1 lleva cotización + traslados + itinerario. */
   .detalles {{ page-break-before: always; }}
   .fotos-grid figure {{ page-break-inside: avoid; }}
   .fotos-grid {{ display: flex; gap: 12px; }}
@@ -307,7 +310,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
 
   <div class="route" style="font-size:{ruta_font}">{ruta_titulo}</div>
   <div style="font-size:13px;color:#374151">
-    {r.pasajeros} {'pasajero' if r.pasajeros == 1 else 'pasajeros'}{f" · {escape(r.matricula)}" if r.matricula else ""}
+    {r.pasajeros} {'pasajero' if r.pasajeros == 1 else 'pasajeros'}{f" · {escape(r.matricula)}" if mostrar_matricula else ""}
   </div>
 
   <h2>Desglose</h2>
@@ -318,15 +321,15 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   </tbody></table>
   {notas_html}
 
+  <h2>Traslados</h2>
+  <table class="grid"><tbody>
+    <tr><td>Traslado inicial</td><td>{_fecha_legible(r.fecha_traslado_inicial)}</td></tr>
+    <tr><td>Traslado final</td><td>{_fecha_legible(r.fecha_traslado_final)}</td></tr>
+  </tbody></table>
+  {escalas_html}
+
   <div class="detalles">
-    <h2>Detalles del vuelo</h2>
     {mapa_html}
-    <h2>Traslados</h2>
-    <table class="grid"><tbody>
-      <tr><td>Traslado inicial</td><td>{_fecha_legible(r.fecha_traslado_inicial)}</td></tr>
-      <tr><td>Traslado final</td><td>{_fecha_legible(r.fecha_traslado_final)}</td></tr>
-    </tbody></table>
-    {escalas_html}
     {fotos_html}
   </div>
 
