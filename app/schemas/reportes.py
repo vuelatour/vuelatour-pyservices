@@ -189,6 +189,14 @@ class BalanceAvionVuelo(BaseModel):
     tiempo_vuelo: float | None = None
     taco_inicio: float | None = None
     taco_fin: float | None = None
+    # Salto en la cadena: el taco inicial no empalma con el final de la fila
+    # anterior del avión (se pinta en ámbar, igual que el panel).
+    salto_taco_inicio: bool = False
+    salto_taco_esperado: float | None = None
+    # Salto INTERNO: un tramo del vuelo no empalma con el anterior (infla las
+    # horas sin romper la cadena entre vuelos) — se pinta en TIEMPO VUELO.
+    salto_taco_interno: bool = False
+    salto_taco_interno_detalle: str | None = None
     # --- Bloque COSTOS DIRECTOS (MXN) ---
     gas_mxn: float | None = None
     gas_litros: float | None = None

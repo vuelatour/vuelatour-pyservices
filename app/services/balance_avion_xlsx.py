@@ -255,6 +255,33 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
                     cell = _num(ws, row, i, val, fmt)
                 if attr == "horas_cobradas" and horas_menores:
                     fill = AMBER
+                # Salto INTERNO entre tramos del MISMO vuelo: infla las horas
+                # sin romper la cadena entre vuelos — se pinta en la celda de
+                # horas voladas con el tramo culpable en la nota.
+                if attr == "tiempo_vuelo" and v.salto_taco_interno:
+                    fill = AMBER
+                    nota_int = Comment(
+                        "Salto entre tramos del vuelo (las horas pueden "
+                        "salir infladas): "
+                        + (v.salto_taco_interno_detalle or "revisar tacos"),
+                        "VuelaTour",
+                    )
+                    nota_int.width = 280
+                    nota_int.height = 70
+                    cell.comment = nota_int
+                # Salto en la cadena de tacómetros: mismo amarillo que el
+                # detalle del avión en el panel, para identificarlo aquí.
+                if attr == "taco_inicio" and v.salto_taco_inicio:
+                    fill = AMBER
+                    if v.salto_taco_esperado is not None:
+                        nota_salto = Comment(
+                            "Salto en la cadena de tacómetros: no empalma "
+                            f"con la llegada anterior ({v.salto_taco_esperado:g}).",
+                            "VuelaTour",
+                        )
+                        nota_salto.width = 260
+                        nota_salto.height = 60
+                        cell.comment = nota_salto
                 # Nota con el desglose del total de la celda (gastos que la
                 # componen), visible al pasar el cursor en Excel.
                 det_attr = _DETALLE_ATTR.get(attr)
@@ -325,6 +352,11 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "tramos, horas y costos de esta matrícula; la VENTA completa está en "
         "el balance del avión principal (el prorrateo del precio entre "
         "aviones está pendiente de decisión).",
+        "TACO INICIO en ámbar = salto en la cadena de tacómetros (no empalma "
+        "con la llegada de la fila anterior del avión; el valor esperado está "
+        "en la nota de la celda). TIEMPO VUELO en ámbar = salto entre tramos "
+        "DEL MISMO vuelo (el tramo culpable está en la nota) — mismo amarillo "
+        "que el detalle del avión en el panel.",
     ):
         ws.cell(row=row, column=1, value=nota).font = Font(color=MUTED, size=9, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=14)
