@@ -151,6 +151,17 @@ def _mapa_svg(puntos: list[MapaPuntoPdf]) -> str:
 
 
 def _build_html(r: CotizacionPdfRequest) -> str:
+    # Título con la RUTA COMPLETA (26-ago): "CUN → CTM → CUN", no solo
+    # origen→destino. Fuente más chica si la ruta es larga (multiescala).
+    if r.escalas:
+        ordenadas = sorted(r.escalas, key=lambda x: x.orden)
+        puntos = [ordenadas[0].origen] + [e.destino for e in ordenadas]
+        ruta_titulo = " → ".join(escape(pt) for pt in puntos)
+    else:
+        ruta_titulo = f"{escape(r.origen)} → {escape(r.destino)}"
+    n_puntos = ruta_titulo.count("→") + 1
+    ruta_font = "26px" if n_puntos <= 4 else ("20px" if n_puntos <= 6 else "16px")
+
     escalas_html = ""
     if r.escalas:
         filas = "".join(
@@ -294,7 +305,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
       <strong>Tipo:</strong> {escape(r.tipo)}</div>
   </div>
 
-  <div class="route">{escape(r.origen)} → {escape(r.destino)}</div>
+  <div class="route" style="font-size:{ruta_font}">{ruta_titulo}</div>
   <div style="font-size:13px;color:#374151">
     {r.pasajeros} {'pasajero' if r.pasajeros == 1 else 'pasajeros'}{f" · {escape(r.matricula)}" if r.matricula else ""}
   </div>
