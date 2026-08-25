@@ -257,7 +257,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   @page :first {{
     margin-bottom: 2.4cm;
     @bottom-center {{
-      content: "{TZ_NOTA} \A Gracias por volar con VuelaTour, Aero Charter Cancún.";
+      content: "{TZ_NOTA} \\A Gracias por volar con VuelaTour, Aero Charter Cancún.";
       white-space: pre;
       font-size: 10px;
       color: #9ca3af;
