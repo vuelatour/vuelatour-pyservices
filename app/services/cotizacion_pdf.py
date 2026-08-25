@@ -301,7 +301,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
 
   <div class="meta">
     <div><strong>Folio:</strong> #{escape(r.folio)}<br><strong>Cliente:</strong> {escape(r.cliente)}</div>
-    <div style="text-align:right"><strong>Fecha:</strong> {_fecha_legible(r.fecha)}<br>
+    <div style="text-align:right"><strong>Fecha de cotización:</strong> {_fecha_legible(r.fecha)}<br>
       <strong>Tipo:</strong> {escape(r.tipo)}</div>
   </div>
 
