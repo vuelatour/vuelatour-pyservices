@@ -1,14 +1,15 @@
 """Balance mensual por avión en Excel (openpyxl) — réplica sistematizada del
 control del equipo ("Balance N990GG.xlsx").
 
-Siete hojas en el orden del libro:
+Ocho hojas en el orden del libro:
   1. reporte horas <MATRÍCULA> — maestro: 1 fila = 1 vuelo, TOTALES al final
      (columnas de costo SIN combustible ni TUA desde 26-ago-2026).
-  2. combustible — el gas del avión POR MES (litros y $/L), 26-ago-2026.
-  3. gastos indirectos  4. otros gastos (incluye TUAS)  5. permisos.
-  6. balance — cascada (− combustible − indirectos − otros − permisos) +
+  2. cobranza — estatus de cobro por vuelo (cobrado/por cobrar, 26-ago).
+  3. combustible — el gas del avión POR MES (litros y $/L), 26-ago-2026.
+  4. gastos indirectos  5. otros gastos (incluye TUAS)  6. permisos.
+  7. balance — cascada (− combustible − indirectos − otros − permisos) +
      reparto real de socios.
-  7. pendientes de captura — lo que falta para que el libro quede completo.
+  8. pendientes de captura — lo que falta para que el libro quede completo.
 
 Los montos vienen YA calculados del API (aquí solo se pintan; jamás se
 recalcula dinero). None = celda vacía — nunca un 0 falso.
@@ -357,6 +358,10 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "cuadra con los cobros del vuelo. Sin cotización: horas × tarifa.",
         "TIPO CAMBIO COSTOS y COSTO X HORA USD de la fila TOTALES son PROMEDIOS "
         "(los demás son sumas).",
+        "El ESTATUS DE COBRO por vuelo (cuánto se cobró, con qué fechas y "
+        "métodos, y cuánto falta) está al frente en la hoja 'cobranza' — el "
+        "bloque STATUS DE COBROS del final de esta hoja trae lo mismo en "
+        "columnas.",
         "El COMBUSTIBLE ya no va por vuelo (26-ago-2026): se controla por "
         "avión y por MES en la hoja 'combustible' (litros y $/L incluidos) y "
         "resta una sola vez en la hoja 'balance'. Por eso COSTO TOTAL, COSTO "
@@ -441,6 +446,114 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
 
     for i, w in enumerate([14, 52, 15, 16, 15], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A8"
+
+
+def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
+    """Hoja 'cobranza' (26-ago-2026): el estatus de cobro POR VUELO al
+    frente — cuánto se debía cobrar, cuánto YA se cobró (fechas y métodos) y
+    cuánto falta. Los mismos números del bloque STATUS DE COBROS de la hoja
+    maestra (que vive 30 columnas a la derecha), en formato legible."""
+    _title(ws, f"Cobranza — {req.matricula}".strip(" —"), 1, 10)
+    periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'}"
+    ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
+
+    t = req.totales
+    _header_row(ws, 4, ["TOTAL A COBRAR\nMXN", "COBRADO\nMXN",
+                        "POR COBRAR\nMXN", "POR COBRAR\nUSD", "% COBRADO"])
+    _num(ws, 5, 1, t.total_mxn, MONEY, bold=True)
+    _num(ws, 5, 2, t.cobrado_mxn, MONEY, bold=True)
+    pc = _num(ws, 5, 3, t.por_cobrar_mxn, MONEY, bold=True)
+    if (t.por_cobrar_mxn or 0) > 0.005:
+        pc.font = Font(bold=True, color=RED)
+    _num(ws, 5, 4, t.por_cobrar_usd, MONEY)
+    pct = (
+        (t.cobrado_mxn or 0) / t.total_mxn
+        if t.total_mxn and t.total_mxn > 0
+        else None
+    )
+    _num(ws, 5, 5, pct, "0.0%")
+    for c in range(1, 6):
+        ws.cell(row=5, column=c).border = _border
+
+    headers = ["CLAVE", "FECHA", "RUTA", "ESTADO", "STATUS\nCOBRO",
+               "TOTAL A COBRAR\nMXN", "COBRADO\nMXN", "POR COBRAR\nMXN",
+               "POR COBRAR\nUSD", "DETALLE DE COBROS\n(fecha · monto · método)"]
+    _header_row(ws, 7, headers)
+    row = 8
+    for v in req.vuelos:
+        cc = ws.cell(row=row, column=1, value=v.clave)
+        avion_fill = _hex(v.avion_color)
+        if avion_fill:
+            cc.fill = PatternFill("solid", fgColor=avion_fill)
+        ws.cell(row=row, column=2, value=_fecha(v.fecha))
+        ws.cell(row=row, column=3, value=v.ruta)
+        ec = ws.cell(row=row, column=4, value=v.estado)
+        ec.font = Font(color=RED if v.estado == "CANCELADO" else MUTED, size=9)
+        st = ws.cell(row=row, column=5, value=v.status_cobro or "—")
+        if v.status_cobro == "Cobrado":
+            st.fill = PatternFill("solid", fgColor="D1FAE5")
+            st.font = Font(color="065F46", bold=True, size=9)
+        elif v.status_cobro == "Parcial":
+            st.fill = PatternFill("solid", fgColor=AMBER)
+            st.font = Font(bold=True, size=9)
+        elif v.status_cobro == "Pendiente":
+            st.fill = PatternFill("solid", fgColor="FECACA")
+            st.font = Font(color="991B1B", bold=True, size=9)
+        _num(ws, row, 6, v.total_mxn)
+        _num(ws, row, 7, v.cobrado_mxn)
+        pcc = _num(ws, row, 8, v.por_cobrar_mxn)
+        if (v.por_cobrar_mxn or 0) > 0.005:
+            pcc.font = Font(color=RED)
+        _num(ws, row, 9, v.por_cobrar_usd)
+        detalle = "\n".join(
+            " · ".join(
+                x
+                for x in (
+                    _fecha(c.fecha),
+                    f"${c.monto_mxn:,.2f}" if c.monto_mxn is not None else None,
+                    c.metodo or None,
+                )
+                if x
+            )
+            for c in v.cobros
+        )
+        dc = ws.cell(row=row, column=10, value=detalle or None)
+        dc.alignment = Alignment(wrap_text=True, vertical="top")
+        if len(v.cobros) > 1:
+            ws.row_dimensions[row].height = 14 * len(v.cobros) + 4
+        for c in range(1, 11):
+            ws.cell(row=row, column=c).border = _border
+        row += 1
+
+    ws.cell(row=row, column=1, value="TOTALES").font = Font(bold=True)
+    _num(ws, row, 6, t.total_mxn, MONEY, bold=True)
+    _num(ws, row, 7, t.cobrado_mxn, MONEY, bold=True)
+    _num(ws, row, 8, t.por_cobrar_mxn, MONEY, bold=True)
+    _num(ws, row, 9, t.por_cobrar_usd, MONEY, bold=True)
+    for c in range(1, 11):
+        cell = ws.cell(row=row, column=c)
+        cell.border = _border
+        cell.fill = PatternFill("solid", fgColor=LIGHT)
+    row += 2
+
+    for nota in (
+        "TOTAL A COBRAR = el desglose COMPLETO de la cotización del vuelo "
+        "(mismo TOTAL COBRADO AL CLIENTE MXN de la hoja maestra). COBRADO = "
+        "parcialidades registradas en Cobros del vuelo. POR COBRAR = total − "
+        "cobrado.",
+        "Filas COMPARTIDO y clientes INTERNOS van sin venta a propósito (la "
+        "venta del compartido vive en el balance del avión principal; el "
+        "interno no cobra). CANCELADO conserva sus cobros si los hubo.",
+    ):
+        ws.cell(row=row, column=1, value=nota).font = Font(
+            color=MUTED, size=9, italic=True
+        )
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=10)
+        row += 1
+
+    for i, w in enumerate([22, 11, 26, 12, 11, 15, 15, 15, 13, 34], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A8"
 
@@ -594,6 +707,7 @@ def _hoja_pendientes(ws: Worksheet, req: BalanceAvionRequest) -> None:
 def render_balance_avion_xlsx(req: BalanceAvionRequest) -> bytes:
     wb = Workbook()
     _hoja_maestra(wb.active, req)
+    _hoja_cobranza(wb.create_sheet("cobranza"), req)
     _hoja_combustible(wb.create_sheet("combustible"), req.combustible, req)
     _hoja_gastos(wb.create_sheet("gastos indirectos"), "Gastos indirectos",
                  req.gastos_indirectos, req)
@@ -698,6 +812,7 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
     if cons is not None:
         # La hoja maestra se titula sola ("reporte horas FLOTA").
         _hoja_maestra(wb.create_sheet(), cons)
+        _hoja_cobranza(wb.create_sheet("cobranza"), cons)
         _hoja_combustible(wb.create_sheet("combustible"), cons.combustible, cons)
         _hoja_gastos(
             wb.create_sheet("gastos indirectos"),

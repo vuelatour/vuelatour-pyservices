@@ -180,6 +180,8 @@ class BalanceAvionCobro(BaseModel):
 
     fecha: str | None = None
     monto_mxn: float | None = None
+    # Método del cobro (EFECTIVO/TRANSFERENCIA/...); el API ya lo mandaba.
+    metodo: str | None = None
 
 
 class BalanceAvionVuelo(BaseModel):
