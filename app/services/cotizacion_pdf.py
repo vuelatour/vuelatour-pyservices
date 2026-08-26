@@ -165,16 +165,32 @@ def _build_html(r: CotizacionPdfRequest) -> str:
     n_puntos = ruta_titulo.count("→") + 1
     ruta_font = "26px" if n_puntos <= 4 else ("20px" if n_puntos <= 6 else "16px")
 
+    # Mapa JUNTO al itinerario en la hoja 1 (26-ago v3, pedido del cliente):
+    # tabla de tramos a la izquierda, mapa a la derecha (layout de tabla —
+    # WeasyPrint lo respeta siempre). Sin puntos de mapa, la tabla va sola.
+    mapa_html = _mapa_svg(r.mapa_puntos)
     escalas_html = ""
     if r.escalas:
         filas = "".join(
             f"<tr><td>{e.orden}</td><td>{escape(e.origen)} → {escape(e.destino)}</td></tr>"
             for e in sorted(r.escalas, key=lambda x: x.orden)
         )
+        tabla_itin = (
+            '<table class="grid"><thead><tr><th>#</th><th>Tramo</th></tr></thead>'
+            f"<tbody>{filas}</tbody></table>"
+        )
+        if mapa_html:
+            cuerpo_itin = (
+                '<table class="itin-row"><tr>'
+                f'<td class="itin-tabla">{tabla_itin}</td>'
+                f'<td class="itin-mapa">{mapa_html}</td>'
+                "</tr></table>"
+            )
+        else:
+            cuerpo_itin = tabla_itin
         escalas_html = f"""
         <h2>Itinerario</h2>
-        <table class="grid"><thead><tr><th>#</th><th>Tramo</th></tr></thead>
-        <tbody>{filas}</tbody></table>"""
+        {cuerpo_itin}"""
 
     notas_html = (
         f'<div class="notas"><strong>Notas:</strong> {escape(r.notas)}</div>' if r.notas else ""
@@ -230,14 +246,6 @@ def _build_html(r: CotizacionPdfRequest) -> str:
         f'<div class="marca"><img src="{logo_marca}" alt=""/></div>' if logo_marca else ""
     )
 
-    mapa_html = _mapa_svg(r.mapa_puntos)
-    # El mapa en su propia hoja (la 2 quedó dedicada al avión, 26-ago v2);
-    # sin puntos no se agrega la hoja.
-    mapa_pagina_html = (
-        f'<div class="detalles"><h2>La ruta</h2>{mapa_html}</div>'
-        if mapa_html
-        else ""
-    )
 
     # ----- Página "La aeronave" (26-ago v2, mockup del cliente) -----
     # Exterior ANCHO arriba; abajo interior + tarjeta "De un vistazo";
@@ -317,15 +325,35 @@ def _build_html(r: CotizacionPdfRequest) -> str:
         {fila_html}
         {caracts_html}"""
 
+    detalles_html = (
+        f'<div class="detalles">{fotos_html}</div>' if fotos_html else ""
+    )
+
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
-  @page {{ size: Letter; margin: 1.8cm 2cm; }}
-  /* Pie SOLO en la hoja 1 (26-ago): anclado abajo aunque el contenido
-     termine a media hoja — el texto de horarios/gracias vive aquí. */
-  @page :first {{
-    margin-bottom: 2.4cm;
+  /* Pie en TODAS las hojas (26-ago v3): la web al centro y el paginado a
+     la derecha; la hoja 1 además conserva su leyenda de horarios/gracias. */
+  @page {{
+    size: Letter;
+    margin: 1.8cm 2cm 2.2cm;
     @bottom-center {{
-      content: "{TZ_NOTA} \\A Gracias por volar con VuelaTour, Aero Charter Cancún.";
+      content: "www.vuelatour.com";
+      font-size: 10px;
+      color: #9ca3af;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+    }}
+    @bottom-right {{
+      content: "Página " counter(page) " de " counter(pages);
+      font-size: 9px;
+      color: #9ca3af;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+    }}
+  }}
+  @page :first {{
+    margin-bottom: 2.6cm;
+    @bottom-center {{
+      content: "{TZ_NOTA} \\A Gracias por volar con VuelaTour, "
+               "Aero Charter Cancún. \\A www.vuelatour.com";
       white-space: pre;
       font-size: 10px;
       color: #9ca3af;
@@ -351,8 +379,12 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
   .grid th, .grid td {{ border: 1px solid #e5e5e5; padding: 6px 10px; text-align: left; }}
   .grid th {{ background: #f7f7f8; }}
-  /* Un CUARTO de la hoja (pedido 26-ago): mitad de ancho, centrado. */
-  .mapa {{ width: 50%; margin: 0 auto; border: 1px solid #e5e7eb;
+  /* Mapa junto al itinerario (26-ago v3): dos columnas en la hoja 1. */
+  .itin-row {{ width: 100%; border-collapse: separate; border-spacing: 0; }}
+  .itin-row td {{ vertical-align: top; }}
+  .itin-tabla {{ width: 55%; padding-right: 12px; }}
+  .itin-mapa {{ width: 45%; }}
+  .mapa {{ width: 100%; border: 1px solid #e5e7eb;
            border-radius: 10px; overflow: hidden; background: #f8fafc; }}
   .mapa svg {{ width: 100%; display: block; }}
   .totales td {{ padding: 7px 0; }}
@@ -423,10 +455,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   </tbody></table>
   {notas_html}
 
-  <div class="detalles">
-    {fotos_html}
-  </div>
-  {mapa_pagina_html}
+  {detalles_html}
 
 </body></html>"""
 
