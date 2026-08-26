@@ -73,6 +73,17 @@ class CotizacionPdfRequest(BaseModel):
     # Data-URIs (base64) firmadas y descargadas por el API; None = sin foto.
     foto_exterior: str | None = None
     foto_interior: str | None = None
+    # ===== Ficha comercial de la aeronave (26-ago v2, mockup del cliente):
+    # página 2 = exterior ancho + interior con tarjeta "De un vistazo" +
+    # características. Todo opcional (defaults) para tolerar skew de deploy.
+    avion_modelo: str | None = None
+    avion_velocidad_kts: float | None = None
+    avion_pasajeros: int | None = None
+    avion_num_motores: int | None = None
+    avion_motor_hp: int | None = None
+    avion_caracteristicas: list[str] = Field(default_factory=list)
+    # Duración estimada del tramo MÁS LARGO del viaje (horas decimales).
+    avion_tiempo_tramo_hr: float | None = None
     mapa_puntos: list[MapaPuntoPdf] = Field(default_factory=list)
 
 

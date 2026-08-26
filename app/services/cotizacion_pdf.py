@@ -231,23 +231,91 @@ def _build_html(r: CotizacionPdfRequest) -> str:
     )
 
     mapa_html = _mapa_svg(r.mapa_puntos)
+    # El mapa en su propia hoja (la 2 quedó dedicada al avión, 26-ago v2);
+    # sin puntos no se agrega la hoja.
+    mapa_pagina_html = (
+        f'<div class="detalles"><h2>La ruta</h2>{mapa_html}</div>'
+        if mapa_html
+        else ""
+    )
 
-    # ----- Fotos del avión (exterior / interior) al final -----
-    fotos_html = ""
-    fotos = [
-        ("Exterior", r.foto_exterior),
-        ("Interior", r.foto_interior),
-    ]
-    fotos = [(t, f) for t, f in fotos if f]
-    if fotos:
-        celdas = "".join(
-            f'<figure><img src="{f}" alt=""/><figcaption>{escape(t)}</figcaption></figure>'
-            for t, f in fotos
+    # ----- Página "La aeronave" (26-ago v2, mockup del cliente) -----
+    # Exterior ANCHO arriba; abajo interior + tarjeta "De un vistazo";
+    # tira de características comerciales al pie. SIN matrícula en esta hoja
+    # (regla del cliente — aplica también al VGV; la página 1 conserva su
+    # propia regla de matrícula).
+    vistazo: list[tuple[str, str]] = []
+    if r.avion_pasajeros:
+        vistazo.append(("Pasajeros", f"{r.avion_pasajeros} máx."))
+    if r.avion_velocidad_kts:
+        kmh = round(r.avion_velocidad_kts * 1.852)
+        vistazo.append(
+            ("Velocidad crucero", f"{r.avion_velocidad_kts:g} kt / {kmh} km/h")
         )
-        titulo_av = f" · {escape(r.matricula)}" if mostrar_matricula else ""
+    if r.avion_tiempo_tramo_hr and r.avion_tiempo_tramo_hr > 0:
+        th = int(r.avion_tiempo_tramo_hr)
+        tm = int(round((r.avion_tiempo_tramo_hr - th) * 60))
+        if tm == 60:
+            th, tm = th + 1, 0
+        vistazo.append(("Tiempo de vuelo", f"{th}:{tm:02d} h por tramo"))
+    if r.avion_num_motores:
+        if r.avion_motor_hp:
+            vistazo.append(
+                (
+                    "Motor" if r.avion_num_motores == 1 else "Motores",
+                    f"{r.avion_num_motores} × {r.avion_motor_hp} HP",
+                )
+            )
+        else:
+            vistazo.append(
+                ("Motor", "Monomotor" if r.avion_num_motores == 1 else "Bimotor")
+            )
+    vistazo_html = ""
+    if vistazo:
+        filas_vz = "".join(
+            f'<div class="vz-lbl">{escape(lb)}</div>'
+            f'<div class="vz-val">{escape(vl)}</div>'
+            for lb, vl in vistazo
+        )
+        vistazo_html = (
+            '<div class="vistazo"><div class="vz-titulo">De un vistazo</div>'
+            f"{filas_vz}</div>"
+        )
+
+    chips = " &nbsp;·&nbsp; ".join(
+        escape(c.strip()) for c in r.avion_caracteristicas if c and c.strip()
+    )
+    caracts_html = f'<div class="caracts">{chips}</div>' if chips else ""
+
+    # La foto ANCHA de arriba: exterior; si solo hay interior, sube esa.
+    foto_ancha = r.foto_exterior or r.foto_interior
+    foto_abajo = r.foto_interior if r.foto_exterior else None
+    ancha_html = (
+        f'<img class="foto-ancha" src="{foto_ancha}" alt=""/>' if foto_ancha else ""
+    )
+    # Fila inferior: interior + tarjeta lado a lado (tabla: WeasyPrint la
+    # respeta siempre); sin interior, la tarjeta ocupa la fila completa.
+    if foto_abajo and vistazo_html:
+        fila_html = (
+            '<table class="av-row"><tr>'
+            f'<td class="av-foto"><img src="{foto_abajo}" alt=""/></td>'
+            f'<td class="av-card">{vistazo_html}</td>'
+            "</tr></table>"
+        )
+    elif foto_abajo:
+        fila_html = f'<img class="foto-ancha" src="{foto_abajo}" alt=""/>'
+    else:
+        fila_html = vistazo_html
+
+    fotos_html = ""
+    if ancha_html or fila_html or caracts_html:
+        titulo_avion = escape(r.avion_modelo) if r.avion_modelo else "La aeronave"
         fotos_html = f"""
-        <h2>La aeronave{titulo_av}</h2>
-        <div class="fotos-grid cols-{len(fotos)}">{celdas}</div>"""
+        <div class="av-titulo">{titulo_avion}</div>
+        <div class="av-linea"></div>
+        {ancha_html}
+        {fila_html}
+        {caracts_html}"""
 
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
@@ -297,16 +365,28 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   /* Página 2 (26-ago): SOLO imágenes (mapa de la ruta + fotos del avión);
      la página 1 lleva cotización + traslados + itinerario. */
   .detalles {{ page-break-before: always; }}
-  /* Fotos APILADAS (26-ago): exterior arriba, interior abajo, con altura
-     fija + object-fit para llenar la hoja 2 sin huecos exagerados
-     (mapa ~6.2cm + 2 fotos de 7.4cm ≈ página completa). */
-  .fotos-grid figure {{ page-break-inside: avoid; margin: 0 0 10px; }}
-  .fotos-grid img {{ height: 7.4cm; object-fit: cover; }}
-  .fotos-grid.cols-1 img {{ height: 12cm; }}
-  .fotos-grid figure {{ width: 100%; }}
-  .fotos-grid img {{ width: 100%; border-radius: 10px; border: 1px solid #e5e7eb; }}
-  .fotos-grid figcaption {{ font-size: 11px; color: #6b7280; margin-top: 4px;
-                            text-align: center; }}
+  /* Página "La aeronave" (26-ago v2, mockup del cliente). */
+  .av-titulo {{ font-size: 24px; font-weight: 800; color: #111827; margin: 0; }}
+  .av-linea {{ width: 3.2cm; height: 4px; background: {_BRAND}; margin: 6px 0 14px; }}
+  .foto-ancha {{ width: 100%; height: 8.6cm; object-fit: cover; border-radius: 12px;
+                 border: 1px solid #e5e7eb; margin-bottom: 12px; }}
+  .av-row {{ width: 100%; border-collapse: separate; border-spacing: 0; }}
+  .av-row td {{ vertical-align: top; }}
+  .av-foto {{ width: 62%; padding-right: 12px; }}
+  .av-foto img {{ width: 100%; height: 8.2cm; object-fit: cover; border-radius: 12px;
+                  border: 1px solid #e5e7eb; }}
+  .vistazo {{ background: {_NAVY}; border-top: 6px solid {_BRAND};
+              border-radius: 12px; padding: 16px 18px; height: 8.2cm;
+              box-sizing: border-box; }}
+  .vz-titulo {{ color: #d6bf8e; font-size: 11px; font-weight: 700;
+               letter-spacing: 3px; text-transform: uppercase;
+               margin-bottom: 12px; }}
+  .vz-lbl {{ color: #94a3b8; font-size: 10px; text-transform: uppercase;
+             letter-spacing: 1px; margin-top: 9px; }}
+  .vz-val {{ color: #ffffff; font-size: 16px; font-weight: 700; margin-top: 1px; }}
+  .caracts {{ margin-top: 12px; background: #f3f4f6; border-radius: 10px;
+              padding: 11px 14px; font-size: 12px; color: #374151;
+              text-align: center; }}
 </style></head><body>
   {marca_html}
   <div class="header">
@@ -344,9 +424,9 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   {notas_html}
 
   <div class="detalles">
-    {mapa_html}
     {fotos_html}
   </div>
+  {mapa_pagina_html}
 
 </body></html>"""
 
