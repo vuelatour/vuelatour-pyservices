@@ -269,19 +269,34 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
                     nota_int.width = 280
                     nota_int.height = 70
                     cell.comment = nota_int
-                # Salto en la cadena de tacómetros: mismo amarillo que el
-                # detalle del avión en el panel, para identificarlo aquí.
-                if attr == "taco_inicio" and v.salto_taco_inicio:
+                # Salto en la cadena de tacómetros y/u OBSERVACIONES del
+                # equipo (Tacómetros en vivo): mismo amarillo que el panel;
+                # la nota de la celda junta el salto y los comentarios.
+                if attr == "taco_inicio" and (
+                    v.salto_taco_inicio or v.taco_inicio_obs
+                ):
                     fill = AMBER
-                    if v.salto_taco_esperado is not None:
-                        nota_salto = Comment(
+                    lineas_ti: list[str] = []
+                    if v.salto_taco_inicio and v.salto_taco_esperado is not None:
+                        lineas_ti.append(
                             "Salto en la cadena de tacómetros: no empalma "
-                            f"con la llegada anterior ({v.salto_taco_esperado:g}).",
-                            "VuelaTour",
+                            f"con la llegada anterior ({v.salto_taco_esperado:g})."
                         )
-                        nota_salto.width = 260
-                        nota_salto.height = 60
+                    elif v.salto_taco_inicio:
+                        lineas_ti.append("Salto en la cadena de tacómetros.")
+                    lineas_ti.extend(v.taco_inicio_obs)
+                    if lineas_ti:
+                        nota_salto = Comment("\n".join(lineas_ti), "VuelaTour")
+                        nota_salto.width = 320
+                        nota_salto.height = min(220, 45 + 30 * len(lineas_ti))
                         cell.comment = nota_salto
+                # Observaciones sobre la LLEGADA → celda TACO FINAL.
+                if attr == "taco_fin" and v.taco_fin_obs:
+                    fill = AMBER
+                    nota_tf = Comment("\n".join(v.taco_fin_obs), "VuelaTour")
+                    nota_tf.width = 320
+                    nota_tf.height = min(220, 45 + 30 * len(v.taco_fin_obs))
+                    cell.comment = nota_tf
                 # Nota con el desglose del total de la celda (gastos que la
                 # componen), visible al pasar el cursor en Excel.
                 det_attr = _DETALLE_ATTR.get(attr)
@@ -360,11 +375,12 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "tramos, horas y costos de esta matrícula; la VENTA completa está en "
         "el balance del avión principal (el prorrateo del precio entre "
         "aviones está pendiente de decisión).",
-        "TACO INICIO en ámbar = salto en la cadena de tacómetros (no empalma "
-        "con la llegada de la fila anterior del avión; el valor esperado está "
-        "en la nota de la celda). TIEMPO VUELO en ámbar = salto entre tramos "
-        "DEL MISMO vuelo (el tramo culpable está en la nota) — mismo amarillo "
-        "que el detalle del avión en el panel.",
+        "TACO INICIO / TACO FINAL en ámbar = salto en la cadena de "
+        "tacómetros (el valor esperado está en la nota de la celda) y/u "
+        "OBSERVACIÓN del equipo capturada en Tacómetros en vivo — pasa el "
+        "cursor por la celda para leer el comentario (quién y cuándo). "
+        "TIEMPO VUELO en ámbar = salto entre tramos DEL MISMO vuelo (el "
+        "tramo culpable está en la nota) — mismo amarillo que el panel.",
     ):
         ws.cell(row=row, column=1, value=nota).font = Font(color=MUTED, size=9, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=14)

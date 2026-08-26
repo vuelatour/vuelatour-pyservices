@@ -217,6 +217,11 @@ class BalanceAvionVuelo(BaseModel):
     # horas sin romper la cadena entre vuelos) — se pinta en TIEMPO VUELO.
     salto_taco_interno: bool = False
     salto_taco_interno_detalle: str | None = None
+    # Observaciones del EQUIPO sobre las lecturas de taco de los tramos del
+    # vuelo (capturadas en Tacómetros en vivo): líneas ya formateadas
+    # "CUN→PTU salida: <texto> — Nombre, dd-mmm". Celda en ámbar + nota.
+    taco_inicio_obs: list[str] = Field(default_factory=list)
+    taco_fin_obs: list[str] = Field(default_factory=list)
     # --- Bloque COSTOS DIRECTOS (MXN) ---
     gas_mxn: float | None = None
     gas_litros: float | None = None
