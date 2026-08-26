@@ -313,6 +313,11 @@ def _hoja_otros_gastos(ws: Worksheet, req: DineroXlsxRequest) -> None:
     ws.cell(row=1, column=1, value="RELACION DE OTROS GASTOS MENSUALES").font = Font(
         bold=True, size=12, color=NAVY
     )
+    ws.cell(
+        row=2, column=1,
+        value="El combustible ya no va aquí: tiene su pestaña 'Combustible' "
+        "(26-ago-2026).",
+    ).font = Font(italic=True, size=9, color="5B6470")
     for i, h in enumerate(["fecha", "concepto", "monto", "acumulado"], start=1):
         c = ws.cell(row=3, column=i, value=h)
         c.font = Font(bold=True, color="FFFFFF", size=9)
@@ -449,6 +454,12 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
         value="CHARTERS y UTILIDAD dependen del costo por hora del proveedor y "
         "las comisiones (reglas pendientes de definir con el equipo): esas "
         "celdas van vacías a propósito — no se inventan números.",
+    ).font = Font(italic=True, size=9, color="5B6470")
+    ws.cell(
+        row=7,
+        column=1,
+        value="COMBUSTIBLE DEL MES = suma de las columnas por avión + las "
+        "cargas SIN avión (ver pestaña Combustible; bloquean el pre-cierre).",
     ).font = Font(italic=True, size=9, color="5B6470")
 
 

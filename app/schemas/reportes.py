@@ -369,8 +369,11 @@ class BalanceGeneralResumenFila(BaseModel):
     horas_cobradas: float | None = None
     venta_mxn: float | None = None
     costo_mxn: float | None = None
-    # "Gasto de combustible" del mes (venta − costo − combustible = ganancia).
+    # "Gasto de combustible" del mes.
     combustible_mxn: float | None = None
+    # Comisiones de vendedor (la ganancia ya las netea).
+    comisiones_mxn: float | None = None
+    # VENTA − COSTO − COMBUSTIBLE − COMISIONES = GANANCIA (leyenda impresa).
     ganancia_mxn: float | None = None
     cobrado_mxn: float | None = None
     por_cobrar_mxn: float | None = None

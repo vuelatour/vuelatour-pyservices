@@ -1,11 +1,14 @@
 """Balance mensual por avión en Excel (openpyxl) — réplica sistematizada del
 control del equipo ("Balance N990GG.xlsx").
 
-Seis hojas en el orden del libro original:
-  1. reporte horas <MATRÍCULA> — maestro: 1 fila = 1 vuelo, TOTALES al final.
-  2. gastos indirectos  3. otros gastos  4. permisos — resumen + ledger.
-  5. balance — bloque A–I del original + reparto real de socios.
-  6. pendientes de captura — lo que falta para que el libro quede completo.
+Siete hojas en el orden del libro:
+  1. reporte horas <MATRÍCULA> — maestro: 1 fila = 1 vuelo, TOTALES al final
+     (columnas de costo SIN combustible ni TUA desde 26-ago-2026).
+  2. combustible — el gas del avión POR MES (litros y $/L), 26-ago-2026.
+  3. gastos indirectos  4. otros gastos (incluye TUAS)  5. permisos.
+  6. balance — cascada (− combustible − indirectos − otros − permisos) +
+     reparto real de socios.
+  7. pendientes de captura — lo que falta para que el libro quede completo.
 
 Los montos vienen YA calculados del API (aquí solo se pintan; jamás se
 recalcula dinero). None = celda vacía — nunca un 0 falso.
@@ -341,13 +344,18 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "(los demás son sumas).",
         "El COMBUSTIBLE ya no va por vuelo (26-ago-2026): se controla por "
         "avión y por MES en la hoja 'combustible' (litros y $/L incluidos) y "
-        "resta una sola vez en la hoja 'balance'.",
-        "** El TUA pagado al aeropuerto NO suma al costo (es un traslado al "
-        "pasajero; regla del libro, ago 2026) — queda desglosado en la nota de "
-        "la celda de OPERACIONES/OTROS. El ingreso de la fila sí incluye los "
-        "TUAs cobrados al cliente (cuadra contra los cobros). Los servicios "
-        "FBO de una factura de aeródromo también se separan: SÍ son costo, "
-        "pero van a la columna OTROS (la operación queda sola en OPERACIONES).",
+        "resta una sola vez en la hoja 'balance'. Por eso COSTO TOTAL, COSTO "
+        "X HORA, REMANENTE y GANANCIA de las filas van SIN combustible y SIN "
+        "TUA (ver **): la utilidad real del periodo se lee en la hoja "
+        "'balance', no en la fila. IVA PAGADO y DIF. IVA también derivan "
+        "solo de los costos de la fila (sin gas ni TUA).",
+        "** El TUA pagado al aeropuerto NO es costo de operar el avión: va "
+        "como salida en la hoja 'otros gastos' (regla 26-ago-2026) y resta "
+        "una sola vez en el balance — la nota de la celda lo desglosa como "
+        "vistazo. El ingreso de la fila sí incluye los TUAs cobrados al "
+        "cliente (cuadra contra los cobros). Los servicios FBO de una "
+        "factura de aeródromo también se separan: SÍ son costo, pero van a "
+        "la columna OTROS (la operación queda sola en OPERACIONES).",
         "*** Filas 'COMPARTIDO': el vuelo mezcló aviones — aquí van SOLO los "
         "tramos, horas y costos de esta matrícula; la VENTA completa está en "
         "el balance del avión principal (el prorrateo del precio entre "
@@ -370,7 +378,7 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
 
 
 def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
-                 req: BalanceAvionRequest) -> None:
+                 req: BalanceAvionRequest, nota: str | None = None) -> None:
     _title(ws, f"{titulo} — {req.matricula}".strip(" —"), 1, 5)
     periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'}"
     ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
@@ -405,6 +413,14 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
     else:
         ws.cell(row=row, column=1, value="Sin gastos registrados en el periodo.").font = Font(
             color=MUTED, italic=True
+        )
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+        row += 1
+
+    if nota:
+        row += 1
+        ws.cell(row=row, column=1, value=nota).font = Font(
+            color=MUTED, size=9, italic=True
         )
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
 
@@ -565,7 +581,13 @@ def render_balance_avion_xlsx(req: BalanceAvionRequest) -> bytes:
     _hoja_combustible(wb.create_sheet("combustible"), req.combustible, req)
     _hoja_gastos(wb.create_sheet("gastos indirectos"), "Gastos indirectos",
                  req.gastos_indirectos, req)
-    _hoja_gastos(wb.create_sheet("otros gastos"), "Otros gastos", req.otros_gastos, req)
+    _hoja_gastos(
+        wb.create_sheet("otros gastos"), "Otros gastos", req.otros_gastos, req,
+        nota="Incluye TODOS los TUAs pagados del periodo (con o sin vuelo, y las "
+        "partes TUA de facturas de aeródromo) — regla 26-ago-2026: restan "
+        "aquí UNA sola vez; en la fila del vuelo solo queda la nota (**). "
+        "El TUA cobrado al cliente sigue dentro de la VENTA de su fila.",
+    )
     _hoja_gastos(wb.create_sheet("permisos"), "Permisos", req.permisos, req)
     _hoja_balance(wb.create_sheet("balance"), req)
     _hoja_pendientes(wb.create_sheet("pendientes de captura"), req)
@@ -591,10 +613,11 @@ def _fila_resumen(ws: Worksheet, row: int, f: BalanceGeneralResumenFila,
     _num(ws, row, 5, f.venta_mxn, MONEY, **({"bold": True} if bold else {}))
     _num(ws, row, 6, f.costo_mxn, MONEY, **({"bold": True} if bold else {}))
     _num(ws, row, 7, f.combustible_mxn, MONEY, **({"bold": True} if bold else {}))
-    _num(ws, row, 8, f.ganancia_mxn, MONEY, **({"bold": True} if bold else {}))
-    _num(ws, row, 9, f.cobrado_mxn, MONEY, **({"bold": True} if bold else {}))
-    _num(ws, row, 10, f.por_cobrar_mxn, MONEY, **({"bold": True} if bold else {}))
-    _num(ws, row, 11, f.pendientes, "0", **({"bold": True} if bold else {}))
+    _num(ws, row, 8, f.comisiones_mxn, MONEY, **({"bold": True} if bold else {}))
+    _num(ws, row, 9, f.ganancia_mxn, MONEY, **({"bold": True} if bold else {}))
+    _num(ws, row, 10, f.cobrado_mxn, MONEY, **({"bold": True} if bold else {}))
+    _num(ws, row, 11, f.por_cobrar_mxn, MONEY, **({"bold": True} if bold else {}))
+    _num(ws, row, 12, f.pendientes, "0", **({"bold": True} if bold else {}))
 
 
 def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
@@ -605,14 +628,12 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
         ws,
         f"Balance general de flota · {req.periodo_desde or ''} a {req.periodo_hasta or ''}",
         1,
-        11,
+        12,
     )
-    # GANANCIA = VENTA − COSTO − COMBUSTIBLE (el gas del mes es columna
-    # propia desde 26-ago-2026; ya no viene dentro del costo por vuelo).
     _header_row(ws, 3, [
         "AVIÓN", "VUELOS", "HORAS\nVOLADAS", "HORAS\nCOBRADAS", "VENTA\nMXN",
-        "COSTO TOTAL\nMXN", "COMBUSTIBLE\nMXN", "GANANCIA\nMXN", "COBRADO\nMXN",
-        "POR COBRAR\nMXN", "PENDIENTES",
+        "COSTO TOTAL\nMXN", "COMBUSTIBLE\nMXN", "COMISIONES\nVENDEDOR MXN",
+        "GANANCIA\nMXN", "COBRADO\nMXN", "POR COBRAR\nMXN", "PENDIENTES",
     ])
     row = 4
     for f in req.resumen:
@@ -622,14 +643,27 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
         _fila_resumen(ws, row, req.resumen_totales, bold=True)
         row += 1
     row += 1
-    ws.cell(
-        row=row,
-        column=1,
-        value="El detalle de cada avión está en sus hojas (misma estructura "
-        "que el libro individual, prefijadas con su matrícula).",
-    ).font = Font(color=MUTED, size=9, italic=True)
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=11)
-    for i in range(1, 12):
+    for nota in (
+        "GANANCIA = VENTA − COSTO TOTAL − COMBUSTIBLE − COMISIONES. El COSTO "
+        "TOTAL ya NO incluye combustible ni TUAs (regla 26-ago-2026): el "
+        "combustible resta en su columna (hoja 'combustible') y los TUAs en "
+        "'otros gastos'. La GANANCIA va antes de TUAs/otros/indirectos/"
+        "permisos — la utilidad final por avión está en la hoja 'balance'.",
+        "Vuelos multi-avión: los costos de columnas de la fila COMPARTIDO "
+        "suman al COSTO de su avión pero su ganancia va vacía (prorrateo "
+        "pendiente) — en esos meses el cruce de columnas difiere por ese "
+        "monto.",
+        "El detalle está en las hojas siguientes: los datos de TODOS los "
+        "aviones juntos, en el mismo orden del libro individual — cada fila "
+        "se identifica por su CLAVE y el color de su avión. El libro "
+        "individual de cada avión se descarga desde su ficha.",
+    ):
+        ws.cell(row=row, column=1, value=nota).font = Font(
+            color=MUTED, size=9, italic=True
+        )
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=12)
+        row += 1
+    for i in range(1, 13):
         ws.column_dimensions[get_column_letter(i)].width = 10 if i == 1 else 14
     ws.freeze_panes = "A4"
 
@@ -637,9 +671,10 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
 def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
     """Balance GENERAL (regla del cliente, 18-ago): la MISMA estructura de
     hojas que el libro individual pero con los datos de TODOS los aviones
-    JUNTOS — 1 reporte de horas, 1 gastos indirectos, 1 otros gastos, 1
-    permisos, 1 balance (bloques por avión: los socios son por avión) y 1
-    pendientes. Cada fila se identifica por su clave y el COLOR del avión
+    JUNTOS — 1 reporte de horas, 1 combustible (mensual), 1 gastos
+    indirectos, 1 otros gastos (incluye TUAS), 1 permisos, 1 balance
+    (bloques por avión: los socios son por avión) y 1 pendientes. Cada
+    fila se identifica por su clave y el COLOR del avión
     (aeronave.color_calendario, editable en el apartado del avión)."""
     wb = Workbook()
     _hoja_resumen_general(wb.active, req)
@@ -655,6 +690,10 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
         _hoja_gastos(
             wb.create_sheet("otros gastos"), "Otros gastos",
             cons.otros_gastos, cons,
+            nota="Incluye TODOS los TUAs pagados del periodo (con o sin vuelo, y las "
+        "partes TUA de facturas de aeródromo) — regla 26-ago-2026: restan "
+        "aquí UNA sola vez; en la fila del vuelo solo queda la nota (**). "
+        "El TUA cobrado al cliente sigue dentro de la VENTA de su fila.",
         )
         _hoja_gastos(wb.create_sheet("permisos"), "Permisos", cons.permisos, cons)
 
