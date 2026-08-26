@@ -25,6 +25,10 @@ def _fecha(s: str | None) -> str:
     if not s:
         return "—"
     try:
+        # Fecha SOLO-DÍA (fecha_gasto: "2026-08-21"): es un día de pared, NO
+        # un instante — convertirla a Cancún la corría al día anterior.
+        if len(s) == 10 and "T" not in s:
+            return datetime.fromisoformat(s).strftime("%d/%m/%Y")
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=ZoneInfo("UTC"))
@@ -197,7 +201,11 @@ def _build_html(r: ReporteVueloRequest) -> str:
         def _litros(c):
             if not c.litros:
                 return "<td class='num'>—</td><td class='num'>—</td>"
-            xl = f"{_money(round((c.monto or 0) / c.litros, 2))}" if c.monto else "—"
+            xl = (
+                f"{_money(round((c.monto or 0) / c.litros, 2), c.moneda or 'MXN')}"
+                if c.monto
+                else "—"
+            )
             return f"<td class='num'>{c.litros:g} L</td><td class='num'>{xl}</td>"
 
         filas = "".join(
@@ -213,8 +221,17 @@ def _build_html(r: ReporteVueloRequest) -> str:
         )
         if r.combustible_total_usd:
             comb += f"<p class='tot'>Total gasolina: <b>{_money(r.combustible_total_usd)}</b></p>"
+        comb += (
+            "<p class='muted'>El combustible se controla por AVIÓN y por MES "
+            "(Balance por avión → hoja 'combustible'); aquí solo se muestran "
+            "las cargas ligadas a este vuelo.</p>"
+        )
     else:
-        comb = "<p class='muted'>Sin cargas de combustible.</p>"
+        comb = (
+            "<p class='muted'>Sin cargas ligadas a este vuelo. El combustible "
+            "se controla por AVIÓN y por MES (Balance por avión → hoja "
+            "'combustible').</p>"
+        )
 
     # --- Gastos ---
     if r.gastos:

@@ -289,6 +289,8 @@ class BalanceAvionGastoFila(BaseModel):
     monto_mxn: float | None = None
     moneda_original: str | None = None  # solo si ≠ MXN
     monto_original: float | None = None
+    # Litros de la carga (solo hoja "combustible").
+    litros: float | None = None
     # Balance GENERAL: fila teñida con el color del avión.
     avion_color: str | None = None
 
@@ -302,6 +304,14 @@ class BalanceAvionHojaGastos(BaseModel):
     usd_hr: float | None = None
 
 
+class BalanceAvionHojaCombustible(BalanceAvionHojaGastos):
+    """Hoja 'combustible' (26-ago-2026): el gas del avión POR MES, con
+    litros y precio por litro promedio — ya no va por vuelo."""
+
+    litros_total: float | None = None
+    precio_litro_prom: float | None = None
+
+
 class BalanceAvionSocio(BaseModel):
     nombre: str = ""
     porcentaje: float | None = None  # % vigente (0–100)
@@ -312,6 +322,8 @@ class BalanceAvionBalanceBloque(BaseModel):
     """Hoja 'balance': bloque A–I del original (todo USD) + socios."""
 
     utilidad_antes_usd: float | None = None
+    # "Gasto de combustible" del mes (hoja combustible al TC promedio).
+    combustible_usd: float | None = None
     gastos_indirectos_usd: float | None = None
     otros_usd: float | None = None
     permisos_usd: float | None = None
@@ -335,6 +347,11 @@ class BalanceAvionRequest(BaseModel):
     gastos_indirectos: BalanceAvionHojaGastos = Field(default_factory=BalanceAvionHojaGastos)
     otros_gastos: BalanceAvionHojaGastos = Field(default_factory=BalanceAvionHojaGastos)
     permisos: BalanceAvionHojaGastos = Field(default_factory=BalanceAvionHojaGastos)
+    # Pestaña mensual de combustible (26-ago-2026); default vacío = skew
+    # tolerante con un API viejo que aún no la manda.
+    combustible: BalanceAvionHojaCombustible = Field(
+        default_factory=BalanceAvionHojaCombustible
+    )
     balance: BalanceAvionBalanceBloque = Field(default_factory=BalanceAvionBalanceBloque)
     pendientes: list[str] = Field(default_factory=list)
 
@@ -352,6 +369,8 @@ class BalanceGeneralResumenFila(BaseModel):
     horas_cobradas: float | None = None
     venta_mxn: float | None = None
     costo_mxn: float | None = None
+    # "Gasto de combustible" del mes (venta − costo − combustible = ganancia).
+    combustible_mxn: float | None = None
     ganancia_mxn: float | None = None
     cobrado_mxn: float | None = None
     por_cobrar_mxn: float | None = None
@@ -477,6 +496,21 @@ class DineroUtilidadAvion(BaseModel):
     gastos_indirectos_mxn: float | None = None
     otros_gastos_mxn: float | None = None
     permisos_mxn: float | None = None
+    # "Gasto de combustible" del mes del avión (pestaña Combustible).
+    combustible_mxn: float | None = None
+
+
+class DineroCombustibleFila(BaseModel):
+    """Fila de la pestaña 'Combustible' (26-ago-2026): el gas del mes por
+    avión, con o sin vuelo — ya no se persigue la asignación por vuelo."""
+
+    fecha: str | None = None
+    matricula: str = "—"  # '—' = carga sin avión (pendiente de asignar)
+    avion_color: str | None = None
+    concepto: str = ""
+    litros: float | None = None
+    monto_mxn: float | None = None
+    acumulado_mxn: float | None = None
 
 
 class DineroXlsxRequest(BaseModel):
@@ -490,6 +524,14 @@ class DineroXlsxRequest(BaseModel):
     vuelos: list[DineroVueloFila] = Field(default_factory=list)
     otros_ingresos: list[DineroOtroIngresoFila] = Field(default_factory=list)
     otros_gastos: list[DineroOtroGastoFila] = Field(default_factory=list)
+    # Pestaña "Combustible" (26-ago-2026); defaults = skew tolerante.
+    combustible: list[DineroCombustibleFila] = Field(default_factory=list)
+    combustible_total_mxn: float | None = None
+    combustible_litros: float | None = None
+    combustible_precio_litro: float | None = None
+    combustible_sin_avion: int = 0
+    # "Gasto de combustible" del mes: resta en la hoja utilidades.
+    utilidades_combustible_mxn: float | None = None
     utilidades_otros_ingresos_mxn: float | None = None
     utilidades_otros_gastos_mxn: float | None = None
     utilidades_tc: float | None = None

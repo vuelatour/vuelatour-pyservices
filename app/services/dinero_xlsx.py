@@ -335,18 +335,86 @@ def _hoja_otros_gastos(ws: Worksheet, req: DineroXlsxRequest) -> None:
     ws.freeze_panes = "A4"
 
 
+def _hoja_combustible(ws: Worksheet, req: DineroXlsxRequest) -> None:
+    """Pestaña 'Combustible' (26-ago-2026): el gas del MES por avión (con o
+    sin vuelo, por fecha del gasto) — mismo criterio que el reparto. Las
+    cargas SIN avión van marcadas: hay que asignarles aeronave."""
+    ws.title = "Combustible"
+    ws.cell(
+        row=1, column=1, value="GASTO DE COMBUSTIBLE DEL MES (POR AVIÓN)"
+    ).font = Font(bold=True, size=12, color=NAVY)
+    for i, h in enumerate(
+        ["fecha", "avión", "concepto", "litros", "monto", "acumulado"], start=1
+    ):
+        c = ws.cell(row=3, column=i, value=h)
+        c.font = Font(bold=True, color="FFFFFF", size=9)
+        c.fill = PatternFill("solid", fgColor=NAVY)
+        c.alignment = Alignment(horizontal="center")
+        c.border = _border
+    for col, w in zip("ABCDEF", [12, 10, 44, 10, 14, 14], strict=True):
+        ws.column_dimensions[col].width = w
+    row = 4
+    for g in req.combustible:
+        vals = [_fecha(g.fecha), g.matricula, g.concepto, g.litros,
+                g.monto_mxn, g.acumulado_mxn]
+        for i, v in enumerate(vals, start=1):
+            cell = ws.cell(row=row, column=i, value=v if v != "" else None)
+            cell.border = _border
+            if isinstance(v, (int, float)):
+                cell.number_format = MONEY if i >= 5 else "0.0"
+        # La celda del avión se tiñe con su color (leyenda del libro).
+        swatch = _hex(g.avion_color)
+        if swatch:
+            ws.cell(row=row, column=2).fill = PatternFill("solid", fgColor=swatch)
+        row += 1
+    # Fila de totales (suma YA calculada en el API; aquí solo se pinta).
+    ws.cell(row=row, column=1, value="TOTALES").font = Font(bold=True)
+    for col, val, fmt in (
+        (4, req.combustible_litros, "0.0"),
+        (5, req.combustible_total_mxn, MONEY),
+    ):
+        if val is not None:
+            cell = ws.cell(row=row, column=col, value=round(val, 2))
+            cell.font = Font(bold=True)
+            cell.number_format = fmt
+            cell.fill = PatternFill("solid", fgColor=LIGHT)
+    if req.combustible_precio_litro is not None:
+        cell = ws.cell(row=row, column=6, value=round(req.combustible_precio_litro, 2))
+        cell.font = Font(bold=True)
+        cell.number_format = MONEY
+        cell.fill = PatternFill("solid", fgColor=LIGHT)
+        ws.cell(row=row + 1, column=6, value="($ x litro prom)").font = Font(
+            italic=True, size=8, color="5B6470"
+        )
+    fila_nota = row + 2
+    nota = (
+        "El combustible se controla POR AVIÓN y POR MES (fecha del gasto, con "
+        "o sin vuelo) — mismo criterio que el reparto a socios."
+    )
+    if req.combustible_sin_avion:
+        nota += (
+            f" AVISO: {req.combustible_sin_avion} carga(s) SIN avión — "
+            "asígnales aeronave en Combustibles (bloquean el pre-cierre)."
+        )
+    ws.cell(row=fila_nota, column=1, value=nota).font = Font(
+        italic=True, size=9, color="5B6470"
+    )
+    ws.freeze_panes = "A4"
+
+
 def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
     ws.title = "utilidades"
     ws.cell(row=1, column=1, value="UTILIDADES").font = Font(bold=True, size=12, color=NAVY)
     headers = [
         "PERIODO", "CHARTERS", "OTROS\nINGRESOS", "UTILIDAD ANTES\nGASTOS",
-        "OTROS\nGASTOS",
+        "OTROS\nGASTOS", "COMBUSTIBLE\nDEL MES",
     ]
     for a in req.utilidades_aviones:
         headers += [
             f"GASTOS\nINDIRECTOS\n{a.matricula}",
             f"OTROS GASTOS\n{a.matricula}",
             f"PERMISOS\n{a.matricula}",
+            f"COMBUSTIBLE\n{a.matricula}",
         ]
     headers += ["UTILIDAD\nDESPUES GASTOS", "TIPO\nCAMBIO", "UTILIDAD\nUSD"]
     for i, h in enumerate(headers, start=1):
@@ -364,9 +432,11 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
         req.utilidades_otros_ingresos_mxn,
         None,  # UTILIDAD ANTES: depende de charters
         req.utilidades_otros_gastos_mxn,
+        req.utilidades_combustible_mxn,
     ]
     for a in req.utilidades_aviones:
-        vals += [a.gastos_indirectos_mxn, a.otros_gastos_mxn, a.permisos_mxn]
+        vals += [a.gastos_indirectos_mxn, a.otros_gastos_mxn, a.permisos_mxn,
+                 a.combustible_mxn]
     vals += [None, req.utilidades_tc, None]
     for i, v in enumerate(vals, start=1):
         cell = ws.cell(row=4, column=i, value=v)
@@ -387,6 +457,7 @@ def render_dinero_xlsx(req: DineroXlsxRequest) -> bytes:
     _hoja_vuelos(wb.active, req)
     _hoja_otros_ingresos(wb.create_sheet(), req)
     _hoja_otros_gastos(wb.create_sheet(), req)
+    _hoja_combustible(wb.create_sheet(), req)
     _hoja_utilidades(wb.create_sheet(), req)
     buf = BytesIO()
     wb.save(buf)
