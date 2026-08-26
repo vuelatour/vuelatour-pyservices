@@ -208,7 +208,7 @@ def _bloque_avion(avion: RepartoAvion, estilo_titulo: ParagraphStyle) -> KeepTog
         ["(-) Gastos directos", _usd(-avion.gastos_directos_usd)],
         ["(-) Gastos indirectos", _usd(-avion.gastos_indirectos_usd)],
         ["(-) Permisos", _usd(-avion.permisos_usd)],
-        ["(-) Otros gastos (prorrateados)", _usd(-avion.otros_usd)],
+        ["(-) Fijos (prorrateo + reparto manual)", _usd(-avion.otros_usd)],
         ["(-) Reserva overhaul", _usd(-avion.reserva_overhaul_usd)],
         ["Saldo disponible", _usd(avion.saldo_usd)],
     ]

@@ -461,6 +461,13 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
         value="COMBUSTIBLE DEL MES = suma de las columnas por avión + las "
         "cargas SIN avión (ver pestaña Combustible; bloquean el pre-cierre).",
     ).font = Font(italic=True, size=9, color="5B6470")
+    ws.cell(
+        row=8,
+        column=1,
+        value="OTROS GASTOS = total del mes; las columnas por avión muestran "
+        "solo lo asignado/repartido a cada aeronave — la diferencia es gasto "
+        "de la empresa VuelaTour (y partidas sin tipo de cambio).",
+    ).font = Font(italic=True, size=9, color="5B6470")
 
 
 def render_dinero_xlsx(req: DineroXlsxRequest) -> bytes:

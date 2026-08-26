@@ -51,7 +51,7 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     headers = [
         "Matrícula", "Modelo", "Horas voladas", "Ingresos cobrado", "Comisiones venta",
         "Pendiente cobro", "Gastos directos", "Gastos indirectos", "Permisos",
-        "Otros (prorrateo)", "Reserva overhaul", "Saldo disponible",
+        "Fijos (prorrateo + reparto)", "Reserva overhaul", "Saldo disponible",
     ]
     hrow = 4
     _header_row(ws, hrow, headers)
