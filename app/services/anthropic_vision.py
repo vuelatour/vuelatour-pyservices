@@ -223,8 +223,9 @@ _TICKET_SYSTEM = (
     "(NO el folio fiscal UUID). Si no aparece: null. Este dato evita capturas "
     "duplicadas: no lo inventes.\n"
     '  "concepto": descripción breve de lo comprado, o null.\n'
-    '  "categoria_sugerida": una de GAS, OPERACIONES, ATERRIZAJE, TUAS, FBO, '
-    "COMIDA, HOTEL, TAXI, REFACCION, PERMISO, FIJO, OTRO (la más probable), o "
+    '  "categoria_sugerida": una de GAS, GASOLINA, OPERACIONES, ATERRIZAJE, '
+    "TUAS, FBO, COMIDA, HOTEL, TAXI, REFACCION, PERMISO, FIJO, OTRO (la más "
+    "probable), o "
     "null. Guía: ATERRIZAJE = cuotas de aterrizaje/estacionamiento de pista; "
     "TUAS = tarifa de uso de aeropuerto (TUA); FBO = servicios FBO/handling. "
     "Los VIÁTICOS de la tripulación tienen categoría propia — NO los mandes a "
@@ -240,9 +241,11 @@ _TICKET_SYSTEM = (
     "TRIPULACIÓN (COMIDA/TAXI/HOTEL); señales de PASAJEROS mandan a OTRO "
     "(varios boletos en el mismo ticket, consumo a nombre del cliente, "
     "leyendas que mencionen pasajeros). OJO: gasolina/diésel de un VEHÍCULO "
-    "TERRESTRE (gasolinera Pemex, OXXO GAS — que NO es la tienda OXXO) NUNCA "
-    "es GAS ni COMIDA: es TAXI si es transporte de la tripulación u OTRO si "
-    "es de oficina.\n"
+    "TERRESTRE (gasolinera Pemex, Gulf, OXXO GAS — que NO es la tienda OXXO; "
+    "Magna/Premium/Regular/diésel) NUNCA es GAS ni COMIDA: es GASOLINA "
+    "(combustible de coche/camioneta). GAS es SOLO combustible de AVIACIÓN "
+    "(ASA, GAFSACOMM, AVGAS, turbosina, gasavión). TAXI queda para "
+    "transporte pagado (taxi/Uber/ferry), no para cargar gasolina.\n"
     '  "medio_pago": "EFECTIVO", "TARJETA_CORP" o "TRANSFERENCIA" segun el ticket '
     "(DEBITO/CREDITO/VISA/MASTERCARD/TARJETA = TARJETA_CORP; EFECTIVO/CASH = "
     "EFECTIVO; SPEI/TRANSFERENCIA = TRANSFERENCIA), o null. OJO: muchas fotos "
@@ -354,8 +357,8 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
     moneda = data.get("moneda")
     categoria = data.get("categoria_sugerida")
     valid_cats = {
-        "GAS", "OPERACIONES", "ATERRIZAJE", "TUAS", "FBO", "COMIDA", "HOTEL",
-        "TAXI", "REFACCION", "PERMISO", "FIJO", "OTRO",
+        "GAS", "GASOLINA", "OPERACIONES", "ATERRIZAJE", "TUAS", "FBO",
+        "COMIDA", "HOTEL", "TAXI", "REFACCION", "PERMISO", "FIJO", "OTRO",
     }
     monto_f = float(monto) if isinstance(monto, (int, float)) else None
     # Propina solo si es coherente (0 < propina < monto): una lectura donde

@@ -104,6 +104,9 @@ class GastoTicketRequest(BaseModel):
 
 CategoriaGasto = Literal[
     "GAS",
+    # Gasolina de VEHÍCULOS (27-ago): gasolinera Pemex/Gulf — la IA la
+    # distingue del combustible de aviación (GAS).
+    "GASOLINA",
     # Categoría unificada de la app (aterrizaje + FBO + servicios de
     # aeropuerto). Faltaba aquí y pydantic RECHAZABA toda la lectura de
     # facturas de FBO ("No se pudo interpretar el ticket").
