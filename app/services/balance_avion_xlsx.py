@@ -33,6 +33,8 @@ from app.schemas.reportes import (
     BalanceAvionRequest,
     BalanceGeneralRequest,
     BalanceGeneralResumenFila,
+    BalanceHojaOtrosMovimientos,
+    BalanceOtroMovimientoFila,
 )
 from app.services.tabla_xlsx import sheet_title
 
@@ -798,6 +800,83 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
     ws.freeze_panes = "A4"
 
 
+def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) -> None:
+    """Pestaña "Otros movimientos" (28-ago, réplica de la hoja manual
+    "dinero otros ingresos"): conceptos cobrados al cliente vs pagados, por
+    clave de vuelo (celda teñida con el color del avión), más la sección de
+    movimientos SIN avión/SIN vuelo. Remanente negativo en ROJO. Los montos
+    vienen YA calculados del API — aquí solo se pinta."""
+    ws.cell(row=1, column=1, value="OTROS MOVIMIENTOS VUELATOUR").font = Font(
+        bold=True, size=12, color=NAVY
+    )
+    ws.cell(
+        row=2, column=1,
+        value="Cobrado al cliente vs pagado, por concepto; el egreso solo se "
+        "aparea cuando el mapeo es directo (TUAs, hotel de pernocta, comisión "
+        "bancaria) — el resto se lee por clave. Todo en MXN.",
+    ).font = Font(italic=True, size=9, color=MUTED)
+    headers = [
+        "clave", "fecha\nvuelo", "concepto", "egreso", "fecha", "concepto",
+        "ingreso", "fecha", "remanente", "factura\nvuelatour",
+    ]
+    for i, h in enumerate(headers, start=1):
+        c = ws.cell(row=3, column=i, value=h)
+        c.font = Font(bold=True, color="FFFFFF", size=9)
+        c.fill = PatternFill("solid", fgColor=BRAND)
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = _border
+        ws.column_dimensions[get_column_letter(i)].width = 15
+    ws.column_dimensions["A"].width = 18
+    ws.column_dimensions["C"].width = 28
+    ws.column_dimensions["F"].width = 32
+    row = 4
+    tot_e = tot_i = 0.0
+
+    def pinta(f: BalanceOtroMovimientoFila) -> None:
+        nonlocal row, tot_e, tot_i
+        vals = [
+            f.clave, _fecha(f.fecha_vuelo), f.concepto_egreso, f.egreso_mxn,
+            _fecha(f.fecha_egreso), f.concepto_ingreso, f.ingreso_mxn,
+            _fecha(f.fecha_ingreso), f.remanente_mxn, f.factura,
+        ]
+        for i, v in enumerate(vals, start=1):
+            cell = ws.cell(row=row, column=i, value=v if v != "" else None)
+            cell.border = _border
+            if isinstance(v, (int, float)):
+                cell.number_format = MONEY
+        swatch = _hex(f.avion_color)
+        if swatch:
+            ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor=swatch)
+        if isinstance(f.remanente_mxn, (int, float)) and f.remanente_mxn < 0:
+            ws.cell(row=row, column=9).font = Font(color=RED)
+        if isinstance(f.egreso_mxn, (int, float)):
+            tot_e += f.egreso_mxn
+        if isinstance(f.ingreso_mxn, (int, float)):
+            tot_i += f.ingreso_mxn
+        row += 1
+
+    for f in hoja.filas:
+        pinta(f)
+    if hoja.filas_sueltas:
+        row += 1
+        t = ws.cell(row=row, column=1, value="MOVIMIENTOS SIN AVIÓN / SIN VUELO")
+        t.font = Font(bold=True, size=10, color=NAVY)
+        t.fill = PatternFill("solid", fgColor=LIGHT)
+        for i in range(2, 11):
+            ws.cell(row=row, column=i).fill = PatternFill("solid", fgColor=LIGHT)
+        row += 1
+        for f in hoja.filas_sueltas:
+            pinta(f)
+    ws.cell(row=row, column=1, value="TOTALES").font = Font(bold=True)
+    rem = tot_i - tot_e
+    for col, val in ((4, round(tot_e, 2)), (7, round(tot_i, 2)), (9, round(rem, 2))):
+        cell = ws.cell(row=row, column=col, value=val)
+        cell.font = Font(bold=True, color=RED if col == 9 and rem < 0 else "000000")
+        cell.number_format = MONEY
+        cell.fill = PatternFill("solid", fgColor=LIGHT)
+    ws.freeze_panes = "A4"
+
+
 def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
     """Balance GENERAL (regla del cliente, 18-ago): la MISMA estructura de
     hojas que el libro individual pero con los datos de TODOS los aviones
@@ -827,6 +906,12 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
         "El TUA cobrado al cliente sigue dentro de la VENTA de su fila.",
         )
         _hoja_gastos(wb.create_sheet("permisos"), "Permisos", cons.permisos, cons)
+
+        # Pestaña "Otros movimientos" (28-ago): solo si el API la manda.
+        if cons.otros_movimientos is not None:
+            _hoja_otros_movimientos(
+                wb.create_sheet("otros movimientos"), cons.otros_movimientos
+            )
 
         # Hoja balance: un BLOQUE por avión (título teñido con su color).
         ws_b = wb.create_sheet("balance")

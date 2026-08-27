@@ -359,6 +359,31 @@ class BalanceAvionBalanceBloque(BaseModel):
     socios: list[BalanceAvionSocio] = Field(default_factory=list)
 
 
+class BalanceOtroMovimientoFila(BaseModel):
+    """Fila de la pestaña "Otros movimientos" (28-ago, hoja manual del
+    cliente): egreso pagado apareado con el ingreso cobrado por concepto y
+    su remanente. Cualquier lado puede venir vacío (solo-ingreso o
+    solo-egreso); viene YA calculada del API — aquí jamás se recalcula."""
+
+    clave: str = ""
+    avion_color: str | None = None
+    fecha_vuelo: str | None = None
+    concepto_egreso: str | None = None
+    egreso_mxn: float | None = None
+    fecha_egreso: str | None = None
+    concepto_ingreso: str | None = None
+    ingreso_mxn: float | None = None
+    fecha_ingreso: str | None = None
+    remanente_mxn: float | None = None
+    factura: str | None = None
+
+
+class BalanceHojaOtrosMovimientos(BaseModel):
+    filas: list[BalanceOtroMovimientoFila] = Field(default_factory=list)
+    # Movimientos SIN avión y SIN vuelo (dinero de empresa).
+    filas_sueltas: list[BalanceOtroMovimientoFila] = Field(default_factory=list)
+
+
 class BalanceAvionRequest(BaseModel):
     generado: str | None = None
     matricula: str = ""
@@ -379,6 +404,9 @@ class BalanceAvionRequest(BaseModel):
         default_factory=BalanceAvionHojaCombustible
     )
     balance: BalanceAvionBalanceBloque = Field(default_factory=BalanceAvionBalanceBloque)
+    # Pestaña "Otros movimientos" (28-ago): solo la manda el GENERAL; None =
+    # no se pinta (skew tolerante con API viejo).
+    otros_movimientos: BalanceHojaOtrosMovimientos | None = None
     pendientes: list[str] = Field(default_factory=list)
 
 
