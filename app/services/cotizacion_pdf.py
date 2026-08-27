@@ -289,6 +289,12 @@ def _build_html(r: CotizacionPdfRequest) -> str:
         fila("Viáticos por pernocta", _money(r.viaticos_pernocta_usd))
     if r.descuento_usd > 0:
         fila("Descuento", f"&minus;{_money(r.descuento_usd)}")
+    # Subtotal SIN IVA antes del IVA (27-ago, pedido del cliente). Se deriva
+    # del total canónico (total − IVA) para cuadrar exacto con el desglose.
+    filas.append(
+        '<tr class="sub-row"><td class="lbl">Subtotal (sin IVA)</td>'
+        f'<td class="val">{_money(r.total_usd - r.iva_usd)}</td></tr>'
+    )
     fila(f"IVA ({r.iva_pct:.0f}%)", _money(r.iva_usd))
     desglose_html = "".join(filas)
     total_row_html = (
@@ -459,6 +465,8 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   .totales td {{ padding: 7px 0; }}
   .totales .lbl {{ color: #6b7280; }}
   .totales .val {{ text-align: right; font-weight: 600; }}
+  .sub-row td {{ border-top: 1px solid #d1d5db; padding-top: 8px; font-weight: 700;
+                 color: {_NAVY}; }}
   .total-row td {{ border-top: 2px solid {_NAVY}; padding-top: 12px; font-size: 18px;
                    font-weight: 800; color: {_BRAND}; }}
   .total-mxn td {{ font-size: 13px; font-weight: 700; color: {_NAVY}; }}
