@@ -514,7 +514,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
 
   <div class="route" style="font-size:{ruta_font}">{ruta_titulo}</div>
   <div style="font-size:13px;color:#374151">
-    {r.pasajeros} {'pasajero' if r.pasajeros == 1 else 'pasajeros'}{f" · {escape(r.matricula)}" if mostrar_matricula else ""}
+    {r.pasajeros} {'pasajero' if r.pasajeros == 1 else 'pasajeros'}{f" · {escape(r.avion_externo)}" if r.avion_externo else (f" · {escape(r.matricula)}" if mostrar_matricula else "")}
   </div>
 
   <h2>Traslados</h2>

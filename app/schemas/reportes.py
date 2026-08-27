@@ -81,6 +81,10 @@ class CotizacionPdfRequest(BaseModel):
     # página 2 = exterior ancho + interior con tarjeta "De un vistazo" +
     # características. Todo opcional (defaults) para tolerar skew de deploy.
     avion_modelo: str | None = None
+    # Avión EXTERNO (28-ago, venta broker): ficha capturada a mano, p.ej.
+    # "HAWKER 400 A · XA-REG". Cuando viene, se muestra bajo la ruta; la
+    # página "La aeronave" no aplica (no hay fotos/ficha de flota).
+    avion_externo: str | None = None
     avion_velocidad_kts: float | None = None
     avion_pasajeros: int | None = None
     avion_num_motores: int | None = None
