@@ -359,6 +359,10 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
     valid_cats = {
         "GAS", "GASOLINA", "OPERACIONES", "ATERRIZAJE", "TUAS", "FBO",
         "COMIDA", "HOTEL", "TAXI", "REFACCION", "PERMISO", "FIJO", "OTRO",
+        # No están en el prompt (no se leen de un ticket) pero se toleran
+        # si el modelo las eco-devuelve en un reanálisis: VISITA (gasto de
+        # visitante, 27-ago) y PERSONAL_DUENO.
+        "VISITA", "PERSONAL_DUENO",
     }
     monto_f = float(monto) if isinstance(monto, (int, float)) else None
     # Propina solo si es coherente (0 < propina < monto): una lectura donde

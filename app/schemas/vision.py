@@ -125,6 +125,11 @@ CategoriaGasto = Literal[
     # Gasto indirecto de la operación (sin vuelo). La IA no lo sugiere (no
     # está en el prompt); aditivo para tolerar el enum del API.
     "INDIRECTO",
+    # Gasto de visitante de trabajo (27-ago) y gasto personal del dueño:
+    # tampoco se sugieren (no se distinguen desde un ticket) — aditivos
+    # para que un reanálisis sobre esos gastos no truene el esquema.
+    "VISITA",
+    "PERSONAL_DUENO",
     "OTRO",
 ]
 
