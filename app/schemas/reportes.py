@@ -68,6 +68,10 @@ class CotizacionPdfRequest(BaseModel):
     tc_usd_mxn: float | None = None
     moneda: str = "USD"
     notas: str | None = None
+    # Presentación configurable por cotización (27-ago): tarifa/hr apagada
+    # e itinerario prendido por defecto (aditivo: tolera skew de deploy).
+    mostrar_tarifa_hora: bool = False
+    mostrar_itinerario: bool = True
     # ===== PDF profesional (26-ago): mapa, matrícula y fotos del avión =====
     matricula: str | None = None
     # Data-URIs (base64) firmadas y descargadas por el API; None = sin foto.

@@ -103,17 +103,59 @@ def _xy(lon: float, lat: float) -> tuple[float, float]:
 
 
 def _mapa_svg(puntos: list[MapaPuntoPdf]) -> str:
-    """SVG del itinerario: península + arcos numerados (ferry punteado)."""
+    """SVG del itinerario: península + arcos numerados (ferry punteado).
+
+    ZOOM a la ruta (27-ago, pedido del cliente): el viewBox se ajusta al
+    bounding box de los puntos con aire — igual que el mapa del admin — para
+    que rutas cortas (CUN–CZM) no se vean diminutas. Trazos, radios y textos
+    se escalan por el factor de zoom para imprimir al tamaño de siempre.
+    """
     if not puntos:
         return ""
     paths, _ = _peninsula_paths()
+
+    orden = sorted(puntos, key=lambda x: x.orden)
+    pts_xy: list[tuple[float, float]] = []
+    for p in orden:
+        pts_xy.append(_xy(p.o_lon, p.o_lat))
+        pts_xy.append(_xy(p.d_lon, p.d_lat))
+    xs = [x for x, _ in pts_xy]
+    ys = [y for _, y in pts_xy]
+    span = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+    # Aire proporcional + fijo (los arcos curvan hacia afuera y las
+    # etiquetas cuelgan bajo el punto).
+    pad = span * 0.30 + 18.0
+    bx0, by0 = min(xs) - pad, min(ys) - pad
+    bw, bh = (max(xs) - min(xs)) + 2 * pad, (max(ys) - min(ys)) + 2 * pad
+    # Conservar el aspecto del lienzo.
+    aspecto = _VIEW_W / _VIEW_H
+    if bw / bh > aspecto:
+        extra = bw / aspecto - bh
+        by0 -= extra / 2
+        bh = bw / aspecto
+    else:
+        extra = bh * aspecto - bw
+        bx0 -= extra / 2
+        bw = bh * aspecto
+    # Límite de acercamiento (~3.2x): conservar contexto geográfico.
+    min_w = _VIEW_W / 3.2
+    if bw < min_w:
+        cx, cy = bx0 + bw / 2, by0 + bh / 2
+        bw, bh = min_w, min_w / aspecto
+        bx0, by0 = cx - bw / 2, cy - bh / 2
+    # Nunca más lejos que la vista completa original.
+    if bw > _VIEW_W:
+        bx0, by0, bw, bh = 0.0, 0.0, float(_VIEW_W), float(_VIEW_H)
+    k = bw / _VIEW_W  # factor de escala de trazos/textos (1 = sin zoom)
+
     fondo = "".join(
-        f'<path d="{d}" fill="#e8eef5" stroke="#b7c6d6" stroke-width="1"/>' for d in paths
+        f'<path d="{d}" fill="#e8eef5" stroke="#b7c6d6" stroke-width="{1 * k:.2f}"/>'
+        for d in paths
     )
     arcos: list[str] = []
     marcadores: list[str] = []
     etiquetas: dict[str, tuple[float, float]] = {}
-    for p in sorted(puntos, key=lambda x: x.orden):
+    for p in orden:
         x1, y1 = _xy(p.o_lon, p.o_lat)
         x2, y2 = _xy(p.d_lon, p.d_lat)
         dx, dy = x2 - x1, y2 - y1
@@ -121,31 +163,33 @@ def _mapa_svg(puntos: list[MapaPuntoPdf]) -> str:
         # Curvatura perpendicular (los tramos de ida y regreso se separan solos).
         cx = (x1 + x2) / 2 - dy / largo * largo * 0.18
         cy = (y1 + y2) / 2 + dx / largo * largo * 0.18
-        dash = ' stroke-dasharray="6 5"' if p.es_ferry else ""
+        dash = f' stroke-dasharray="{6 * k:.1f} {5 * k:.1f}"' if p.es_ferry else ""
         arcos.append(
             f'<path d="M{x1:.1f},{y1:.1f} Q{cx:.1f},{cy:.1f} {x2:.1f},{y2:.1f}" '
-            f'fill="none" stroke="{_BRAND}" stroke-width="2.4"{dash}/>'
+            f'fill="none" stroke="{_BRAND}" stroke-width="{2.4 * k:.2f}"{dash}/>'
         )
         # Badge numerado en el punto medio del arco (t = 0.5 del bezier).
         bx = 0.25 * x1 + 0.5 * cx + 0.25 * x2
         by = 0.25 * y1 + 0.5 * cy + 0.25 * y2
         arcos.append(
-            f'<circle cx="{bx:.1f}" cy="{by:.1f}" r="9" fill="{_BRAND}"/>'
-            f'<text x="{bx:.1f}" y="{by + 3.4:.1f}" text-anchor="middle" '
-            f'font-size="10" font-weight="700" fill="#ffffff">{p.orden}</text>'
+            f'<circle cx="{bx:.1f}" cy="{by:.1f}" r="{9 * k:.2f}" fill="{_BRAND}"/>'
+            f'<text x="{bx:.1f}" y="{by + 3.4 * k:.1f}" text-anchor="middle" '
+            f'font-size="{10 * k:.2f}" font-weight="700" fill="#ffffff">{p.orden}</text>'
         )
         etiquetas[p.origen_iata.upper()] = (x1, y1)
         etiquetas[p.destino_iata.upper()] = (x2, y2)
     for iata, (x, y) in etiquetas.items():
         marcadores.append(
-            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#ffffff" '
-            f'stroke="{_BRAND}" stroke-width="2.5"/>'
-            f'<text x="{x:.1f}" y="{y + 16:.1f}" text-anchor="middle" font-size="10" '
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{5 * k:.2f}" fill="#ffffff" '
+            f'stroke="{_BRAND}" stroke-width="{2.5 * k:.2f}"/>'
+            f'<text x="{x:.1f}" y="{y + 16 * k:.1f}" text-anchor="middle" '
+            f'font-size="{10 * k:.2f}" '
             f'font-weight="700" fill="{_NAVY}">{escape(iata)}</text>'
         )
     return (
         '<div class="mapa">'
-        f'<svg viewBox="0 0 {_VIEW_W} {_VIEW_H}" xmlns="http://www.w3.org/2000/svg">'
+        f'<svg viewBox="{bx0:.1f} {by0:.1f} {bw:.1f} {bh:.1f}" '
+        'xmlns="http://www.w3.org/2000/svg">'
         f"{fondo}{''.join(arcos)}{''.join(marcadores)}</svg></div>"
     )
 
@@ -179,18 +223,28 @@ def _build_html(r: CotizacionPdfRequest) -> str:
             '<table class="grid"><thead><tr><th>#</th><th>Tramo</th></tr></thead>'
             f"<tbody>{filas}</tbody></table>"
         )
-        if mapa_html:
+        if not r.mostrar_itinerario:
+            # Itinerario OCULTO por configuración de la cotización (27-ago):
+            # queda solo el mapa de la ruta, centrado.
+            escalas_html = (
+                f'<h2>La ruta</h2><div class="mapa-solo">{mapa_html}</div>'
+                if mapa_html
+                else ""
+            )
+        elif mapa_html:
             cuerpo_itin = (
                 '<table class="itin-row"><tr>'
                 f'<td class="itin-tabla">{tabla_itin}</td>'
                 f'<td class="itin-mapa">{mapa_html}</td>'
                 "</tr></table>"
             )
-        else:
-            cuerpo_itin = tabla_itin
-        escalas_html = f"""
+            escalas_html = f"""
         <h2>Itinerario</h2>
         {cuerpo_itin}"""
+        else:
+            escalas_html = f"""
+        <h2>Itinerario</h2>
+        {tabla_itin}"""
 
     notas_html = (
         f'<div class="notas"><strong>Notas:</strong> {escape(r.notas)}</div>' if r.notas else ""
@@ -203,7 +257,21 @@ def _build_html(r: CotizacionPdfRequest) -> str:
     def fila(lbl: str, val: str) -> None:
         filas.append(f'<tr><td class="lbl">{escape(lbl)}</td><td class="val">{val}</td></tr>')
 
-    fila("Servicio aéreo", _money(r.subtotal_usd))
+    # Tarifa por hora VISIBLE solo si la cotización lo pide (27-ago).
+    if (
+        r.mostrar_tarifa_hora
+        and r.tiempo_cobrable_hr
+        and r.tarifa_hora_usd
+        and r.tiempo_cobrable_hr > 0
+        and r.tarifa_hora_usd > 0
+    ):
+        fila(
+            f"Servicio aéreo ({r.tiempo_cobrable_hr:g} h × "
+            f"{_money(r.tarifa_hora_usd)}/hr)",
+            _money(r.subtotal_usd),
+        )
+    else:
+        fila("Servicio aéreo", _money(r.subtotal_usd))
     if not r.tuas_detalle:
         fila("TUAS", _money(r.tuas_usd))
     elif len(r.tuas_detalle) == 1:
@@ -384,6 +452,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   .itin-row td {{ vertical-align: top; }}
   .itin-tabla {{ width: 55%; padding-right: 12px; }}
   .itin-mapa {{ width: 45%; }}
+  .mapa-solo {{ width: 60%; margin: 0 auto; }}
   .mapa {{ width: 100%; border: 1px solid #e5e7eb;
            border-radius: 10px; overflow: hidden; background: #f8fafc; }}
   .mapa svg {{ width: 100%; display: block; }}
