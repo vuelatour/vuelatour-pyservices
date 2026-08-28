@@ -418,6 +418,10 @@ class BalanceOtroMovimientoFila(BaseModel):
     fecha_ingreso: str | None = None
     remanente_mxn: float | None = None
     factura: str | None = None
+    # Desglose línea por línea (una fila por vuelo, 28-ago): se pinta como
+    # COMENTARIO de la celda de ingreso / egreso. None = API viejo.
+    nota_ingreso: str | None = None
+    nota_egreso: str | None = None
 
 
 class BalanceHojaOtrosMovimientos(BaseModel):

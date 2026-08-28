@@ -974,10 +974,11 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
     ws.cell(
         row=2, column=1,
         value="Ingreso de VuelaTour (no del avión): TUAs, extras y viáticos de "
-        "pernocta cobrados al cliente (con su IVA) vs lo pagado, por concepto; "
-        "el egreso solo se aparea cuando el mapeo es directo (TUAs, hotel de "
-        "pernocta, comisión bancaria) — el resto se lee por clave. Una fila "
-        "puede traer solo ingreso o solo egreso. Todo en MXN. Incluye todos "
+        "pernocta cobrados al cliente (con su IVA) vs lo pagado. UNA FILA POR "
+        "VUELO: los ingresos van sumados en una celda y los egresos en otra; "
+        "el desglose concepto por concepto está en el COMENTARIO de cada "
+        "celda (pasa el cursor sobre el triángulo rojo). Una fila puede traer "
+        "solo ingreso o solo egreso. Todo en MXN. Incluye todos "
         "los estados del periodo (igual que la hoja maestra); los cancelados "
         "se marcan (clave · CANCELADO en rojo) y los demás estados no "
         "normales llevan su estado junto a la clave.",
@@ -1024,6 +1025,15 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
             ws.cell(row=row, column=1).font = Font(color=RED)
         if isinstance(f.remanente_mxn, (int, float)) and f.remanente_mxn < 0:
             ws.cell(row=row, column=9).font = Font(color=RED)
+        # Una fila por vuelo: el desglose de cada celda va en su COMENTARIO
+        # (el equipo lo pidió así para ahorrar espacio y entenderlo mejor).
+        for col, nota in ((7, f.nota_ingreso), (4, f.nota_egreso)):
+            if nota:
+                lineas = nota.count("\n") + 1
+                com = Comment(nota, "VuelaTour")
+                com.width = 420
+                com.height = max(60, 18 * lineas + 20)
+                ws.cell(row=row, column=col).comment = com
         if isinstance(f.egreso_mxn, (int, float)):
             tot_e += f.egreso_mxn
         if isinstance(f.ingreso_mxn, (int, float)):
