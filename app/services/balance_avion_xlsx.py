@@ -259,6 +259,10 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         # avión (así lo maneja el equipo en su libro — el resto de la fila
         # conserva los colores por bloque); en el individual viene vacío.
         avion_fill = _hex(v.avion_color)
+        # Vuelo EXTERNO (operador ajeno, 28-ago): un vuelo más de la flota;
+        # la clave va en GRIS e itálica para distinguirlo de las matrículas.
+        if v.es_externo and not avion_fill:
+            avion_fill = "E5E7EB"
         for i, (grupo, _header, attr, fmt) in enumerate(_COLS, start=1):
             fill = _GROUP_FILLS.get(grupo)
             if i == 1 and avion_fill:
@@ -271,6 +275,8 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
                         cell.font = Font(color=RED, size=9)
                     elif attr == "estado":
                         cell.font = Font(color=MUTED, size=9)
+                    elif attr == "clave" and v.es_externo:
+                        cell.font = Font(italic=True, color="374151")
                 else:
                     cell = _num(ws, row, i, val, fmt)
                 if attr == "horas_cobradas" and horas_menores:
@@ -1083,6 +1089,13 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
     if cons is not None:
         # La hoja maestra se titula sola ("reporte horas FLOTA").
         _hoja_maestra(wb.create_sheet(), cons)
+        # Pestaña "Otros movimientos" JUNTO a "reporte horas" (pedido del
+        # cliente 28-ago): se crea aquí para que quede al lado; solo si el
+        # API la manda.
+        if cons.otros_movimientos is not None:
+            _hoja_otros_movimientos(
+                wb.create_sheet("otros movimientos"), cons.otros_movimientos
+            )
         _hoja_cobranza(wb.create_sheet("cobranza"), cons)
         _hoja_combustible(wb.create_sheet("combustible"), cons.combustible, cons)
         _hoja_gastos(
@@ -1097,12 +1110,6 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
         )
         _hoja_gastos(wb.create_sheet("permisos"), "Permisos", cons.permisos, cons,
                      nota=_NOTA_PERMISOS)
-
-        # Pestaña "Otros movimientos" (28-ago): solo si el API la manda.
-        if cons.otros_movimientos is not None:
-            _hoja_otros_movimientos(
-                wb.create_sheet("otros movimientos"), cons.otros_movimientos
-            )
 
         # Hoja balance: un BLOQUE por avión (título teñido con su color).
         ws_b = wb.create_sheet("balance")

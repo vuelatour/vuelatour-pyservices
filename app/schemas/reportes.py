@@ -226,6 +226,11 @@ class BalanceAvionVuelo(BaseModel):
     # Balance GENERAL (flota): la fila se tiñe con el color del avión
     # (aeronave.color_calendario — así identifica el equipo en su libro).
     avion_color: str | None = None
+    # Vuelo EXTERNO (operador ajeno): en el general aparece como un vuelo
+    # más (fila gris, sin color de avión); su costo del operador va en
+    # OPERACIONES. None/False = vuelo propio.
+    es_externo: bool | None = None
+    operador_externo: str | None = None
     # --- Bloque VENTA ---
     horas_cobradas: float | None = None
     tarifa_usd: float | None = None
