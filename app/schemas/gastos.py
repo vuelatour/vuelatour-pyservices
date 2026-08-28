@@ -26,6 +26,10 @@ class VueloCandidato(BaseModel):
     fecha_vuelo: str | None = Field(default=None, description="ISO de salida")
     matricula: str | None = None
     ruta: str | None = Field(default=None, description="Ej. CUN → CZM → CUN")
+    estado: str | None = Field(
+        default=None,
+        description="Estado del vuelo; CANCELADO = ya no voló salvo evidencia clara",
+    )
 
 
 class GastoVueloSugerirRequest(BaseModel):

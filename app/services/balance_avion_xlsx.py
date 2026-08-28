@@ -618,7 +618,11 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
         if (v.por_cobrar_mxn or 0) > 0.005:
             pcc.font = Font(color=RED)
         _num(ws, row, 9, v.por_cobrar_usd)
-        _num(ws, row, 10, v.total_cotizacion_mxn)
+        cot = _num(ws, row, 10, v.total_cotizacion_mxn)
+        if v.estado == "CANCELADO":
+            # Solo referencia de lo cotizado: no se cobró ni se cobrará y NO
+            # suma en el total del periodo (el API la excluye).
+            cot.font = Font(color=MUTED, italic=True)
         _num(ws, row, 11, v.cobrado_real_mxn)
         _num(ws, row, 12, _comision_banco(v))
         # Detalle: depósitos REALES (fecha · monto · método · cuenta ·
@@ -676,7 +680,9 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "corresponde a TUAs/extras/pernocta es de VuelaTour. El detalle trae "
         "los depósitos reales y la comisión que retuvo el banco.",
         "TOTAL COTIZACIÓN = lo cobrado al cliente COMPLETO (con TUAs/extras/"
-        "pernocta y su IVA); COBRADO REAL = depósitos tal cual entraron. "
+        "pernocta y su IVA); en un vuelo CANCELADO la celda (gris) es solo "
+        "referencia de lo cotizado y NO suma en el total. COBRADO REAL = "
+        "depósitos tal cual entraron. "
         "% COBRADO = COBRADO ÷ TOTAL A COBRAR (misma base que POR COBRAR). "
         "COBRADO y POR COBRAR van al TC de venta: un depósito en pesos con "
         "su propio TC se convierte a USD con ese TC y se re-expresa al TC de "

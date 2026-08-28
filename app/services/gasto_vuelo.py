@@ -24,8 +24,10 @@ _SYSTEM = (
     "hoteles/comidas pueden ser del día anterior o siguiente si hubo pernocta); "
     "el lugar/proveedor del gasto vs los aeropuertos de la ruta; la categoría "
     "(aterrizaje/FBO ocurren en aeropuertos de la ruta; un supermercado no ata a "
-    "un vuelo). Usa SOLO ids de la lista. Si nada encaja, vuelo_id_sugerido=null "
-    "con confianza 0."
+    "un vuelo). Si un candidato tiene estado CANCELADO, elígelo solo cuando el "
+    "gasto claramente sea de ese vuelo (p. ej. voló a recoger y lo cancelaron); "
+    "ante duda prefiere el vuelo NO cancelado del mismo día. Usa SOLO ids de la "
+    "lista. Si nada encaja, vuelo_id_sugerido=null con confianza 0."
 )
 
 
