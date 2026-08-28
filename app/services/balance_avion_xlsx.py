@@ -45,6 +45,8 @@ LIGHT = "EEF2F7"
 GREEN = "15803D"
 RED = "DC2626"
 AMBER = "FCD34D"  # horas cobradas < voladas (regla: nunca cobrar de menos)
+# TC oficial autocompletado (Banxico FIX): azul claro, sutil (pedido 27-ago).
+TC_OFICIAL_FILL = "DCE9F8"
 # Colores suaves por bloque (ayuda visual pedida en el contrato).
 FILL_VENTA = "E8F0FB"  # azul suave
 FILL_COSTOS = "FDF3E7"  # ámbar suave
@@ -258,6 +260,18 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
                     cell = _num(ws, row, i, val, fmt)
                 if attr == "horas_cobradas" and horas_menores:
                     fill = AMBER
+                # TC no capturado en la cotización → se usó el oficial: la
+                # celda del TC y las que derivan de él (MXN) se marcan.
+                if v.tc_venta_oficial and attr in (
+                    "tc_venta", "total_mxn", "iva_mxn", "subtotal_mxn",
+                ):
+                    fill = TC_OFICIAL_FILL
+                    if attr == "tc_venta":
+                        cell.comment = Comment(
+                            "TC oficial (Banxico FIX / DOF) del día de la cotización: "
+                            "la cotización no traía tipo de cambio.",
+                            "VuelaTour",
+                        )
                 # Salto INTERNO entre tramos del MISMO vuelo: infla las horas
                 # sin romper la cadena entre vuelos — se pinta en la celda de
                 # horas voladas con el tramo culpable en la nota.

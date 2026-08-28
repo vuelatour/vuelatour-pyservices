@@ -223,6 +223,9 @@ class BalanceAvionVuelo(BaseModel):
     total_usd: float | None = None  # total del sistema: incluye TUAS/extras/pernocta
     iva_usd: float | None = None
     tc_venta: float | None = None
+    # true = la cotización no traía TC: se usó el oficial (Banxico FIX/DOF)
+    # del día de la cotización — el Excel pinta las celdas en azul claro.
+    tc_venta_oficial: bool = False
     total_mxn: float | None = None
     iva_mxn: float | None = None
     subtotal_mxn: float | None = None
