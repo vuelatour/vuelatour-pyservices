@@ -97,12 +97,23 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
     total_gastos = sum(
         _gastos_avion(a) + a.comisiones_venta_usd for a in req.aviones
     )
+    # Otros ingresos de VuelaTour (TUAs/extras/pernocta cobrados): solo
+    # informativo, FUERA del saldo y del reparto. Viene del API; si un API
+    # viejo no manda el global, se re-suman los por avión solo para mostrar.
+    total_otros = req.otros_ingresos_vuelatour_total_usd or sum(
+        a.otros_ingresos_vuelatour_usd for a in req.aviones
+    )
     resumen = Table(
         [
-            ["Ingresos cobrados", "Gastos del periodo", "Saldo a repartir"],
-            [_usd(total_ingresos), _usd(total_gastos), _usd(total_saldo)],
+            [
+                "Venta del avión cobrada",
+                "Otros ingresos VuelaTour",
+                "Gastos del periodo",
+                "Saldo a repartir",
+            ],
+            [_usd(total_ingresos), _usd(total_otros), _usd(total_gastos), _usd(total_saldo)],
         ],
-        colWidths=[56 * mm, 56 * mm, 58 * mm],
+        colWidths=[42.5 * mm, 42.5 * mm, 42.5 * mm, 42.5 * mm],
     )
     resumen.setStyle(
         TableStyle(
@@ -113,6 +124,8 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
                 ("FONTSIZE", (0, 1), (-1, 1), 13),
                 ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
                 ("TEXTCOLOR", (0, 1), (-1, 1), BRAND),
+                # Otros ingresos VuelaTour: informativo (gris), no se reparte.
+                ("TEXTCOLOR", (1, 1), (1, 1), MUTED),
                 ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                 ("TOPPADDING", (0, 0), (-1, -1), 6),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
@@ -173,8 +186,13 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
     story.append(Spacer(1, 3 * mm))
     story.append(
         Paragraph(
-            "Solo se reparte lo cobrado. El saldo pendiente de cobro se distribuye "
-            "cuando entra el pago. Montos en USD. Vuela Tour · Aero Charter Cancún.",
+            "Solo se reparte lo cobrado. El pendiente de cobro (parte avión) se "
+            "distribuye cuando entra el pago; la deuda total del cliente incluye "
+            "además TUAs/extras/pernocta. La venta del avión = tiempo de vuelo + ajuste + "
+            "IVA proporcional; los TUAs, extras y viáticos de pernocta cobrados son "
+            "ingreso de VuelaTour: no entran al saldo ni se reparten (detalle en "
+            "'otros movimientos' del Balance general). Montos en USD. "
+            "Vuela Tour · Aero Charter Cancún.",
             s_foot,
         )
     )
@@ -196,9 +214,31 @@ def _gastos_avion(a: RepartoAvion) -> float:
 def _bloque_avion(avion: RepartoAvion, estilo_titulo: ParagraphStyle) -> KeepTogether:
     titulo = Paragraph(f"{avion.matricula} — {avion.modelo}", estilo_titulo)
 
-    filas = [
+    filas: list[list[str]] = [
         ["Horas voladas del periodo", f"{avion.horas_voladas_hr:.1f} hr"],
-        ["Ingresos cobrados", _usd(avion.ingresos_cobrado_usd)],
+        ["Venta del avión cobrada", _usd(avion.ingresos_cobrado_usd)],
+    ]
+    # Filas informativas en gris bajo la venta, FUERA de la cascada (no
+    # suman al saldo ni se reparten):
+    #  - otros ingresos de VuelaTour (TUAs/extras/pernocta cobrados);
+    #  - pendiente de cobro = parte del AVIÓN; si el cliente debe más
+    #    (TUAs/extras/pernocta sin cobrar) se anota la deuda total.
+    info_rows: list[int] = []
+    if avion.otros_ingresos_vuelatour_usd:
+        info_rows.append(len(filas))
+        filas.append([
+            "Otros ingresos VuelaTour (TUAs/extras/pernocta) — no se reparten",
+            _usd(avion.otros_ingresos_vuelatour_usd),
+        ])
+    pendiente = avion.pendiente_cobro_usd or 0.0
+    bruto = avion.pendiente_bruto_usd or 0.0
+    if pendiente or bruto:
+        texto = "Pendiente de cobro (parte avión) — se reparte al cobrar"
+        if bruto > pendiente + 0.005:
+            texto = f"Pendiente de cobro (parte avión) — deuda total del cliente {_usd(bruto)}"
+        info_rows.append(len(filas))
+        filas.append([texto, _usd(pendiente)])
+    filas += [
         # Comisiones de venta: parte del cobro que no es de VuelaTour.
         *(
             [["(-) Comisiones de venta", _usd(-avion.comisiones_venta_usd)]]
@@ -213,21 +253,24 @@ def _bloque_avion(avion: RepartoAvion, estilo_titulo: ParagraphStyle) -> KeepTog
         ["Saldo disponible", _usd(avion.saldo_usd)],
     ]
     cascada = Table(filas, colWidths=[120 * mm, 50 * mm])
-    cascada.setStyle(
-        TableStyle(
-            [
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-                ("TOPPADDING", (0, 0), (-1, -1), 3),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                ("LINEABOVE", (0, -1), (-1, -1), 0.6, MUTED),
-                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("TEXTCOLOR", (0, -1), (-1, -1), BRAND),
-                ("BACKGROUND", (0, -1), (-1, -1), LIGHT),
-            ]
-        )
-    )
+    estilo: list = [
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LINEABOVE", (0, -1), (-1, -1), 0.6, MUTED),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("TEXTCOLOR", (0, -1), (-1, -1), BRAND),
+        ("BACKGROUND", (0, -1), (-1, -1), LIGHT),
+    ]
+    for info_idx in info_rows:
+        estilo += [
+            ("TEXTCOLOR", (0, info_idx), (-1, info_idx), MUTED),
+            ("FONTSIZE", (0, info_idx), (-1, info_idx), 7.5),
+            ("FONTNAME", (0, info_idx), (-1, info_idx), "Helvetica-Oblique"),
+        ]
+    cascada.setStyle(TableStyle(estilo))
 
     bloque: list = [titulo, Spacer(1, 2 * mm), cascada]
 

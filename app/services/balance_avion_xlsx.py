@@ -2,11 +2,19 @@
 control del equipo ("Balance N990GG.xlsx").
 
 Ocho hojas en el orden del libro:
-  1. reporte horas <MATRÍCULA> — maestro: 1 fila = 1 vuelo, TOTALES al final
-     (columnas de costo SIN combustible ni TUA desde 26-ago-2026).
-  2. cobranza — estatus de cobro por vuelo (cobrado/por cobrar, 26-ago).
+  1. reporte horas <MATRÍCULA> — maestro: 1 fila = 1 vuelo, TOTALES al final.
+     VENTA AVIÓN = tiempo de vuelo + ajuste + IVA proporcional (regla
+     28-ago-2026: TUAs/extras/pernocta cobrados son ingreso de VuelaTour y
+     viven en 'otros movimientos' del Balance general). Costos SIN
+     combustible; el TUA pagado es SOLO nota en OPERACIONES (no resta).
+     STATUS DE COBROS trae los depósitos REALES (COBRO 1..4 y su Σ) y,
+     aparte, COBRADO AVIÓN = la parte prorrateada al avión.
+  2. cobranza — estatus de cobro por vuelo: venta avión prorrateada, total
+     cotización (c/extras), depósitos reales, comisión y cuenta del banco.
   3. combustible — el gas del avión POR MES (litros y $/L), 26-ago-2026.
-  4. gastos indirectos  5. otros gastos (incluye TUAS)  6. permisos.
+  4. gastos indirectos (gastos del avión sin vuelo)  5. otros gastos (parte
+     de este avión de los gastos administrativos repartidos a mano)
+  6. permisos (todo AFAC).
   7. balance — cascada (− combustible − indirectos − otros − permisos) +
      reparto real de socios.
   8. pendientes de captura — lo que falta para que el libro quede completo.
@@ -17,6 +25,7 @@ recalcula dinero). None = celda vacía — nunca un 0 falso.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from io import BytesIO
 
@@ -31,6 +40,7 @@ from app.schemas.reportes import (
     BalanceAvionHojaCombustible,
     BalanceAvionHojaGastos,
     BalanceAvionRequest,
+    BalanceAvionVuelo,
     BalanceGeneralRequest,
     BalanceGeneralResumenFila,
     BalanceHojaOtrosMovimientos,
@@ -119,11 +129,11 @@ _COLS: list[tuple[str, str, str | None, str | None]] = [
     ("VENTA", "HORAS\nCOBRADAS", "horas_cobradas", HORAS),
     ("VENTA", "TARIFA\nUSD/HR S/IVA", "tarifa_usd", MONEY),
     ("VENTA", "IVA\nUSD/HR", "iva_hr_usd", MONEY),
-    ("VENTA", "TOTAL COBRADO\nAL CLIENTE USD *", "total_usd", MONEY),
-    ("VENTA", "IVA TOTAL\nUSD", "iva_usd", MONEY),
+    ("VENTA", "VENTA AVIÓN\nUSD *", "total_usd", MONEY),
+    ("VENTA", "IVA VENTA\nAVIÓN USD", "iva_usd", MONEY),
     ("VENTA", "TIPO CAMBIO\nVENTA", "tc_venta", TC),
-    ("VENTA", "TOTAL COBRADO\nAL CLIENTE MXN", "total_mxn", MONEY),
-    ("VENTA", "IVA TOTAL\nMXN", "iva_mxn", MONEY),
+    ("VENTA", "VENTA AVIÓN\nMXN", "total_mxn", MONEY),
+    ("VENTA", "IVA VENTA\nAVIÓN MXN", "iva_mxn", MONEY),
     ("VENTA", "TOTAL S/IVA\nMXN", "subtotal_mxn", MONEY),
     ("TIEMPO / TACÓMETRO", "TIEMPO\nVUELO HR", "tiempo_vuelo", HORAS),
     ("TIEMPO / TACÓMETRO", "TACO\nINICIO", "taco_inicio", TACO),
@@ -157,7 +167,11 @@ _COLS: list[tuple[str, str, str | None, str | None]] = [
     ("STATUS DE COBROS", "COBRO 3\nMXN", None, MONEY),
     ("STATUS DE COBROS", "COBRO 4\nFECHA", None, None),
     ("STATUS DE COBROS", "COBRO 4\nMXN", None, MONEY),
-    ("STATUS DE COBROS", "TOTAL COBRADO\nMXN", "cobrado_mxn", MONEY),
+    # Regla 28-ago-2026: primero los depósitos REALES (Σ COBRO 1..4, tal
+    # cual entraron) y aparte la parte de esos depósitos que corresponde
+    # al AVIÓN (prorrateo hecho por el API; el resto es de VuelaTour).
+    ("STATUS DE COBROS", "COBRADO REAL\nMXN (Σ depósitos)", "cobrado_real_mxn", MONEY),
+    ("STATUS DE COBROS", "COBRADO AVIÓN\nMXN (prorrateado) ****", "cobrado_mxn", MONEY),
     ("STATUS DE COBROS", "POR COBRAR\nMXN", "por_cobrar_mxn", MONEY),
     ("STATUS DE COBROS", "POR COBRAR\nUSD", "por_cobrar_usd", MONEY),
 ]
@@ -181,6 +195,7 @@ _TOTAL_MAP = {
     "remanente_mxn": "remanente_mxn", "dif_iva_mxn": "dif_iva_mxn",
     "comision_vendedor_mxn": "comision_vendedor_mxn", "ganancia_mxn": "ganancia_mxn",
     "ganancia_usd": "ganancia_usd", "cobrado_mxn": "cobrado_mxn",
+    "cobrado_real_mxn": "cobrado_real_mxn",
     "por_cobrar_mxn": "por_cobrar_mxn", "por_cobrar_usd": "por_cobrar_usd",
     # Promedios (se pintan en su columna con etiqueta "prom." implícita):
     "tc_costos": "tc_promedio", "costo_hr_usd": "costo_hr_prom_usd",
@@ -225,7 +240,7 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         c.fill = PatternFill("solid", fgColor=_GROUP_FILLS.get(grupo, LIGHT))
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = _border
-    ws.row_dimensions[2].height = 30
+    ws.row_dimensions[2].height = 38
 
     # Datos: 1 fila por vuelo.
     row = 3
@@ -350,28 +365,61 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
             cell.font = Font(bold=True)
     row += 1
 
-    # Otros ingresos del periodo (TUAs/extras/pernocta cobrados al cliente):
-    # informativo — NO suman en las columnas de la fila por vuelo; se
-    # trasladan al control GENERAL (regla del libro del cliente).
-    otros = getattr(t, "otros_ingresos_usd", None)
+    # Renglones informativos (regla 28-ago-2026): lo que NO está en las filas.
+    # 1) TUAs/extras/pernocta COTIZADOS (+ su IVA) = ingreso de VuelaTour,
+    #    EXCLUIDOS de VENTA AVIÓN; el detalle vive en 'otros movimientos'
+    #    del Balance general. Es lo cotizado de TODOS los estados (misma
+    #    base que VENTA AVIÓN), no lo cobrado.
+    otros = t.otros_ingresos_usd
     if otros is not None and otros != 0:
+        lc = ws.cell(
+            row=row,
+            column=1,
+            value="TUAs/extras/pernocta COTIZADOS en el periodo (con su IVA; "
+            "todos los estados, igual que VENTA AVIÓN) — EXCLUIDOS de las "
+            "filas: ingreso de VuelaTour, detalle en 'otros movimientos' "
+            "del Balance general:",
+        )
+        lc.font = Font(bold=True, size=9)
+        lc.alignment = Alignment(wrap_text=True, vertical="top")
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
+        ws.row_dimensions[row].height = 30
+        _num(ws, row, 9, otros, MONEY, bold=True)
+        ws.cell(row=row, column=10, value="USD").font = Font(bold=True, size=9)
+        row += 1
+    # 2) TUA pagado al aeropuerto: solo nota en OPERACIONES, no resta aquí.
+    #    El API lo manda como suma → 0 = no hubo; se omite igual que None.
+    tua = t.tua_pagado_mxn
+    if tua is not None and tua != 0:
         ws.cell(
             row=row,
             column=1,
-            value="De lo cobrado, TUAs/extras/pernocta/ajustes del periodo"
-            " (YA INCLUIDOS en las filas — informativo, no se traslada):",
+            value="TUA pagado del periodo (solo nota en OPERACIONES, no resta "
+            "en este libro):",
         ).font = Font(bold=True, size=9)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
-        _num(ws, row, 9, otros, MONEY, bold=True)
-        ws.cell(row=row, column=10, value="USD").font = Font(bold=True, size=9)
+        _num(ws, row, 9, tua, MONEY, bold=True)
+        ws.cell(row=row, column=10, value="MXN").font = Font(bold=True, size=9)
         row += 1
     row += 1
 
     # Notas al pie.
     for nota in (
-        "* TOTAL COBRADO AL CLIENTE de cada fila = el desglose COMPLETO de la "
-        "cotización (tiempo + TUAs + extras + pernocta + ajustes, con su IVA) — "
-        "cuadra con los cobros del vuelo. Sin cotización: horas × tarifa.",
+        "* VENTA AVIÓN de cada fila = tiempo de vuelo (tarifa × horas "
+        "cobradas) + ajuste/descuento + su IVA proporcional. IVA VENTA "
+        "AVIÓN (USD y MXN) es SOLO el IVA proporcional de la venta del "
+        "avión — el IVA de TUAs/extras/pernocta viaja con ellos. TUAs, "
+        "extras y viáticos de pernocta NO son venta del avión: son ingreso "
+        "de VuelaTour (pestaña 'otros movimientos' del Balance general). "
+        "Sin cotización: horas × tarifa.",
+        "**** COBRADO REAL = Σ de los depósitos tal cual entraron (COBRO "
+        "1..4). COBRADO AVIÓN = depósitos reales × (venta avión ÷ total "
+        "cotización): la parte de los cobros que corresponde a TUAs/extras/"
+        "pernocta es de VuelaTour (ver 'otros movimientos'). POR COBRAR "
+        "es la parte del avión. COBRADO AVIÓN y POR COBRAR van al TC de "
+        "venta (un depósito en pesos con su propio TC se pasa a USD con ese "
+        "TC y se re-expresa al TC de venta), así que COBRADO AVIÓN puede "
+        "diferir de COBRADO REAL sin que falte dinero.",
         "TIPO CAMBIO COSTOS y COSTO X HORA USD de la fila TOTALES son PROMEDIOS "
         "(los demás son sumas).",
         "El ESTATUS DE COBRO por vuelo (cuánto se cobró, con qué fechas y "
@@ -381,17 +429,15 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "El COMBUSTIBLE ya no va por vuelo (26-ago-2026): se controla por "
         "avión y por MES en la hoja 'combustible' (litros y $/L incluidos) y "
         "resta una sola vez en la hoja 'balance'. Por eso COSTO TOTAL, COSTO "
-        "X HORA, REMANENTE y GANANCIA de las filas van SIN combustible y SIN "
-        "TUA (ver **): la utilidad real del periodo se lee en la hoja "
-        "'balance', no en la fila. IVA PAGADO y DIF. IVA también derivan "
-        "solo de los costos de la fila (sin gas ni TUA).",
-        "** El TUA pagado al aeropuerto NO es costo de operar el avión: va "
-        "como salida en la hoja 'otros gastos' (regla 26-ago-2026) y resta "
-        "una sola vez en el balance — la nota de la celda lo desglosa como "
-        "vistazo. El ingreso de la fila sí incluye los TUAs cobrados al "
-        "cliente (cuadra contra los cobros). Los servicios FBO de una "
-        "factura de aeródromo también se separan: SÍ son costo, pero van a "
-        "la columna OTROS (la operación queda sola en OPERACIONES).",
+        "X HORA, REMANENTE y GANANCIA de las filas van SIN combustible (y el "
+        "TUA pagado tampoco resta, ver **): la utilidad real del periodo se "
+        "lee en la hoja 'balance', no en la fila. IVA PAGADO y DIF. IVA "
+        "también derivan solo de los costos de la fila (sin gas ni TUA).",
+        "** El TUA pagado al aeropuerto NO es costo del avión ni resta en "
+        "ningún lado de este libro: queda solo como nota en la celda "
+        "OPERACIONES ('TUA $x**'); cobro y pago del TUA viven en 'otros "
+        "movimientos' del Balance general. Los servicios FBO sí son costo "
+        "(columna OTROS).",
         "*** Filas 'COMPARTIDO': el vuelo mezcló aviones — aquí van SOLO los "
         "tramos, horas y costos de esta matrícula; la VENTA completa está en "
         "el balance del avión principal (el prorrateo del precio entre "
@@ -409,6 +455,9 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
 
     # Anchos + paneles congelados (bajo el encabezado, a la derecha de RUTA).
     anchos = {1: 16, 2: 12, 3: 34, 4: 12}
+    for i, (_g, _h, attr, _f) in enumerate(_COLS, start=1):
+        if attr in ("cobrado_real_mxn", "cobrado_mxn"):
+            anchos[i] = 17
     for i in range(1, n + 1):
         ws.column_dimensions[get_column_letter(i)].width = anchos.get(i, 13)
     ws.freeze_panes = "D3"
@@ -467,36 +516,76 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
 
 
 def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
-    """Hoja 'cobranza' (26-ago-2026): el estatus de cobro POR VUELO al
-    frente — cuánto se debía cobrar, cuánto YA se cobró (fechas y métodos) y
-    cuánto falta. Los mismos números del bloque STATUS DE COBROS de la hoja
-    maestra (que vive 30 columnas a la derecha), en formato legible."""
-    _title(ws, f"Cobranza — {req.matricula}".strip(" —"), 1, 10)
+    """Hoja 'cobranza' (26-ago-2026 · regla 28-ago): el estatus de cobro POR
+    VUELO al frente — cuánto se debía cobrar (VENTA DEL AVIÓN), cuánto YA se
+    cobró (prorrateado al avión) y cuánto falta; más el TOTAL COTIZACIÓN
+    (c/extras), los depósitos REALES, la comisión que retuvo el banco y la
+    cuenta que recibió cada parcialidad. Los mismos números del bloque
+    STATUS DE COBROS del final de la hoja maestra, en formato legible."""
+    n_cols = 13
+    # Ancho (en caracteres) de la columna DETALLE DE COBROS: sirve para
+    # estimar cuántos renglones envuelve cada parcialidad y no recortar.
+    ancho_detalle = 46
+    _title(ws, f"Cobranza — {req.matricula}".strip(" —"), 1, n_cols)
     periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'}"
     ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
 
     t = req.totales
-    _header_row(ws, 4, ["TOTAL A COBRAR\nMXN", "COBRADO\nMXN",
-                        "POR COBRAR\nMXN", "POR COBRAR\nUSD", "% COBRADO"])
+
+    def _comision_banco(v: BalanceAvionVuelo) -> float | None:
+        """Σ comisiones bancarias de las parcialidades (None si ninguna trae)."""
+        montos = [c.comision_mxn for c in v.cobros if c.comision_mxn is not None]
+        return round(sum(montos), 2) if montos else None
+
+    def _suma(valores: list[float | None]) -> float | None:
+        nums = [x for x in valores if x is not None]
+        return round(sum(nums), 2) if nums else None
+
+    # Totales de las columnas nuevas: los manda el API; si un API viejo no
+    # los trae, se re-suman las filas SOLO para mostrar (nunca negocio).
+    tot_cotizacion = t.total_cotizacion_mxn
+    if tot_cotizacion is None:
+        tot_cotizacion = _suma([v.total_cotizacion_mxn for v in req.vuelos])
+    tot_cobrado_real = t.cobrado_real_mxn
+    if tot_cobrado_real is None:
+        tot_cobrado_real = _suma([v.cobrado_real_mxn for v in req.vuelos])
+    tot_comision = t.comision_banco_mxn
+    if tot_comision is None:
+        tot_comision = _suma([_comision_banco(v) for v in req.vuelos])
+
+    _header_row(ws, 4, ["TOTAL A COBRAR\nMXN (venta avión)", "COBRADO\nMXN",
+                        "POR COBRAR\nMXN", "POR COBRAR\nUSD",
+                        "TOTAL COTIZACIÓN\nMXN (c/extras)", "COBRADO REAL\nMXN",
+                        "% COBRADO"])
+    ws.row_dimensions[4].height = 30
     _num(ws, 5, 1, t.total_mxn, MONEY, bold=True)
     _num(ws, 5, 2, t.cobrado_mxn, MONEY, bold=True)
     pc = _num(ws, 5, 3, t.por_cobrar_mxn, MONEY, bold=True)
     if (t.por_cobrar_mxn or 0) > 0.005:
         pc.font = Font(bold=True, color=RED)
     _num(ws, 5, 4, t.por_cobrar_usd, MONEY)
-    pct = (
-        (t.cobrado_mxn or 0) / t.total_mxn
-        if t.total_mxn and t.total_mxn > 0
-        else None
-    )
-    _num(ws, 5, 5, pct, "0.0%")
-    for c in range(1, 6):
+    _num(ws, 5, 5, tot_cotizacion, MONEY, bold=True)
+    _num(ws, 5, 6, tot_cobrado_real, MONEY, bold=True)
+    # % COBRADO = COBRADO ÷ TOTAL A COBRAR: la MISMA base que POR COBRAR
+    # (ambos al TC de venta). Nunca cobrado real ÷ total cotización: son
+    # pesos a TCs distintos (el depósito trae su propio TC) y contradecían
+    # el POR COBRAR de la misma fila (0 por cobrar y 97% cobrado).
+    if t.total_mxn and t.total_mxn > 0:
+        pct = (t.cobrado_mxn or 0) / t.total_mxn
+    else:
+        pct = None
+    _num(ws, 5, 7, pct, "0.0%")
+    for c in range(1, 8):
         ws.cell(row=5, column=c).border = _border
 
     headers = ["CLAVE", "FECHA", "RUTA", "ESTADO", "STATUS\nCOBRO",
-               "TOTAL A COBRAR\nMXN", "COBRADO\nMXN", "POR COBRAR\nMXN",
-               "POR COBRAR\nUSD", "DETALLE DE COBROS\n(fecha · monto · método)"]
+               "TOTAL A COBRAR\nMXN (venta avión)", "COBRADO\nMXN",
+               "POR COBRAR\nMXN", "POR COBRAR\nUSD",
+               "TOTAL COTIZACIÓN\nMXN (c/extras)", "COBRADO REAL\nMXN",
+               "COMISIÓN\nBANCO MXN",
+               "DETALLE DE COBROS\n(fecha · monto · método · cuenta · comisión)"]
     _header_row(ws, 7, headers)
+    ws.row_dimensions[7].height = 42
     row = 8
     for v in req.vuelos:
         cc = ws.cell(row=row, column=1, value=v.clave)
@@ -523,6 +612,11 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
         if (v.por_cobrar_mxn or 0) > 0.005:
             pcc.font = Font(color=RED)
         _num(ws, row, 9, v.por_cobrar_usd)
+        _num(ws, row, 10, v.total_cotizacion_mxn)
+        _num(ws, row, 11, v.cobrado_real_mxn)
+        _num(ws, row, 12, _comision_banco(v))
+        # Detalle: depósitos REALES (fecha · monto · método · cuenta ·
+        # comisión) — las partes que no vienen se omiten.
         detalle = "\n".join(
             " · ".join(
                 x
@@ -530,16 +624,29 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
                     _fecha(c.fecha),
                     f"${c.monto_mxn:,.2f}" if c.monto_mxn is not None else None,
                     c.metodo or None,
+                    c.cuenta or None,
+                    (
+                        f"comisión ${c.comision_mxn:,.2f}"
+                        if c.comision_mxn is not None
+                        else None
+                    ),
                 )
                 if x
             )
             for c in v.cobros
         )
-        dc = ws.cell(row=row, column=10, value=detalle or None)
+        dc = ws.cell(row=row, column=n_cols, value=detalle or None)
         dc.alignment = Alignment(wrap_text=True, vertical="top")
-        if len(v.cobros) > 1:
-            ws.row_dimensions[row].height = 14 * len(v.cobros) + 4
-        for c in range(1, 11):
+        # Alto de fila = renglones REALES del detalle: cada parcialidad
+        # trae cuenta + comisión (~80 caracteres) y envuelve en 2 líneas
+        # dentro de la columna; con la altura por cobro Excel recortaba.
+        lineas = sum(
+            max(1, math.ceil(len(linea) / ancho_detalle))
+            for linea in detalle.split("\n")
+        ) if detalle else 1
+        if lineas > 1:
+            ws.row_dimensions[row].height = 14 * lineas + 4
+        for c in range(1, n_cols + 1):
             ws.cell(row=row, column=c).border = _border
         row += 1
 
@@ -548,17 +655,27 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
     _num(ws, row, 7, t.cobrado_mxn, MONEY, bold=True)
     _num(ws, row, 8, t.por_cobrar_mxn, MONEY, bold=True)
     _num(ws, row, 9, t.por_cobrar_usd, MONEY, bold=True)
-    for c in range(1, 11):
+    _num(ws, row, 10, tot_cotizacion, MONEY, bold=True)
+    _num(ws, row, 11, tot_cobrado_real, MONEY, bold=True)
+    _num(ws, row, 12, tot_comision, MONEY, bold=True)
+    for c in range(1, n_cols + 1):
         cell = ws.cell(row=row, column=c)
         cell.border = _border
         cell.fill = PatternFill("solid", fgColor=LIGHT)
     row += 2
 
     for nota in (
-        "TOTAL A COBRAR = el desglose COMPLETO de la cotización del vuelo "
-        "(mismo TOTAL COBRADO AL CLIENTE MXN de la hoja maestra). COBRADO = "
-        "parcialidades registradas en Cobros del vuelo. POR COBRAR = total − "
-        "cobrado.",
+        "TOTAL A COBRAR = venta del avión. COBRADO = parcialidades reales × "
+        "(venta avión ÷ total cotización): la parte de los cobros que "
+        "corresponde a TUAs/extras/pernocta es de VuelaTour. El detalle trae "
+        "los depósitos reales y la comisión que retuvo el banco.",
+        "TOTAL COTIZACIÓN = lo cobrado al cliente COMPLETO (con TUAs/extras/"
+        "pernocta y su IVA); COBRADO REAL = depósitos tal cual entraron. "
+        "% COBRADO = COBRADO ÷ TOTAL A COBRAR (misma base que POR COBRAR). "
+        "COBRADO y POR COBRAR van al TC de venta: un depósito en pesos con "
+        "su propio TC se convierte a USD con ese TC y se re-expresa al TC de "
+        "venta, por lo que COBRADO puede diferir de COBRADO REAL sin que "
+        "falte dinero.",
         "Filas COMPARTIDO y clientes INTERNOS van sin venta a propósito (la "
         "venta del compartido vive en el balance del avión principal; el "
         "interno no cobra). CANCELADO conserva sus cobros si los hubo.",
@@ -566,10 +683,12 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
         ws.cell(row=row, column=1, value=nota).font = Font(
             color=MUTED, size=9, italic=True
         )
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=10)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
         row += 1
 
-    for i, w in enumerate([22, 11, 26, 12, 11, 15, 15, 15, 13, 34], start=1):
+    for i, w in enumerate(
+        [22, 11, 26, 12, 11, 16, 15, 15, 13, 16, 15, 14, ancho_detalle], start=1
+    ):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A8"
 
@@ -720,21 +839,42 @@ def _hoja_pendientes(ws: Worksheet, req: BalanceAvionRequest) -> None:
     ws.freeze_panes = "A4"
 
 
+# Definiciones de las hojas de gastos (regla del cliente, 28-ago-2026).
+_NOTA_INDIRECTOS = (
+    "GASTOS INDIRECTOS = gastos del avión que no se pudieron ligar a un vuelo "
+    "(capturados con la aeronave, sin vuelo): cualquier categoría salvo "
+    "combustible (hoja 'combustible') y permisos (hoja 'permisos')."
+)
+_NOTA_PERMISOS = "PERMISOS = todo lo de AFAC (permisos y provisiones del avión)."
+
+
+def _nota_otros_gastos(general: bool) -> str:
+    parte = (
+        "solo la parte asignada a cada avión (fila con su color)"
+        if general
+        else "solo la parte de este avión"
+    )
+    return (
+        "OTROS GASTOS = gastos administrativos de la empresa (nómina, IMSS, "
+        f"pensión, fijos…) repartidos a mano entre aviones — aquí {parte}. "
+        "El TUA pagado NO va aquí (regla 28-ago-2026): queda solo como nota "
+        "en OPERACIONES y vive en 'otros movimientos' del Balance general."
+    )
+
+
 def render_balance_avion_xlsx(req: BalanceAvionRequest) -> bytes:
     wb = Workbook()
     _hoja_maestra(wb.active, req)
     _hoja_cobranza(wb.create_sheet("cobranza"), req)
     _hoja_combustible(wb.create_sheet("combustible"), req.combustible, req)
     _hoja_gastos(wb.create_sheet("gastos indirectos"), "Gastos indirectos",
-                 req.gastos_indirectos, req)
+                 req.gastos_indirectos, req, nota=_NOTA_INDIRECTOS)
     _hoja_gastos(
         wb.create_sheet("otros gastos"), "Otros gastos", req.otros_gastos, req,
-        nota="Incluye TODOS los TUAs pagados del periodo (con o sin vuelo, y las "
-        "partes TUA de facturas de aeródromo) — regla 26-ago-2026: restan "
-        "aquí UNA sola vez; en la fila del vuelo solo queda la nota (**). "
-        "El TUA cobrado al cliente sigue dentro de la VENTA de su fila.",
+        nota=_nota_otros_gastos(general=False),
     )
-    _hoja_gastos(wb.create_sheet("permisos"), "Permisos", req.permisos, req)
+    _hoja_gastos(wb.create_sheet("permisos"), "Permisos", req.permisos, req,
+                 nota=_NOTA_PERMISOS)
     _hoja_balance(wb.create_sheet("balance"), req)
     _hoja_pendientes(wb.create_sheet("pendientes de captura"), req)
 
@@ -790,11 +930,11 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
         row += 1
     row += 1
     for nota in (
-        "GANANCIA = VENTA − COSTO TOTAL − COMBUSTIBLE − COMISIONES. El COSTO "
-        "TOTAL ya NO incluye combustible ni TUAs (regla 26-ago-2026): el "
-        "combustible resta en su columna (hoja 'combustible') y los TUAs en "
-        "'otros gastos'. La GANANCIA va antes de TUAs/otros/indirectos/"
-        "permisos — la utilidad final por avión está en la hoja 'balance'.",
+        "VENTA = tiempo de vuelo + ajuste + IVA proporcional (sin TUAs/extras/"
+        "pernocta: ver 'otros movimientos'). GANANCIA = VENTA − COSTO TOTAL − "
+        "COMBUSTIBLE − COMISIONES; los TUAs pagados no restan a ningún avión. "
+        "La GANANCIA va antes de otros/indirectos/permisos — la utilidad "
+        "final por avión está en la hoja 'balance'.",
         "Vuelos multi-avión: los costos de columnas de la fila COMPARTIDO "
         "suman al COSTO de su avión pero su ganancia va vacía (prorrateo "
         "pendiente) — en esos meses el cruce de columnas difiere por ese "
@@ -814,20 +954,33 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
     ws.freeze_panes = "A4"
 
 
+# Estados de vuelo que NO se anotan junto a la clave en 'otros movimientos'
+# (los normales); cualquier otro (RESERVA, CANCELADO…) se marca.
+_ESTADOS_NORMALES = ("CONFIRMADO", "EN_VUELO", "COMPLETADO")
+
+
 def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) -> None:
     """Pestaña "Otros movimientos" (28-ago, réplica de la hoja manual
     "dinero otros ingresos"): conceptos cobrados al cliente vs pagados, por
     clave de vuelo (celda teñida con el color del avión), más la sección de
-    movimientos SIN avión/SIN vuelo. Remanente negativo en ROJO. Los montos
-    vienen YA calculados del API — aquí solo se pinta."""
+    movimientos SIN avión/SIN vuelo. Remanente negativo en ROJO. Incluye
+    TODOS los estados del periodo (igual que la hoja maestra): la clave
+    lleva ' · ESTADO' cuando no es un estado normal y va en ROJO si es
+    CANCELADO. Los montos vienen YA calculados del API — aquí solo se
+    pinta."""
     ws.cell(row=1, column=1, value="OTROS MOVIMIENTOS VUELATOUR").font = Font(
         bold=True, size=12, color=NAVY
     )
     ws.cell(
         row=2, column=1,
-        value="Cobrado al cliente vs pagado, por concepto; el egreso solo se "
-        "aparea cuando el mapeo es directo (TUAs, hotel de pernocta, comisión "
-        "bancaria) — el resto se lee por clave. Todo en MXN.",
+        value="Ingreso de VuelaTour (no del avión): TUAs, extras y viáticos de "
+        "pernocta cobrados al cliente (con su IVA) vs lo pagado, por concepto; "
+        "el egreso solo se aparea cuando el mapeo es directo (TUAs, hotel de "
+        "pernocta, comisión bancaria) — el resto se lee por clave. Una fila "
+        "puede traer solo ingreso o solo egreso. Todo en MXN. Incluye todos "
+        "los estados del periodo (igual que la hoja maestra); los cancelados "
+        "se marcan (clave · CANCELADO en rojo) y los demás estados no "
+        "normales llevan su estado junto a la clave.",
     ).font = Font(italic=True, size=9, color=MUTED)
     headers = [
         "clave", "fecha\nvuelo", "concepto", "egreso", "fecha", "concepto",
@@ -848,8 +1001,14 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
 
     def pinta(f: BalanceOtroMovimientoFila) -> None:
         nonlocal row, tot_e, tot_i
+        # Estado del vuelo (API nuevo): se anota junto a la clave cuando NO
+        # es normal; CANCELADO además en rojo (igual que la hoja maestra).
+        estado = (f.estado or "").strip().upper()
+        clave = f.clave or ""
+        if estado and estado not in _ESTADOS_NORMALES:
+            clave = f"{clave} · {estado}" if clave else estado
         vals = [
-            f.clave, _fecha(f.fecha_vuelo), f.concepto_egreso, f.egreso_mxn,
+            clave, _fecha(f.fecha_vuelo), f.concepto_egreso, f.egreso_mxn,
             _fecha(f.fecha_egreso), f.concepto_ingreso, f.ingreso_mxn,
             _fecha(f.fecha_ingreso), f.remanente_mxn, f.factura,
         ]
@@ -861,6 +1020,8 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
         swatch = _hex(f.avion_color)
         if swatch:
             ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor=swatch)
+        if estado == "CANCELADO":
+            ws.cell(row=row, column=1).font = Font(color=RED)
         if isinstance(f.remanente_mxn, (int, float)) and f.remanente_mxn < 0:
             ws.cell(row=row, column=9).font = Font(color=RED)
         if isinstance(f.egreso_mxn, (int, float)):
@@ -871,6 +1032,11 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
 
     for f in hoja.filas:
         pinta(f)
+    if not hoja.filas and not hoja.filas_sueltas:
+        ws.cell(
+            row=row, column=1, value="Sin otros movimientos en el periodo."
+        ).font = Font(color=MUTED, italic=True)
+        row += 1
     if hoja.filas_sueltas:
         row += 1
         t = ws.cell(row=row, column=1, value="MOVIMIENTOS SIN AVIÓN / SIN VUELO")
@@ -895,8 +1061,10 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
     """Balance GENERAL (regla del cliente, 18-ago): la MISMA estructura de
     hojas que el libro individual pero con los datos de TODOS los aviones
     JUNTOS — 1 reporte de horas, 1 combustible (mensual), 1 gastos
-    indirectos, 1 otros gastos (incluye TUAS), 1 permisos, 1 balance
-    (bloques por avión: los socios son por avión) y 1 pendientes. Cada
+    indirectos, 1 otros gastos (parte repartida a cada avión; sin TUAs),
+    1 permisos, 1 otros movimientos (TUAs/extras/pernocta cobrados y
+    pagados: dinero de VuelaTour), 1 balance (bloques por avión: los socios
+    son por avión) y 1 pendientes. Cada
     fila se identifica por su clave y el COLOR del avión
     (aeronave.color_calendario, editable en el apartado del avión)."""
     wb = Workbook()
@@ -910,16 +1078,15 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
         _hoja_gastos(
             wb.create_sheet("gastos indirectos"),
             "Gastos indirectos", cons.gastos_indirectos, cons,
+            nota=_NOTA_INDIRECTOS,
         )
         _hoja_gastos(
             wb.create_sheet("otros gastos"), "Otros gastos",
             cons.otros_gastos, cons,
-            nota="Incluye TODOS los TUAs pagados del periodo (con o sin vuelo, y las "
-        "partes TUA de facturas de aeródromo) — regla 26-ago-2026: restan "
-        "aquí UNA sola vez; en la fila del vuelo solo queda la nota (**). "
-        "El TUA cobrado al cliente sigue dentro de la VENTA de su fila.",
+            nota=_nota_otros_gastos(general=True),
         )
-        _hoja_gastos(wb.create_sheet("permisos"), "Permisos", cons.permisos, cons)
+        _hoja_gastos(wb.create_sheet("permisos"), "Permisos", cons.permisos, cons,
+                     nota=_NOTA_PERMISOS)
 
         # Pestaña "Otros movimientos" (28-ago): solo si el API la manda.
         if cons.otros_movimientos is not None:

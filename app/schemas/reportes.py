@@ -154,6 +154,11 @@ class ReporteVueloRequest(BaseModel):
     comision_vendedor_usd: float = 0
     comision_vendedor_nombre: str | None = None
     neto_vuelatour_usd: float | None = None
+    # Regla 28-ago-2026 (informativos): del total, cuánto es VENTA DEL AVIÓN
+    # (tiempo + ajuste + IVA proporcional) y cuánto ingreso de VuelaTour
+    # (TUAs/extras/pernocta + su IVA). None = API viejo → no se pintan.
+    venta_avion_usd: float | None = None
+    otros_ingresos_vuelatour_usd: float | None = None
     metodo_cobro: str | None = None
     # Secciones
     tramos: list[ReporteVueloTramo] = Field(default_factory=list)
@@ -201,6 +206,11 @@ class BalanceAvionCobro(BaseModel):
     monto_mxn: float | None = None
     # Método del cobro (EFECTIVO/TRANSFERENCIA/...); el API ya lo mandaba.
     metodo: str | None = None
+    # Regla 28-ago-2026: comisión que retuvo el banco (MXN) y cuenta que
+    # recibió el depósito (Paywise · HSBC Dólares · HSBC Pesos · Scotiabank
+    # Dólares · Scotiabank Pesos). Opcionales: un API viejo no los manda.
+    comision_mxn: float | None = None
+    cuenta: str | None = None
 
 
 class BalanceAvionVuelo(BaseModel):
@@ -220,7 +230,11 @@ class BalanceAvionVuelo(BaseModel):
     horas_cobradas: float | None = None
     tarifa_usd: float | None = None
     iva_hr_usd: float | None = None
-    total_usd: float | None = None  # total del sistema: incluye TUAS/extras/pernocta
+    # VENTA DEL AVIÓN (regla 28-ago-2026): tiempo de vuelo (tarifa × horas
+    # cobradas) + ajuste/descuento + su IVA proporcional. Los TUAs, extras y
+    # viáticos de pernocta cobrados NO están aquí: son ingreso de VuelaTour
+    # (pestaña "otros movimientos" del Balance general).
+    total_usd: float | None = None
     iva_usd: float | None = None
     tc_venta: float | None = None
     # true = la cotización no traía TC: se usó el oficial (Banxico FIX/DOF)
@@ -277,9 +291,23 @@ class BalanceAvionVuelo(BaseModel):
     # --- Bloque STATUS DE COBROS ---
     status_cobro: str | None = None  # Cobrado / Parcial / Pendiente / —
     cobros: list[BalanceAvionCobro] = Field(default_factory=list)
+    # cobrado_mxn / por_cobrar_mxn vienen YA prorrateados al avión (regla
+    # 28-ago): parcialidades reales × (venta avión ÷ total cotización).
     cobrado_mxn: float | None = None
     por_cobrar_mxn: float | None = None
     por_cobrar_usd: float | None = None
+    # --- Regla 28-ago-2026 (todo opcional: tolera API viejo) ---
+    # Total COMPLETO cobrado al cliente (con TUAs/extras/pernocta + su IVA).
+    total_cotizacion_usd: float | None = None
+    total_cotizacion_mxn: float | None = None
+    # Depósitos reales del vuelo (sin prorratear).
+    cobrado_real_mxn: float | None = None
+    # venta avión ÷ total cotización (factor del prorrateo de los cobros).
+    venta_factor: float | None = None
+    # Parte VuelaTour del vuelo (TUAs/extras/pernocta + su IVA).
+    otros_ingresos_usd: float | None = None
+    # TUA pagado del vuelo: SOLO informativo (nota en OPERACIONES); no resta.
+    tua_pagado_mxn: float | None = None
 
 
 class BalanceAvionTotales(BaseModel):
@@ -307,7 +335,14 @@ class BalanceAvionTotales(BaseModel):
     por_cobrar_usd: float | None = None
     tc_promedio: float | None = None  # AVERAGE de los TC de costos no nulos
     costo_hr_prom_usd: float | None = None  # AVERAGE de costo/hr USD no nulos
-    otros_ingresos_usd: float | None = None  # TUAs/extras/pernocta → a la general
+    # TUAs/extras/pernocta cobrados (+ su IVA) EXCLUIDOS de las filas: ingreso
+    # de VuelaTour (pestaña "otros movimientos" del Balance general).
+    otros_ingresos_usd: float | None = None
+    # --- Regla 28-ago-2026 (opcionales) ---
+    cobrado_real_mxn: float | None = None  # depósitos reales del periodo
+    total_cotizacion_mxn: float | None = None  # total completo (c/extras)
+    tua_pagado_mxn: float | None = None  # solo nota; no resta en el libro
+    comision_banco_mxn: float | None = None  # Σ comisiones retenidas por bancos
 
 
 class BalanceAvionGastoFila(BaseModel):
@@ -370,6 +405,10 @@ class BalanceOtroMovimientoFila(BaseModel):
 
     clave: str = ""
     avion_color: str | None = None
+    # Estado del vuelo (COMPLETADO / CANCELADO / RESERVA…): el API lista
+    # TODOS los estados del periodo (igual que la hoja maestra) y el Excel
+    # marca los que no son normales. None = API viejo (no se marca).
+    estado: str | None = None
     fecha_vuelo: str | None = None
     concepto_egreso: str | None = None
     egreso_mxn: float | None = None
@@ -512,6 +551,8 @@ class DineroVueloFila(BaseModel):
     venta_hr_mxn: float | None = None
     iva_hr_usd: float | None = None
     venta_hr_masiva_usd: float | None = None
+    # VENTA DEL AVIÓN (regla 28-ago-2026): tiempo + ajuste + IVA proporcional
+    # — sin TUAs/extras/pernocta (esos van en la hoja "Otros ingresos").
     total_cobrado_usd: float | None = None
     iva_total_usd: float | None = None
     tc_venta: float | None = None
@@ -523,10 +564,16 @@ class DineroVueloFila(BaseModel):
     total_cobros_mxn: float | None = None
     me_deben_mxn: float | None = None
     factura_vuelatour: str | None = None
+    # Total COMPLETO facturado al cliente (con TUAs/extras/pernocta + su IVA):
+    # columna informativa junto al STATUS DE COBROS (regla 28-ago-2026).
+    total_cliente_usd: float | None = None
+    total_cliente_mxn: float | None = None
 
 
 class DineroOtroIngresoFila(BaseModel):
-    """Fila de la hoja 'Otros ingresos' (TUAs/extras/pernocta por vuelo)."""
+    """Fila de la hoja 'Otros ingresos' (TUAs/extras/pernocta por vuelo —
+    ingreso de VuelaTour, no del avión; desde 28-ago también líneas
+    'iva de tuas/extras' con el mismo shape)."""
 
     clave: str = ""
     fecha_vuelo: str | None = None

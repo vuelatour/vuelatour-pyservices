@@ -48,6 +48,14 @@ def _seccion(titulo: str, cuerpo: str) -> str:
     return f'<h2>{escape(titulo)}</h2>{cuerpo}'
 
 
+def _sub(texto: str) -> str:
+    """Sub-línea informativa (gris, sangrada) dentro de una tabla clave/valor."""
+    return (
+        "<tr><td colspan='2' class='muted' "
+        f"style='font-size:10px;padding:0 4px 3px 14px'>{escape(texto)}</td></tr>"
+    )
+
+
 def _build_html(r: ReporteVueloRequest) -> str:
     # --- Resumen del vuelo ---
     resumen = "<table class='kv'>"
@@ -96,6 +104,16 @@ def _build_html(r: ReporteVueloRequest) -> str:
     if r.total_mxn:
         tc = f" (TC {r.tc_usd_mxn:.2f})" if r.tc_usd_mxn else ""
         cot += _row("Total MXN", f"{_money(r.total_mxn, 'MXN')}{escape(tc)}")
+    # Regla 28-ago-2026 (informativo): del total, cuánto es VENTA DEL AVIÓN
+    # (tiempo + ajuste + IVA proporcional) y cuánto ingreso de VuelaTour
+    # (TUAs/extras/pernocta + su IVA). Solo si el API los manda.
+    if r.venta_avion_usd is not None:
+        cot += _sub(f"De esto, venta del avión: {_money(r.venta_avion_usd)}")
+    if r.otros_ingresos_vuelatour_usd is not None:
+        cot += _sub(
+            "Ingreso VuelaTour (TUAs/extras/pernocta): "
+            f"{_money(r.otros_ingresos_vuelatour_usd)}"
+        )
     # Comisión del vendedor (interna): el cliente paga el total completo; el
     # neto es lo que queda a VuelaTour (lo que fluye al reparto).
     if r.comision_vendedor_usd:

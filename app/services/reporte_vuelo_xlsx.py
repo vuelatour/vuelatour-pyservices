@@ -171,6 +171,17 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
     ws.cell(row=row, column=1, value="Total USD").font = Font(bold=True)
     money_cell(row, 2, r.total_usd, bold=True)
     row += 1
+    # Regla 28-ago-2026 (informativo, solo si el API lo manda): del total, la
+    # VENTA DEL AVIÓN (tiempo + ajuste + IVA proporcional) y el ingreso de
+    # VuelaTour (TUAs/extras/pernocta + su IVA).
+    for label, val in (
+        ("    De esto, venta del avión USD", r.venta_avion_usd),
+        ("    Ingreso VuelaTour (TUAs/extras/pernocta) USD", r.otros_ingresos_vuelatour_usd),
+    ):
+        if val is not None:
+            ws.cell(row=row, column=1, value=label).font = Font(color=MUTED, size=9, italic=True)
+            money_cell(row, 2, val, color=MUTED)
+            row += 1
     # Comisión del vendedor (interna): el cliente paga el total completo; el
     # NETO VuelaTour (total − comisión) es lo que fluye al reparto — distinto
     # de la GANANCIA del balance (que además resta gastos).

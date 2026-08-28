@@ -43,21 +43,32 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     ws = wb.active
     ws.title = "Resumen por avión"
 
-    _title(ws, "VuelaTour — Reporte mensual por avión", 1, 12, size=16)
+    n_cols = 14
+    _title(ws, "VuelaTour — Reporte mensual por avión", 1, n_cols, size=16)
     sub = ws.cell(row=2, column=1, value=f"Periodo: {req.periodo_desde} a {req.periodo_hasta}  ·  Generado: {req.generado}")
     sub.font = Font(italic=True, size=10, color="5B6470")
-    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=12)
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=n_cols)
 
     headers = [
-        "Matrícula", "Modelo", "Horas voladas", "Ingresos cobrado", "Comisiones venta",
-        "Pendiente cobro", "Gastos directos", "Gastos indirectos", "Permisos",
+        "Matrícula", "Modelo", "Horas voladas", "Venta del avión cobrada", "Comisiones venta",
+        "Pendiente de cobro (parte avión)", "Gastos directos", "Gastos indirectos", "Permisos",
         "Fijos (prorrateo + reparto)", "Reserva overhaul", "Saldo disponible",
+        # Informativas (regla 28-ago), FUERA de las columnas que suman el saldo:
+        # TUAs/extras/pernocta cobrados = ingreso de VuelaTour; y la deuda
+        # COMPLETA del cliente cuando es mayor a la parte del avión.
+        "Otros ingr. VuelaTour (informativo)",
+        "Deuda total del cliente (informativo)",
     ]
     hrow = 4
     _header_row(ws, hrow, headers)
 
     money_cols = list(range(4, 13))  # columnas D..L son montos (C = horas)
     totals = {c: 0.0 for c in money_cols}
+    info_col = 13  # M: otros ingresos VuelaTour (total propio, no suma al saldo)
+    total_info = 0.0
+    # N: deuda total del cliente — solo cuando supera la parte del avión
+    # (pendiente_bruto_usd > pendiente_cobro_usd); en gris, sin total.
+    deuda_col = 14
 
     r = hrow + 1
     for a in req.aviones:
@@ -66,6 +77,7 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
             a.comisiones_venta_usd, a.pendiente_cobro_usd,
             a.gastos_directos_usd, a.gastos_indirectos_usd, a.permisos_usd,
             a.otros_usd, a.reserva_overhaul_usd, a.saldo_usd,
+            a.otros_ingresos_vuelatour_usd,
         ]
         for col, v in enumerate(valores, start=1):
             c = ws.cell(row=r, column=col, value=v)
@@ -75,6 +87,19 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
             if col in money_cols:
                 c.number_format = MONEY
                 totals[col] += float(v or 0)
+            if col == info_col:
+                c.number_format = MONEY
+                c.font = Font(italic=True, color="5B6470")
+                total_info += float(v or 0)
+        pendiente = a.pendiente_cobro_usd or 0.0
+        bruto = a.pendiente_bruto_usd or 0.0
+        dc = ws.cell(
+            row=r, column=deuda_col,
+            value=bruto if bruto > pendiente + 0.005 else None,
+        )
+        dc.number_format = MONEY
+        dc.font = Font(italic=True, color="5B6470")
+        dc.border = _border
         r += 1
 
     # Fila de totales.
@@ -88,9 +113,31 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         c.fill = PatternFill("solid", fgColor=LIGHT)
         c.number_format = MONEY
         c.border = _border
+    # Total propio de la columna informativa (no entra al saldo).
+    ci = ws.cell(row=r, column=info_col, value=total_info)
+    ci.font = Font(bold=True, italic=True, color="5B6470")
+    ci.fill = PatternFill("solid", fgColor=LIGHT)
+    ci.number_format = MONEY
+    ci.border = _border
+    cd = ws.cell(row=r, column=deuda_col)
+    cd.fill = PatternFill("solid", fgColor=LIGHT)
+    cd.border = _border
+    r += 1
+    nota = ws.cell(
+        row=r,
+        column=1,
+        value="Venta del avión cobrada = tiempo de vuelo + ajuste + IVA proporcional. "
+        "Otros ingr. VuelaTour = TUAs/extras/pernocta cobrados (con su IVA): ingreso "
+        "de VuelaTour, fuera del saldo y del reparto (ver 'otros movimientos' del "
+        "Balance general). Pendiente de cobro = parte del avión (se reparte al "
+        "cobrar); Deuda total del cliente = lo que debe COMPLETO (con TUAs/extras/"
+        "pernocta), solo cuando es mayor a la parte del avión.",
+    )
+    nota.font = Font(italic=True, size=9, color="5B6470")
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
 
     # Anchos de columna.
-    widths = [12, 16, 13, 16, 16, 15, 15, 16, 12, 16, 16, 16]
+    widths = [12, 16, 13, 16, 16, 17, 15, 16, 12, 16, 16, 16, 18, 18]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 

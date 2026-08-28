@@ -6,8 +6,12 @@
                       avión (el de su calendario) y la CLAVE lleva nota con la
                       matrícula. Las columnas SIN regla en el sistema todavía
                       (costo proveedor, comisiones, pagos) van VACÍAS
-                      conservando su lugar.
-  2. Otros ingresos — TUAs/extras/pernocta por vuelo (ingreso vs egreso).
+                      conservando su lugar. VENTA AVIÓN (regla 28-ago-2026)
+                      = tiempo + ajuste + IVA proporcional; el TOTAL FACTURA
+                      AL CLIENTE (con TUAs/extras/pernocta) va junto al
+                      STATUS DE COBROS como informativo.
+  2. Otros ingresos — TUAs/extras/pernocta (+ su IVA) por vuelo: ingreso de
+                      VuelaTour, no del avión (ingreso vs egreso).
   3. otros gastos   — gastos del mes sin vuelo, con acumulado.
   4. utilidades     — resumen del periodo (lo computable hoy).
 
@@ -72,12 +76,14 @@ _COLS: list[tuple[str, str, str | None, str | None]] = [
     ("VENTA", "VENTA HR\nSIN IVA\npesos", "venta_hr_mxn", MONEY),
     ("VENTA", "IVA X\nHR dllrs", "iva_hr_usd", MONEY),
     ("VENTA", "VENTA HR\nMAS IVA\ndllrs", "venta_hr_masiva_usd", MONEY),
-    ("VENTA", "TOTAL COBRADO\nAL CLIENTE\ndllrs", "total_cobrado_usd", MONEY),
-    ("VENTA", "IVA TOTAL\nCOBRADO\ndllrs", "iva_total_usd", MONEY),
+    # VENTA AVIÓN (regla 28-ago-2026) = tiempo + ajuste + IVA proporcional;
+    # los TUAs/extras/pernocta cobrados van en la hoja "Otros ingresos".
+    ("VENTA", "VENTA AVIÓN\n(tiempo+ajuste+IVA)\ndllrs", "total_cobrado_usd", MONEY),
+    ("VENTA", "IVA VENTA\nAVIÓN dllrs", "iva_total_usd", MONEY),
     ("VENTA", "TIPO\nCAMBIO", "tc_venta", TC),
-    ("VENTA", "TOTAL COBRADO\nAL CLIENTE\npesos", "total_cobrado_mxn", MONEY),
-    ("VENTA", "IVA TOTAL\nCOBRADO\npesos", "iva_total_mxn", MONEY),
-    ("VENTA", "TOTAL COBRADO\nS/IVA pesos", "total_siva_mxn", MONEY),
+    ("VENTA", "VENTA AVIÓN\n(tiempo+ajuste+IVA)\npesos", "total_cobrado_mxn", MONEY),
+    ("VENTA", "IVA VENTA\nAVIÓN pesos", "iva_total_mxn", MONEY),
+    ("VENTA", "VENTA AVIÓN\nS/IVA pesos", "total_siva_mxn", MONEY),
     ("COSTO PROVEEDOR", "TIEMPO\nCALZOS HOBS\npagado", None, HORAS),
     ("COSTO PROVEEDOR", "COSTO X\nHORA dllrs", None, MONEY),
     ("COSTO PROVEEDOR", "IVA\nX HR dllrs", None, MONEY),
@@ -100,6 +106,9 @@ _COLS: list[tuple[str, str, str | None, str | None]] = [
     ("", "GANANCIA\nDESPUES\nCOMISIONES\npesos", None, MONEY),
     ("", "GANANCIA\nX HR pesos", None, MONEY),
     ("", "PORCENTAJE\nGANANCIA", None, "0.00%"),
+    # Total COMPLETO facturado al cliente (con TUAs/extras/pernocta + IVA):
+    # informativo junto a los cobros — contra esto se cuadran los depósitos.
+    ("STATUS DE COBROS", "TOTAL FACTURA\nAL CLIENTE\npesos", "total_cliente_mxn", MONEY),
     ("STATUS DE COBROS", "STATUS", "status_cobro", None),
     ("STATUS DE COBROS", "COBRO 1\nFECHA", None, None),
     ("STATUS DE COBROS", "COBRO 1\nCANTIDAD", None, MONEY),
@@ -138,6 +147,7 @@ _TOTAL_ATTRS = {
     "total_cobrado_mxn",
     "iva_total_mxn",
     "total_siva_mxn",
+    "total_cliente_mxn",
     "total_cobros_mxn",
     "me_deben_mxn",
 }
@@ -259,6 +269,18 @@ def _hoja_vuelos(ws: Worksheet, req: DineroXlsxRequest) -> None:
         if hexc:
             c.fill = PatternFill("solid", fgColor=hexc)
         ws.cell(row=lrow, column=2, value=str(item.get("modelo", ""))).border = _border
+
+    nrow = lrow + 2
+    ws.cell(
+        row=nrow,
+        column=1,
+        value="VENTA AVIÓN = tiempo de vuelo + ajuste + IVA proporcional (regla "
+        "28-ago-2026). Los TUAs, extras y viáticos de pernocta cobrados NO son "
+        "venta del avión: son ingreso de VuelaTour (hoja 'Otros ingresos'). "
+        "TOTAL FACTURA AL CLIENTE = lo cobrado completo (con TUAs/extras/"
+        "pernocta y su IVA) — contra eso cuadran los cobros.",
+    ).font = Font(italic=True, size=9, color="5B6470")
+    ws.merge_cells(start_row=nrow, start_column=1, end_row=nrow, end_column=14)
 
     ws.freeze_panes = ws.cell(row=5, column=4)
 
@@ -467,6 +489,12 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
         value="OTROS GASTOS = total del mes; las columnas por avión muestran "
         "solo lo asignado/repartido a cada aeronave — la diferencia es gasto "
         "de la empresa VuelaTour (y partidas sin tipo de cambio).",
+    ).font = Font(italic=True, size=9, color="5B6470")
+    ws.cell(
+        row=9,
+        column=1,
+        value="OTROS INGRESOS = ingreso de VuelaTour (TUAs/extras/pernocta + su "
+        "IVA), no del avión (regla 28-ago-2026): ver hoja 'Otros ingresos'.",
     ).font = Font(italic=True, size=9, color="5B6470")
 
 
