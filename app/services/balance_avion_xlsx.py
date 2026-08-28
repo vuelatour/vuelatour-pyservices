@@ -382,9 +382,9 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
             row=row,
             column=1,
             value="TUAs/extras/pernocta COTIZADOS en el periodo (con su IVA; "
-            "todos los estados, igual que VENTA AVIÓN) — EXCLUIDOS de las "
-            "filas: ingreso de VuelaTour, detalle en 'otros movimientos' "
-            "del Balance general:",
+            "todos los estados salvo CANCELADO, cuya venta es solo lo cobrado "
+            "y retenido) — EXCLUIDOS de las filas: ingreso de VuelaTour, "
+            "detalle en 'otros movimientos' del Balance general:",
         )
         lc.font = Font(bold=True, size=9)
         lc.alignment = Alignment(wrap_text=True, vertical="top")
@@ -684,7 +684,9 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "falte dinero.",
         "Filas COMPARTIDO y clientes INTERNOS van sin venta a propósito (la "
         "venta del compartido vive en el balance del avión principal; el "
-        "interno no cobra). CANCELADO conserva sus cobros si los hubo.",
+        "interno no cobra). CANCELADO: su venta es lo realmente cobrado y "
+        "retenido (cargo por cancelación / anticipo no reembolsado) — sin "
+        "pendiente; sus gastos cuentan igual.",
     ):
         ws.cell(row=row, column=1, value=nota).font = Font(
             color=MUTED, size=9, italic=True
