@@ -722,21 +722,66 @@ def _hoja_combustible(ws: Worksheet, hoja: BalanceAvionHojaCombustible,
                         "MONEDA ORIGINAL", "MONTO ORIGINAL"])
     row = 8
     if hoja.filas:
+        # SECCIONES por matrícula (pedido del cliente 28-ago, igual que la
+        # pantalla Combustibles del panel): todas las cargas de un avión
+        # juntas y, al terminar, su SUBTOTAL (cargas, litros, MXN, $/L); al
+        # final el TOTAL del periodo. En el libro individual hay una sola
+        # matrícula: solo se pinta el total.
+        grupos: dict[str, list] = {}
         for f in hoja.filas:
-            ws.cell(row=row, column=1, value=_fecha(f.fecha)).border = _border
-            ws.cell(row=row, column=2, value=f.detalle).border = _border
-            _num(ws, row, 3, f.litros, HORAS).border = _border
-            _num(ws, row, 4, f.monto_mxn).border = _border
-            ws.cell(row=row, column=5, value=f.moneda_original).border = _border
-            _num(ws, row, 6, f.monto_original).border = _border
-            # Balance GENERAL: el DETALLE (lleva la matrícula al frente) se
-            # tiñe con el color del avión — como su libro.
-            avion_fill = _hex(f.avion_color)
-            if avion_fill:
-                ws.cell(row=row, column=2).fill = PatternFill(
-                    "solid", fgColor=avion_fill
-                )
+            grupos.setdefault(f.matricula or req.matricula or "", []).append(f)
+        varias = len(grupos) > 1
+
+        def _subtotal(filas: list, etiqueta: str, fill: str) -> None:
+            nonlocal row
+            litros = sum(f.litros or 0 for f in filas)
+            mxn = sum(f.monto_mxn or 0 for f in filas)
+            con_l = [f for f in filas if (f.litros or 0) > 0 and f.monto_mxn is not None]
+            ppl = (
+                sum(f.monto_mxn for f in con_l) / sum(f.litros for f in con_l)
+                if con_l else None
+            )
+            c = ws.cell(
+                row=row, column=2,
+                value=f"{etiqueta} · {len(filas)} carga(s)"
+                + (f" · $/L prom {ppl:,.2f}" if ppl is not None else ""),
+            )
+            c.font = Font(bold=True, size=9)
+            _num(ws, row, 3, round(litros, 1), HORAS, bold=True)
+            _num(ws, row, 4, round(mxn, 2), MONEY, bold=True)
+            for col in range(1, 7):
+                cell = ws.cell(row=row, column=col)
+                cell.border = _border
+                cell.fill = PatternFill("solid", fgColor=fill)
             row += 1
+
+        for mat, filas in sorted(grupos.items(), key=lambda kv: kv[0]):
+            if varias:
+                h = ws.cell(row=row, column=1, value=mat)
+                h.font = Font(bold=True, color=NAVY)
+                sw = _hex(filas[0].avion_color)
+                if sw:
+                    h.fill = PatternFill("solid", fgColor=sw)
+                ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+                row += 1
+            for f in filas:
+                ws.cell(row=row, column=1, value=_fecha(f.fecha)).border = _border
+                ws.cell(row=row, column=2, value=f.detalle).border = _border
+                _num(ws, row, 3, f.litros, HORAS).border = _border
+                _num(ws, row, 4, f.monto_mxn).border = _border
+                ws.cell(row=row, column=5, value=f.moneda_original).border = _border
+                _num(ws, row, 6, f.monto_original).border = _border
+                # Balance GENERAL: el DETALLE (lleva la matrícula al frente)
+                # se tiñe con el color del avión — como su libro.
+                avion_fill = _hex(f.avion_color)
+                if avion_fill:
+                    ws.cell(row=row, column=2).fill = PatternFill(
+                        "solid", fgColor=avion_fill
+                    )
+                row += 1
+            if varias:
+                _subtotal(filas, f"Subtotal {mat}", "F3F4F6")
+        _subtotal(list(hoja.filas), "TOTAL DEL PERIODO (con IVA)", LIGHT)
     else:
         ws.cell(
             row=row, column=1,

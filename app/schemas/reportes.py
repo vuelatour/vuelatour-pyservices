@@ -362,6 +362,10 @@ class BalanceAvionGastoFila(BaseModel):
     litros: float | None = None
     # Balance GENERAL: fila teñida con el color del avión.
     avion_color: str | None = None
+    # Matrícula de la fila (hoja "combustible" del GENERAL, 28-ago): la hoja
+    # se agrupa en SECCIONES por matrícula con subtotal. None = libro
+    # individual (una sola matrícula: req.matricula).
+    matricula: str | None = None
 
 
 class BalanceAvionHojaGastos(BaseModel):
