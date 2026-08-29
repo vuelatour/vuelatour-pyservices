@@ -15,12 +15,15 @@ Ocho hojas en el orden del libro:
   2. cobranza — estatus de cobro por vuelo: venta avión prorrateada, total
      cotización (c/extras), depósitos reales, comisión y cuenta del banco.
   3. combustible — el gas del avión POR MES (litros y $/L), 26-ago-2026.
-  4. gastos indirectos (gastos del avión sin vuelo)  5. otros gastos (parte
-     de este avión de los gastos administrativos repartidos a mano)
-  6. permisos (todo AFAC).
-  7. balance — cascada (− combustible − indirectos − otros − permisos) +
-     reparto real de socios.
-  8. pendientes de captura — lo que falta para que el libro quede completo.
+  4. gastos indirectos (gastos del avión sin vuelo)  5. refacciones
+     (salidas de inventario — 29-ago-2026: antes dentro de indirectos)
+  6. otros gastos (parte de este avión de los gastos administrativos
+     repartidos a mano)  7. permisos (todo AFAC).
+  8. balance — cascada (− combustible − indirectos − refacciones − otros −
+     permisos) + reparto real de socios.
+  9. pendientes de captura — lo que falta para que el libro quede completo.
+El Balance GENERAL comparte estas funciones con otro juego de hojas (ver
+render_balance_general_xlsx).
 
 Los montos vienen YA calculados del API (aquí solo se pintan; jamás se
 recalcula dinero). None = celda vacía — nunca un 0 falso.
@@ -274,7 +277,11 @@ def _nota_tc_oficial(v: BalanceAvionVuelo) -> str:
     )
 
 
-def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
+def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
+                  general: bool = False) -> None:
+    # `general` solo ajusta las notas al pie (29-ago): en el Balance general
+    # las hojas 'combustible'/'gastos indirectos'/'permisos' ya no existen —
+    # viven en el libro individual de cada avión.
     ws.title = sheet_title(f"reporte horas {req.matricula}")
     n = len(_COLS)
 
@@ -519,7 +526,9 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "bloque STATUS DE COBROS del final de esta hoja trae lo mismo en "
         "columnas.",
         "El COMBUSTIBLE ya no va por vuelo (26-ago-2026): se controla por "
-        "avión y por MES en la hoja 'combustible' (litros y $/L incluidos) y "
+        "avión y por MES en la hoja 'combustible'"
+        + (" del libro individual de cada avión" if general else "")
+        + " (litros y $/L incluidos) y "
         "resta una sola vez en la hoja 'balance'. Por eso COSTO TOTAL, COSTO "
         "X HORA, REMANENTE y GANANCIA de las filas van SIN combustible (y el "
         "TUA pagado tampoco resta, ver **): la utilidad real del periodo se "
@@ -562,7 +571,17 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
 
 def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
                  req: BalanceAvionRequest, nota: str | None = None) -> None:
-    _title(ws, f"{titulo} — {req.matricula}".strip(" —"), 1, 5)
+    # Ancho de la columna DETALLE: el texto ENVUELVE (wrap) y el alto de la
+    # fila se estima con él — mismo patrón que DETALLE DE COBROS en la hoja
+    # cobranza (el cliente ajustaba estas filas a mano).
+    ancho_detalle = 70
+    # Hoja "refacciones" del GENERAL (29-ago): columnas COSTO VUELATOUR /
+    # VENTA AL AVIÓN / GANANCIA solo cuando el payload las trae.
+    con_costo_venta = any(
+        f.costo_mxn is not None or f.venta_mxn is not None for f in hoja.filas
+    )
+    n_cols = 9 if con_costo_venta else 6
+    _title(ws, f"{titulo} — {req.matricula}".strip(" —"), 1, n_cols)
     periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'}"
     ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
 
@@ -575,29 +594,55 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
     for c in range(1, 6):
         ws.cell(row=5, column=c).border = _border
 
-    _header_row(ws, 7, ["FECHA", "DETALLE", "MONTO MXN", "MONEDA ORIGINAL", "MONTO ORIGINAL"])
+    headers = ["FECHA", "CATEGORÍA", "DETALLE", "MONTO MXN",
+               "MONEDA ORIGINAL", "MONTO ORIGINAL"]
+    if con_costo_venta:
+        headers += ["COSTO VUELATOUR\nMXN", "VENTA AL AVIÓN\nMXN",
+                    "GANANCIA\nMXN"]
+    _header_row(ws, 7, headers)
     row = 8
     if hoja.filas:
         for f in hoja.filas:
             ws.cell(row=row, column=1, value=_fecha(f.fecha)).border = _border
-            ws.cell(row=row, column=2, value=f.detalle).border = _border
-            _num(ws, row, 3, f.monto_mxn).border = _border
+            ws.cell(row=row, column=2, value=f.categoria).border = _border
+            dc = ws.cell(row=row, column=3, value=f.detalle)
+            dc.border = _border
+            dc.alignment = Alignment(wrap_text=True, vertical="top")
+            _num(ws, row, 4, f.monto_mxn).border = _border
             # Moneda/monto original solo cuando el gasto NO se capturó en MXN.
-            ws.cell(row=row, column=4, value=f.moneda_original).border = _border
-            _num(ws, row, 5, f.monto_original).border = _border
+            ws.cell(row=row, column=5, value=f.moneda_original).border = _border
+            _num(ws, row, 6, f.monto_original).border = _border
+            if con_costo_venta:
+                _num(ws, row, 7, f.costo_mxn).border = _border
+                _num(ws, row, 8, f.venta_mxn).border = _border
+                # GANANCIA = venta − costo (solo para MOSTRAR; 0 mientras la
+                # salida se cargue a costo). Falta un lado → celda vacía.
+                ganancia = (
+                    round(f.venta_mxn - f.costo_mxn, 2)
+                    if f.venta_mxn is not None and f.costo_mxn is not None
+                    else None
+                )
+                _num(ws, row, 9, ganancia).border = _border
             # Balance GENERAL: SOLO la celda del DETALLE (lleva la matrícula
             # al frente) se tiñe con el color del avión — como su libro.
             avion_fill = _hex(f.avion_color)
             if avion_fill:
-                ws.cell(row=row, column=2).fill = PatternFill(
-                    "solid", fgColor=avion_fill
-                )
+                dc.fill = PatternFill("solid", fgColor=avion_fill)
+            # Alto de fila = renglones REALES que envuelve el DETALLE (mismo
+            # patrón que la hoja cobranza): sin él Excel recorta el texto.
+            detalle_txt = f.detalle or ""
+            lineas = sum(
+                max(1, math.ceil(len(linea) / ancho_detalle))
+                for linea in detalle_txt.split("\n")
+            ) if detalle_txt else 1
+            if lineas > 1:
+                ws.row_dimensions[row].height = 14 * lineas + 4
             row += 1
     else:
         ws.cell(row=row, column=1, value="Sin gastos registrados en el periodo.").font = Font(
             color=MUTED, italic=True
         )
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
         row += 1
 
     if nota:
@@ -605,9 +650,12 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
         ws.cell(row=row, column=1, value=nota).font = Font(
             color=MUTED, size=9, italic=True
         )
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
 
-    for i, w in enumerate([14, 52, 15, 16, 15], start=1):
+    anchos = [14, 16, ancho_detalle, 15, 16, 15]
+    if con_costo_venta:
+        anchos += [16, 16, 14]
+    for i, w in enumerate(anchos, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A8"
 
@@ -667,10 +715,11 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
     # (ambos al TC de venta). Nunca cobrado real ÷ total cotización: son
     # pesos a TCs distintos (el depósito trae su propio TC) y contradecían
     # el POR COBRAR de la misma fila (0 por cobrar y 97% cobrado).
-    if t.total_mxn and t.total_mxn > 0:
-        pct = (t.cobrado_mxn or 0) / t.total_mxn
-    else:
-        pct = None
+    pct = (
+        (t.cobrado_mxn or 0) / t.total_mxn
+        if t.total_mxn and t.total_mxn > 0
+        else None
+    )
     _num(ws, 5, 7, pct, "0.0%")
     for c in range(1, 8):
         ws.cell(row=5, column=c).border = _border
@@ -871,7 +920,13 @@ def _hoja_combustible(ws: Worksheet, hoja: BalanceAvionHojaCombustible,
                 row += 1
             for f in filas:
                 ws.cell(row=row, column=1, value=_fecha(f.fecha)).border = _border
-                ws.cell(row=row, column=2, value=f.detalle).border = _border
+                dc = ws.cell(row=row, column=2, value=f.detalle)
+                dc.border = _border
+                # Mismo WRAP del DETALLE que las hojas de gastos (29-ago):
+                # el texto envuelve y el alto de fila se estima con el ancho
+                # de la columna (patrón de la hoja cobranza). SIN columnas
+                # nuevas aquí — el _subtotal de abajo va por índice.
+                dc.alignment = Alignment(wrap_text=True, vertical="top")
                 _num(ws, row, 3, f.litros, HORAS).border = _border
                 _num(ws, row, 4, f.monto_mxn).border = _border
                 ws.cell(row=row, column=5, value=f.moneda_original).border = _border
@@ -880,9 +935,14 @@ def _hoja_combustible(ws: Worksheet, hoja: BalanceAvionHojaCombustible,
                 # se tiñe con el color del avión — como su libro.
                 avion_fill = _hex(f.avion_color)
                 if avion_fill:
-                    ws.cell(row=row, column=2).fill = PatternFill(
-                        "solid", fgColor=avion_fill
-                    )
+                    dc.fill = PatternFill("solid", fgColor=avion_fill)
+                detalle_txt = f.detalle or ""
+                lineas = sum(
+                    max(1, math.ceil(len(linea) / 52))
+                    for linea in detalle_txt.split("\n")
+                ) if detalle_txt else 1
+                if lineas > 1:
+                    ws.row_dimensions[row].height = 14 * lineas + 4
                 row += 1
             if varias:
                 _subtotal(filas, f"Subtotal {mat}", "F3F4F6")
@@ -927,6 +987,10 @@ def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int) -> int:
         ("UTILIDAD ANTES DE GASTOS USD", b.utilidad_antes_usd, False),
         ("(−) COMBUSTIBLE DEL MES USD", b.combustible_usd, False),
         ("(−) GASTOS INDIRECTOS USD", b.gastos_indirectos_usd, False),
+        # Refacciones (29-ago): salidas de inventario, ANTES dentro de
+        # gastos indirectos — indirectos + refacciones == lo de antes.
+        # None = API viejo (celda vacía; ya venían dentro de indirectos).
+        ("(−) REFACCIONES (INVENTARIO) USD", b.refacciones_usd, False),
         ("(−) OTROS GASTOS USD", b.otros_usd, False),
         ("(−) PERMISOS USD", b.permisos_usd, False),
         ("UTILIDAD DESPUÉS DE GASTOS USD", b.utilidad_despues_usd, True),
@@ -999,9 +1063,34 @@ def _hoja_pendientes(ws: Worksheet, req: BalanceAvionRequest) -> None:
 _NOTA_INDIRECTOS = (
     "GASTOS INDIRECTOS = gastos del avión que no se pudieron ligar a un vuelo "
     "(capturados con la aeronave, sin vuelo): cualquier categoría salvo "
-    "combustible (hoja 'combustible') y permisos (hoja 'permisos')."
+    "combustible (hoja 'combustible'), permisos (hoja 'permisos') y salidas "
+    "de inventario (hoja 'refacciones', 29-ago)."
 )
 _NOTA_PERMISOS = "PERMISOS = todo lo de AFAC (permisos y provisiones del avión)."
+_NOTA_REFACCIONES = (
+    "REFACCIONES = salidas de INVENTARIO (bodega) cargadas al avión: gasto "
+    "REFACCION medio BODEGA ligado al cardex. Antes vivían dentro de 'gastos "
+    "indirectos' (29-ago-2026: indirectos + refacciones = lo de antes; la "
+    "utilidad no cambia) y restan con renglón propio en la hoja 'balance'. "
+    "El dinero salió del banco al COMPRAR la pieza, no al consumirla — la "
+    "conciliación bancaria no las cruza."
+)
+_NOTA_REFACCIONES_GENERAL = (
+    _NOTA_REFACCIONES
+    + " En este Balance general cada fila trae además COSTO VUELATOUR "
+    "(costo FIFO de la salida), VENTA AL AVIÓN (lo cargado al avión) y "
+    "GANANCIA = venta − costo (0 mientras la salida se cargue a costo, aún "
+    "sin precio de venta)."
+)
+_NOTA_GASTOS_EMPRESA = (
+    "GASTOS VUELATOUR = gastos de la EMPRESA del periodo: sin vuelo y sin "
+    "avión (sin PERSONAL_DUENO ni GAS) que nadie reparte, más el REMANENTE "
+    "de los repartidos a mano (los parciales viven en la hoja 'otros "
+    "gastos' de cada avión). Son egresos de VuelaTour: NO restan en la "
+    "cascada de ningún avión. Antes salían como 'MOVIMIENTOS SIN AVIÓN / "
+    "SIN VUELO' en 'otros movimientos' (allá quedan solo 'gas sin avión' y "
+    "'tuas sin vuelo')."
+)
 
 
 def _nota_otros_gastos(general: bool) -> str:
@@ -1025,6 +1114,10 @@ def render_balance_avion_xlsx(req: BalanceAvionRequest) -> bytes:
     _hoja_combustible(wb.create_sheet("combustible"), req.combustible, req)
     _hoja_gastos(wb.create_sheet("gastos indirectos"), "Gastos indirectos",
                  req.gastos_indirectos, req, nota=_NOTA_INDIRECTOS)
+    # Hoja "refacciones" (29-ago): solo si el API la manda (skew tolerante).
+    if req.refacciones is not None:
+        _hoja_gastos(wb.create_sheet("refacciones"), "Refacciones",
+                     req.refacciones, req, nota=_NOTA_REFACCIONES)
     _hoja_gastos(
         wb.create_sheet("otros gastos"), "Otros gastos", req.otros_gastos, req,
         nota=_nota_otros_gastos(general=False),
@@ -1103,9 +1196,13 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
         "GASTOS van al avión del tramo que los generó — así el cruce de "
         "columnas cuadra por avión.",
         "El detalle está en las hojas siguientes: los datos de TODOS los "
-        "aviones juntos, en el mismo orden del libro individual — cada fila "
-        "se identifica por su CLAVE y el color de su avión. El libro "
-        "individual de cada avión se descarga desde su ficha.",
+        "aviones juntos — cada fila se identifica por su CLAVE y el color de "
+        "su avión. Desde el 29-ago-2026 el detalle de COMBUSTIBLE, GASTOS "
+        "INDIRECTOS y PERMISOS por avión vive en el libro INDIVIDUAL de cada "
+        "avión (se descarga desde su ficha); aquí restan igual en la hoja "
+        "'balance'. Nuevas en el general: 'refacciones' (salidas de "
+        "inventario, costo FIFO vs venta al avión) y 'gastos VuelaTour' "
+        "(gastos de empresa, fuera de toda cascada por avión).",
     ):
         ws.cell(row=row, column=1, value=nota).font = Font(
             color=MUTED, size=9, italic=True
@@ -1147,7 +1244,10 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
         "solo ingreso o solo egreso. Todo en MXN. Incluye todos "
         "los estados del periodo (igual que la hoja maestra); los cancelados "
         "se marcan (clave · CANCELADO en rojo) y los demás estados no "
-        "normales llevan su estado junto a la clave.",
+        "normales llevan su estado junto a la clave. Los MOVIMIENTOS SIN "
+        "AVIÓN / SIN VUELO de abajo son solo 'gas sin avión' y 'tuas sin "
+        "vuelo' (29-ago: los gastos de empresa viven en la hoja 'gastos "
+        "VuelaTour').",
     ).font = Font(italic=True, size=9, color=MUTED)
     headers = [
         "clave", "fecha\nvuelo", "concepto", "egreso", "fecha", "concepto",
@@ -1234,22 +1334,25 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
 
 
 def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
-    """Balance GENERAL (regla del cliente, 18-ago): la MISMA estructura de
-    hojas que el libro individual pero con los datos de TODOS los aviones
-    JUNTOS — 1 reporte de horas, 1 combustible (mensual), 1 gastos
-    indirectos, 1 otros gastos (parte repartida a cada avión; sin TUAs),
-    1 permisos, 1 otros movimientos (TUAs/extras/pernocta/comisión del
-    vendedor cobrados y pagados: dinero de VuelaTour), 1 balance (bloques
-    por avión: los socios
-    son por avión) y 1 pendientes. Cada
-    fila se identifica por su clave y el COLOR del avión
-    (aeronave.color_calendario, editable en el apartado del avión)."""
+    """Balance GENERAL (regla del cliente, 18-ago; hojas 29-ago): RESUMEN +
+    los datos de TODOS los aviones JUNTOS — 1 reporte de horas, 1 otros
+    movimientos (TUAs/extras/pernocta/comisión del vendedor cobrados y
+    pagados: dinero de VuelaTour), 1 cobranza, 1 otros gastos (parte
+    repartida a cada avión; sin TUAs), 1 refacciones (salidas de inventario
+    con costo FIFO vs venta al avión), 1 gastos VuelaTour (gastos de
+    EMPRESA sin vuelo ni avión), 1 balance (bloques por avión: los socios
+    son por avión) y 1 pendientes. Desde el 29-ago el general ya NO pinta
+    'combustible', 'gastos indirectos' ni 'permisos' (viven en el libro
+    INDIVIDUAL de cada avión); el API los sigue calculando y restan igual
+    en la cascada de la hoja 'balance'. Cada fila se identifica por su
+    clave y el COLOR del avión (aeronave.color_calendario, editable en el
+    apartado del avión)."""
     wb = Workbook()
     _hoja_resumen_general(wb.active, req)
     cons = req.consolidado
     if cons is not None:
         # La hoja maestra se titula sola ("reporte horas FLOTA").
-        _hoja_maestra(wb.create_sheet(), cons)
+        _hoja_maestra(wb.create_sheet(), cons, general=True)
         # Pestaña "Otros movimientos" JUNTO a "reporte horas" (pedido del
         # cliente 28-ago): se crea aquí para que quede al lado; solo si el
         # API la manda.
@@ -1258,19 +1361,27 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
                 wb.create_sheet("otros movimientos"), cons.otros_movimientos
             )
         _hoja_cobranza(wb.create_sheet("cobranza"), cons)
-        _hoja_combustible(wb.create_sheet("combustible"), cons.combustible, cons)
-        _hoja_gastos(
-            wb.create_sheet("gastos indirectos"),
-            "Gastos indirectos", cons.gastos_indirectos, cons,
-            nota=_NOTA_INDIRECTOS,
-        )
+        # (29-ago) 'combustible', 'gastos indirectos' y 'permisos' ya NO se
+        # crean en el GENERAL: el detalle por avión vive en su libro
+        # individual. SOLO se quita el render — el API sigue mandando esas
+        # hojas y sus totales restan igual en los bloques de 'balance'.
         _hoja_gastos(
             wb.create_sheet("otros gastos"), "Otros gastos",
             cons.otros_gastos, cons,
             nota=_nota_otros_gastos(general=True),
         )
-        _hoja_gastos(wb.create_sheet("permisos"), "Permisos", cons.permisos, cons,
-                     nota=_NOTA_PERMISOS)
+        # Hoja "refacciones" (29-ago): salidas de inventario de la flota,
+        # con costo FIFO vs venta al avión cuando el API las manda.
+        if cons.refacciones is not None:
+            _hoja_gastos(wb.create_sheet("refacciones"), "Refacciones",
+                         cons.refacciones, cons,
+                         nota=_NOTA_REFACCIONES_GENERAL)
+        # Hoja "gastos VuelaTour" (29-ago): gastos de EMPRESA — egresos de
+        # VuelaTour, fuera de toda cascada por avión.
+        if req.gastos_empresa is not None:
+            _hoja_gastos(wb.create_sheet("gastos VuelaTour"),
+                         "Gastos VuelaTour", req.gastos_empresa, cons,
+                         nota=_NOTA_GASTOS_EMPRESA)
 
         # Hoja balance: un BLOQUE por avión (título teñido con su color).
         ws_b = wb.create_sheet("balance")

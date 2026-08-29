@@ -404,9 +404,13 @@ class BalanceAvionTotales(BaseModel):
 
 
 class BalanceAvionGastoFila(BaseModel):
-    """Partida del ledger de gastos (indirectos / otros / permisos)."""
+    """Partida del ledger de gastos (indirectos / refacciones / otros /
+    permisos)."""
 
     fecha: str | None = None
+    # Categoría del gasto (etiqueta amable es-MX, 29-ago) — columna
+    # CATEGORÍA entre FECHA y DETALLE. None = API viejo (celda vacía).
+    categoria: str | None = None
     detalle: str | None = None
     monto_mxn: float | None = None
     moneda_original: str | None = None  # solo si ≠ MXN
@@ -419,6 +423,13 @@ class BalanceAvionGastoFila(BaseModel):
     # se agrupa en SECCIONES por matrícula con subtotal. None = libro
     # individual (una sola matrícula: req.matricula).
     matricula: str | None = None
+    # Solo hoja "refacciones" del GENERAL (29-ago): costo FIFO de la salida
+    # de inventario y VENTA al avión (= monto del gasto). Cuando vienen, la
+    # hoja agrega columnas COSTO VUELATOUR / VENTA AL AVIÓN / GANANCIA
+    # (ganancia = venta − costo, solo para mostrar; 0 mientras la salida se
+    # cargue a costo). None = sin columnas extra.
+    costo_mxn: float | None = None
+    venta_mxn: float | None = None
 
 
 class BalanceAvionHojaGastos(BaseModel):
@@ -451,6 +462,10 @@ class BalanceAvionBalanceBloque(BaseModel):
     # "Gasto de combustible" del mes (hoja combustible al TC promedio).
     combustible_usd: float | None = None
     gastos_indirectos_usd: float | None = None
+    # Hoja "refacciones" (29-ago): salidas de inventario, ANTES dentro de
+    # gastos indirectos (indirectos + refacciones == lo de antes). None =
+    # API viejo (celda vacía; la utilidad ya las traía dentro de indirectos).
+    refacciones_usd: float | None = None
     otros_usd: float | None = None
     permisos_usd: float | None = None
     utilidad_despues_usd: float | None = None
@@ -508,6 +523,10 @@ class BalanceAvionRequest(BaseModel):
     vuelos: list[BalanceAvionVuelo] = Field(default_factory=list)
     totales: BalanceAvionTotales = Field(default_factory=BalanceAvionTotales)
     gastos_indirectos: BalanceAvionHojaGastos = Field(default_factory=BalanceAvionHojaGastos)
+    # Hoja "refacciones" (29-ago): salidas de inventario (gasto REFACCION
+    # medio BODEGA ligado al cardex), separadas de "gastos indirectos".
+    # None = API viejo → no se pinta la hoja (skew tolerante).
+    refacciones: BalanceAvionHojaGastos | None = None
     otros_gastos: BalanceAvionHojaGastos = Field(default_factory=BalanceAvionHojaGastos)
     permisos: BalanceAvionHojaGastos = Field(default_factory=BalanceAvionHojaGastos)
     # Pestaña mensual de combustible (26-ago-2026); default vacío = skew
@@ -563,6 +582,11 @@ class BalanceGeneralRequest(BaseModel):
     # (los socios son POR avión).
     consolidado: BalanceAvionRequest | None = None
     aviones: list[BalanceAvionRequest] = Field(default_factory=list)
+    # Hoja "gastos VuelaTour" (29-ago): gastos de EMPRESA (sin vuelo ni
+    # avión; sin PERSONAL_DUENO ni GAS) sin reparto + remanentes de reparto
+    # manual — egresos de VuelaTour, fuera de toda cascada por avión. Antes
+    # salían como filas sueltas de "Otros movimientos". None = API viejo.
+    gastos_empresa: BalanceAvionHojaGastos | None = None
 
 
 class BitacoraTacoFila(BaseModel):
