@@ -130,6 +130,12 @@ CategoriaGasto = Literal[
     # para que un reanálisis sobre esos gastos no truene el esquema.
     "VISITA",
     "PERSONAL_DUENO",
+    # Nómina/sueldos (29-ago): la IA no la sugiere (no viene de tickets);
+    # aditiva para que el reanálisis de esos gastos no truene con 422.
+    "NOMINA",
+    # Servicios al avión (29-ago): factura de taller/servicio contratado
+    # directamente al avión — la IA SÍ puede sugerirla (está en el prompt).
+    "SERVICIOS",
     "OTRO",
 ]
 

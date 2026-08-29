@@ -219,9 +219,12 @@ _TICKET_SYSTEM = (
     "duplicadas: no lo inventes.\n"
     '  "concepto": descripción breve de lo comprado, o null.\n'
     '  "categoria_sugerida": una de GAS, GASOLINA, OPERACIONES, ATERRIZAJE, '
-    "TUAS, FBO, COMIDA, HOTEL, TAXI, REFACCION, PERMISO, FIJO, OTRO (la más "
-    "probable), o "
-    "null. Guía: ATERRIZAJE = cuotas de aterrizaje/estacionamiento de pista "
+    "TUAS, FBO, COMIDA, HOTEL, TAXI, REFACCION, SERVICIOS, PERMISO, FIJO, "
+    "OTRO (la más probable), o "
+    "null. Guía: SERVICIOS = servicio/mano de obra contratada al AVIÓN "
+    "(taller, mantenimiento, lavado, inspección — factura de servicio, no de "
+    "piezas; si el ticket es de PIEZAS/refacciones usa REFACCION). "
+    "ATERRIZAJE = cuotas de aterrizaje/estacionamiento de pista "
     "o plataforma de la AERONAVE; TUAS = tarifa de uso de aeropuerto (TUA); "
     "FBO = servicios FBO/handling. OJO: el ESTACIONAMIENTO DE AUTOS (pensión "
     "o parking del aeropuerto/ciudad donde la tripulación deja el coche) es "
@@ -358,10 +361,13 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
     valid_cats = {
         "GAS", "GASOLINA", "OPERACIONES", "ATERRIZAJE", "TUAS", "FBO",
         "COMIDA", "HOTEL", "TAXI", "REFACCION", "PERMISO", "FIJO", "OTRO",
+        # SERVICIOS (29-ago): servicio contratado al avión — SÍ está en el
+        # prompt (mano de obra/taller, a diferencia de REFACCION = piezas).
+        "SERVICIOS",
         # No están en el prompt (no se leen de un ticket) pero se toleran
         # si el modelo las eco-devuelve en un reanálisis: VISITA (gasto de
-        # visitante, 27-ago) y PERSONAL_DUENO.
-        "VISITA", "PERSONAL_DUENO",
+        # visitante, 27-ago), PERSONAL_DUENO y NOMINA (sueldos, 29-ago).
+        "VISITA", "PERSONAL_DUENO", "NOMINA",
     }
     monto_f = float(monto) if isinstance(monto, (int, float)) else None
     # Propina solo si es coherente (0 < propina < monto): una lectura donde
