@@ -9,12 +9,15 @@ from app.schemas.vision import (
     ConstanciaFiscalResponse,
     GastoTicketRequest,
     GastoTicketResponse,
+    InventarioItemRequest,
+    InventarioItemResponse,
     TacometroRequest,
     TacometroResponse,
 )
 from app.security import require_internal_token
 from app.services.anthropic_vision import (
     leer_constancia_fiscal,
+    leer_producto_inventario,
     leer_tacometro,
     leer_ticket_combustible,
     leer_ticket_gasto,
@@ -110,4 +113,25 @@ def combustible(req: GastoTicketRequest) -> CombustibleTicketResponse:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No se pudo interpretar el ticket de combustible",
+        ) from e
+
+
+@router.post("/inventario-item", response_model=InventarioItemResponse)
+def inventario_item(req: InventarioItemRequest) -> InventarioItemResponse:
+    """Ficha de un producto de inventario a partir de fotos (unidad y/o su caja).
+    Mismo manejo de errores que /gasto: 502 si Claude no responde, 422 si la
+    respuesta no se pudo interpretar (el operador captura a mano)."""
+    try:
+        return leer_producto_inventario(req)
+    except anthropic.APIStatusError as e:
+        logger.warning("Claude API error %s: %s", e.status_code, e.message)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Claude no disponible ({e.status_code})",
+        ) from e
+    except (ValueError, KeyError) as e:
+        logger.warning("Respuesta de Claude no parseable: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e)[:200] or "No se pudo interpretar la ficha del producto",
         ) from e

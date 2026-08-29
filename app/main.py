@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.routers import compras, conciliacion, facturacion, pdf, reportes, vencimientos, vision, gastos
+from app.routers import inventario
 
 app = FastAPI(
     title="vuelatour-pyservices",
@@ -13,6 +14,7 @@ app.include_router(reportes.router)
 app.include_router(compras.router)
 app.include_router(conciliacion.router)
 app.include_router(gastos.router)
+app.include_router(inventario.router)
 app.include_router(vencimientos.router)
 app.include_router(pdf.router)
 

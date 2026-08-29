@@ -1,4 +1,5 @@
 import json
+import unicodedata
 from functools import lru_cache
 
 import anthropic
@@ -10,6 +11,10 @@ from app.schemas.vision import (
     ConstanciaFiscalResponse,
     GastoTicketRequest,
     GastoTicketResponse,
+    ImagenFuente,
+    InventarioEmpaque,
+    InventarioItemRequest,
+    InventarioItemResponse,
     TacometroRequest,
     TacometroResponse,
 )
@@ -61,7 +66,7 @@ def _client() -> anthropic.Anthropic:
     )
 
 
-def _image_block(req: TacometroRequest | GastoTicketRequest) -> dict:
+def _image_block(req: TacometroRequest | GastoTicketRequest | ImagenFuente) -> dict:
     if req.image_base64:
         return {
             "type": "image",
@@ -72,6 +77,11 @@ def _image_block(req: TacometroRequest | GastoTicketRequest) -> dict:
             },
         }
     return {"type": "image", "source": {"type": "url", "url": req.image_url}}
+
+
+def _bloques_imagenes(imagenes: list[ImagenFuente]) -> list[dict]:
+    """Bloques image (base64 o URL) para N fotos, en el orden recibido."""
+    return [_image_block(img) for img in imagenes]
 
 
 def _excel_to_text(excel_base64: str, filename: str | None) -> str:
@@ -117,22 +127,7 @@ def _gasto_source_blocks(req: GastoTicketRequest) -> list[dict]:
             }
         ]
     if req.images:
-        blocks: list[dict] = []
-        for img in req.images:
-            if img.image_base64:
-                blocks.append(
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": img.media_type,
-                            "data": img.image_base64,
-                        },
-                    }
-                )
-            else:
-                blocks.append({"type": "image", "source": {"type": "url", "url": img.image_url}})
-        return blocks
+        return _bloques_imagenes(req.images)
     return [_image_block(req)]
 
 
@@ -670,5 +665,232 @@ def leer_ticket_combustible(req: GastoTicketRequest) -> CombustibleTicketRespons
         confianza=float(data.get("confianza", 0.0)),
         legible=bool(data.get("legible", data.get("total") is not None)),
         notas=str(data.get("notas", "")),
+        modelo=s.anthropic_model,
+    )
+
+
+# --------------------------------------------------------------------------
+# Inventario: ficha del producto a partir de fotos (28-ago-2026)
+# --------------------------------------------------------------------------
+
+_INVENTARIO_SYSTEM = (
+    "Eres el asistente de bodega de una empresa de aviación chárter (VuelaTour, "
+    "Cancún). A partir de una o varias FOTOS DEL MISMO PRODUCTO (distintos ángulos, "
+    "etiqueta, código de barras o su caja/empaque) llenas la ficha del ítem de "
+    "inventario. Devuelves SOLO un objeto JSON, sin texto adicional ni ```fences```, "
+    "con las claves exactas:\n"
+    '  "nombre": nombre corto y útil para bodega (marca + producto + especificación + '
+    'presentación), ej. "AeroShell W15W-50 aceite motor pistón 1 qt", o null.\n'
+    '  "marca": marca/fabricante (ej. "AeroShell"), o null.\n'
+    '  "numero_parte": número de parte / product code del FABRICANTE tal como está '
+    'impreso (en una caja AeroShell aparece como "Product code 550050835"), o null. '
+    "No lo confundas con el código de barras.\n"
+    '  "codigo_barras": los DÍGITOS impresos bajo las barras del código de la UNIDAD '
+    "(UPC-A de 12 dígitos, EAN-13 de 13…), como string SIN espacios ni guiones "
+    '(ej. impreso "0 21400 06215 3" → "021400062153"). Léelos dígito por dígito de '
+    "la impresión; si no son legibles con seguridad → null. NUNCA inventes ni "
+    '"completes" dígitos.\n'
+    '  "contenido": contenido/presentación de la UNIDAD (ej. "946 mL", "1 qt (946 mL)", '
+    '"5 L", "1 pieza"), o null.\n'
+    '  "unidad": unidad de medida sugerida para controlar existencias ("pieza", '
+    '"botella", "litro", "galón", "juego", "kit", "metro"…), o null.\n'
+    '  "categoria": la categoría que mejor encaje de la lista CATEGORÍAS que recibirás '
+    "(compara de forma laxa: mayúsculas, acentos y plural no importan; devuelve el "
+    "texto EXACTO de la lista). Si ninguna encaja, propón una nueva y corta (1-2 "
+    "palabras), o null.\n"
+    '  "descripcion": descripción de ficha en 1-2 líneas: tipo de producto, uso y '
+    'especificación/norma (ej. "Aceite semisintético multigrado SAE J1899 para '
+    'motores de pistón de aviación"), o null.\n'
+    '  "empaque": si ALGUNA foto es la CAJA/EMPAQUE que agrupa varias unidades: '
+    '{"nombre": "Caja de N", "factor": N (unidades por empaque; "6 - 1qt bottles" → 6), '
+    '"codigo_barras": los dígitos del código de la CAJA (normalmente ITF-14 de 14 '
+    'dígitos, ej. impreso "0 00 21400 06216 0" → "00021400062160"), o null si no es '
+    "legible}. Si ninguna foto es un empaque → null.\n"
+    '  "confianza": número entre 0 y 1 (seguridad de la identificación y de los códigos).\n'
+    '  "notas_ia": string breve en español con dudas u observaciones (p. ej. "código '
+    'parcialmente legible", "la foto 2 es la caja"), o null.\n'
+    "Reglas: todas las fotos son del MISMO producto; combina lo que se ve en cada una. "
+    "Un código de 12-13 dígitos en la botella/pieza es de la unidad; uno de 14 dígitos "
+    "en una caja es del empaque. Si dudas de un dígito, prefiere null y explícalo en "
+    "notas_ia: un código inventado contamina el inventario. No inventes marca ni número "
+    "de parte: usa null cuando no aparezcan."
+)
+
+
+def _norm_codigo_barras(raw: object) -> str | None:
+    """Dígitos del código sin espacios ni guiones; None si vacío."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        # El prompt pide string; si el modelo mandó número ya perdió ceros a
+        # la izquierda, pero el valor sigue siendo útil para el operador.
+        s = str(int(raw)) if float(raw).is_integer() else str(raw)
+    else:
+        s = "".join(str(raw).split()).replace("-", "")
+    return s or None
+
+
+def _str_o_numero(raw: object) -> str | None:
+    """Texto; un número entero del modelo (product code) se regresa sin '.0'."""
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return str(int(raw)) if float(raw).is_integer() else str(raw)
+    return _str_or_none(raw)
+
+
+def _norm_texto_laxo(s: str) -> str:
+    t = unicodedata.normalize("NFD", s)
+    t = "".join(ch for ch in t if not unicodedata.combining(ch))
+    return " ".join(t.lower().split())
+
+
+def _empata_categoria(propuesta: object, catalogo: list[str]) -> str | None:
+    """Categoría del catálogo (texto EXACTO) que empata de forma laxa con la
+    propuesta del modelo; si ninguna empata, la propuesta como categoría nueva."""
+    p = _str_or_none(propuesta)
+    if p is None:
+        return None
+    np_ = _norm_texto_laxo(p)
+    for c in catalogo:
+        if _norm_texto_laxo(c) == np_:
+            return c
+    for c in catalogo:
+        nc = _norm_texto_laxo(c)
+        if nc.rstrip("s") == np_.rstrip("s") or (len(np_) >= 4 and (np_ in nc or nc in np_)):
+            return c
+    return p
+
+
+def _factor_empaque(raw: object) -> int | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        return int(round(raw)) if raw >= 1 else None
+    s = str(raw).strip()
+    return int(s) if s.isdigit() and int(s) >= 1 else None
+
+
+def _concilia_codigos(
+    unidad: str | None, empaque: str | None, escaneados: list[str]
+) -> tuple[str | None, str | None, str | None]:
+    """Los códigos escaneados son la VERDAD: el resultado solo puede contener
+    códigos de esa lista. El modelo decide cuál es de la caja (por default el
+    primero es el de la unidad). Regresa (unidad, empaque, nota)."""
+    nota: str | None = None
+    if not escaneados:
+        if unidad and unidad == empaque:
+            return unidad, None, "Mismo código para unidad y empaque; se dejó solo en la unidad."
+        return unidad, empaque, None
+    validos = set(escaneados)
+    if unidad not in validos and empaque not in validos:
+        unidad = escaneados[0]
+        empaque = escaneados[1] if len(escaneados) > 1 else None
+        nota = "Códigos tomados del lector (la IA no los leyó igual en las fotos)."
+    elif unidad not in validos:
+        # El modelo ubicó el escaneado en la caja: la unidad es el otro (si hay).
+        resto = [c for c in escaneados if c != empaque]
+        unidad = resto[0] if resto else None
+    elif empaque is not None and empaque not in validos:
+        resto = [c for c in escaneados if c != unidad]
+        empaque = resto[0] if resto else None
+    if empaque is None:
+        sobrantes = [c for c in escaneados if c != unidad]
+        if sobrantes:
+            empaque = sobrantes[0]  # el segundo código escaneado es la caja
+    if empaque == unidad:
+        empaque = None
+    return unidad, empaque, nota
+
+
+def leer_producto_inventario(req: InventarioItemRequest) -> InventarioItemResponse:
+    s = get_settings()
+    blocks = _bloques_imagenes(req.images)
+    escaneados = list(
+        dict.fromkeys(
+            c for c in (_norm_codigo_barras(x) for x in (req.codigos_escaneados or [])) if c
+        )
+    )
+    categorias = [c.strip() for c in req.categorias if c and c.strip()]
+
+    partes: list[str] = []
+    if len(blocks) > 1:
+        partes.append(
+            f"Las {len(blocks)} fotos son del MISMO producto (distintos ángulos, etiqueta "
+            "o su caja/empaque): combínalas para llenar una sola ficha."
+        )
+    else:
+        partes.append("La foto es del producto que se dará de alta en inventario.")
+    if categorias:
+        partes.append("CATEGORÍAS disponibles: " + "; ".join(categorias) + ".")
+    else:
+        partes.append("No hay catálogo de categorías: propón una corta.")
+    if escaneados:
+        lista = "; ".join(f"{i}) {c}" for i, c in enumerate(escaneados, start=1))
+        partes.append(
+            f"CÓDIGOS ESCANEADOS con lector (son la VERDAD; cópialos tal cual, no los "
+            f"reinventes ni alteres): {lista}. El primero es el código de la UNIDAD, salvo "
+            "que las fotos muestren claramente que corresponde a la caja/empaque (entonces "
+            "va en empaque.codigo_barras y el otro, si lo hay, en codigo_barras)."
+        )
+    partes.append("Responde SOLO con el JSON indicado.")
+    prompt = "\n".join(partes)
+
+    resp = _client().messages.create(
+        model=s.anthropic_model,
+        max_tokens=1500,
+        system=[
+            {"type": "text", "text": _INVENTARIO_SYSTEM, "cache_control": {"type": "ephemeral"}}
+        ],
+        messages=[
+            {
+                "role": "user",
+                "content": [*blocks, {"type": "text", "text": prompt}],
+            }
+        ],
+    )
+    if resp.stop_reason == "max_tokens":
+        raise ValueError("Respuesta truncada por max_tokens (subir el límite)")
+    text = next((b.text for b in resp.content if b.type == "text"), "")
+    data = _extract_json(text)
+
+    emp_raw = data.get("empaque")
+    emp_nombre: str | None = None
+    emp_factor: int | None = None
+    emp_codigo: str | None = None
+    if isinstance(emp_raw, dict):
+        emp_nombre = _str_or_none(emp_raw.get("nombre"))
+        emp_factor = _factor_empaque(emp_raw.get("factor"))
+        emp_codigo = _norm_codigo_barras(emp_raw.get("codigo_barras"))
+    codigo, emp_codigo, nota_codigos = _concilia_codigos(
+        _norm_codigo_barras(data.get("codigo_barras")), emp_codigo, escaneados
+    )
+    if emp_nombre is None and emp_factor:
+        emp_nombre = f"Caja de {emp_factor}"
+    empaque = (
+        InventarioEmpaque(nombre=emp_nombre, factor=emp_factor, codigo_barras=emp_codigo)
+        if (emp_nombre or emp_factor or emp_codigo)
+        else None
+    )
+
+    notas = [n for n in (_str_or_none(data.get("notas_ia")), nota_codigos) if n]
+    conf = data.get("confianza")
+    confianza = (
+        min(max(float(conf), 0.0), 1.0)
+        if isinstance(conf, (int, float)) and not isinstance(conf, bool)
+        else 0.0
+    )
+    return InventarioItemResponse(
+        nombre=_str_or_none(data.get("nombre")),
+        marca=_str_or_none(data.get("marca")),
+        numero_parte=_str_o_numero(data.get("numero_parte")),
+        codigo_barras=codigo,
+        categoria=_empata_categoria(data.get("categoria"), categorias),
+        unidad=_str_or_none(data.get("unidad")),
+        contenido=_str_o_numero(data.get("contenido")),
+        descripcion=_str_or_none(data.get("descripcion")),
+        empaque=empaque,
+        confianza=confianza,
+        notas_ia=" ".join(notas) or None,
         modelo=s.anthropic_model,
     )

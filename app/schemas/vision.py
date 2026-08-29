@@ -262,3 +262,60 @@ class CombustibleTicketResponse(BaseModel):
     legible: bool = Field(default=False, description="true si el ticket se pudo leer")
     notas: str = Field(default="", description="Observaciones")
     modelo: str = Field(description="Modelo de Claude usado")
+
+
+# --- Inventario: ficha del producto a partir de fotos (28-ago-2026) ---
+
+
+class InventarioEmpaque(BaseModel):
+    """Caja/empaque que agrupa N unidades del ítem, con su propio código de barras."""
+
+    nombre: str | None = Field(default=None, description="Ej. 'Caja de 6'")
+    factor: int | None = Field(default=None, ge=1, description="Unidades del ítem por empaque")
+    codigo_barras: str | None = Field(
+        default=None, description="Código de barras del EMPAQUE (ITF-14), sin espacios"
+    )
+
+
+class InventarioItemRequest(BaseModel):
+    """Varias fotos del MISMO producto (ángulos, etiqueta, código de barras o su
+    caja) para que la IA llene la ficha del ítem de inventario."""
+
+    images: list[ImagenFuente] = Field(
+        min_length=1,
+        max_length=8,
+        description="Fotos del MISMO producto (distintos ángulos o su caja), máx 8",
+    )
+    categorias: list[str] = Field(
+        default_factory=list,
+        description="Categorías existentes: la IA elige una (comparación laxa) o propone una nueva",
+    )
+    codigos_escaneados: list[str] | None = Field(
+        default=None,
+        max_length=4,
+        description=(
+            "Códigos leídos con el lector de la app: son la VERDAD. El primero es el de la "
+            "unidad salvo que las fotos muestren que corresponde a la caja."
+        ),
+    )
+
+
+class InventarioItemResponse(BaseModel):
+    """Ficha sugerida. Todo opcional/null: la IA solo pre-llena, el operador confirma."""
+
+    nombre: str | None = Field(default=None, description="Nombre corto útil para bodega")
+    marca: str | None = None
+    numero_parte: str | None = Field(default=None, description="Product code del fabricante")
+    codigo_barras: str | None = Field(
+        default=None, description="Dígitos del código de la UNIDAD, sin espacios"
+    )
+    categoria: str | None = Field(
+        default=None, description="Texto exacto del catálogo o propuesta nueva corta"
+    )
+    unidad: str | None = Field(default=None, description="Unidad de medida sugerida")
+    contenido: str | None = Field(default=None, description="Presentación de la unidad (946 mL)")
+    descripcion: str | None = Field(default=None, description="Descripción de ficha (1-2 líneas)")
+    empaque: InventarioEmpaque | None = None
+    confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1")
+    notas_ia: str | None = Field(default=None, description="Dudas/observaciones de la IA")
+    modelo: str = Field(default="", description="Modelo de Claude usado")
