@@ -55,6 +55,46 @@ def _desglose_txt(d: RepartoOtrosIngresosDesglose | None) -> str | None:
     return " · ".join(partes) or None
 
 
+def _nota_tc_oficial(avion) -> str | None:
+    """Nota del TC oficial de respaldo del avión (29-ago-2026), o None."""
+    partes = []
+    g = getattr(avion, "gastos_tc_oficial", None)
+    if g is not None and g.count > 0:
+        partes.append(f"{g.count} gasto(s) MXN sin TC capturado (${g.monto_mxn:,.2f} MXN)")
+    c = getattr(avion, "cobros_tc_oficial_count", 0) or 0
+    if c > 0:
+        partes.append(f"{c} vuelo(s) con cobros MXN sin TC")
+    if not partes:
+        return None
+    return (
+        " y ".join(partes)
+        + " se convirtieron con el TC oficial de referencia del día "
+        "(open.er-api / BCE); ya están dentro de las cifras."
+    )
+
+
+def _nota_tc_oficial_global(tc) -> str | None:
+    """Nota del periodo (resumen): vuelos/gastos convertidos con TC oficial."""
+    if tc is None:
+        return None
+    gastos = tc.gastos.count if tc.gastos is not None else 0
+    if tc.vuelos <= 0 and gastos <= 0:
+        return None
+    partes = []
+    if gastos > 0:
+        partes.append(f"{gastos} gasto(s) MXN (${tc.gastos.monto_mxn:,.2f} MXN)")
+    if tc.vuelos > 0:
+        partes.append(f"{tc.vuelos} vuelo(s) con cobros MXN")
+    fuentes = f" Fuente(s): {' / '.join(tc.fuentes)}." if tc.fuentes else ""
+    return (
+        "Tipo de cambio de referencia: "
+        + " y ".join(partes)
+        + " sin TC capturado se convirtieron con el TC oficial del día de la "
+        "cotización o del gasto (open.er-api / BCE); ya están dentro de las cifras."
+        + fuentes
+    )
+
+
 def _folio_vuelo(v: RepartoVueloLinea) -> str:
     """'#105 · 50 %' cuando el vuelo fue MULTI-AVIÓN (regla B, 28-ago-2026:
     la venta del avión se repartió por tramo); '#105' si no."""
@@ -215,6 +255,14 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         )
         nc.font = Font(italic=True, size=9, color="5B6470")
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
+    # Nota global del TC oficial de respaldo (29-ago-2026): misma redacción
+    # que el PDF.
+    nota_global = _nota_tc_oficial_global(req.tc_oficial)
+    if nota_global:
+        r += 1
+        nt = ws.cell(row=r, column=1, value=nota_global)
+        nt.font = Font(italic=True, size=9, color="5B6470")
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
 
     # Anchos de columna.
     widths = [12, 16, 13, 16, 16, 17, 15, 16, 12, 16, 16, 16, 18, 18]
@@ -250,6 +298,13 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
                 ),
             )
             aviso.font = Font(color="B45309", italic=True, size=9)
+            r += 1
+        # Nota informativa (29-ago-2026): montos MXN sin TC capturado que SÍ
+        # entraron, convertidos con el TC oficial de referencia del día.
+        nota_tc = _nota_tc_oficial(a)
+        if nota_tc:
+            nc = ws.cell(row=r, column=1, value=f"NOTA {a.matricula}: {nota_tc}")
+            nc.font = Font(italic=True, size=9, color="5B6470")
             r += 1
 
     # Detalle de vuelos (solo si el API lo manda): el folio lleva ' · 50 %'

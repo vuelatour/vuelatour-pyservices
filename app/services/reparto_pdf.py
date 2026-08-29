@@ -27,6 +27,46 @@ LIGHT = colors.HexColor("#EEF2F7")
 MUTED = colors.HexColor("#5B6470")
 
 
+def _nota_tc_oficial(avion) -> str | None:
+    """Nota del TC oficial de respaldo del avión (29-ago-2026), o None."""
+    partes = []
+    g = getattr(avion, "gastos_tc_oficial", None)
+    if g is not None and g.count > 0:
+        partes.append(f"{g.count} gasto(s) MXN sin TC capturado (${g.monto_mxn:,.2f} MXN)")
+    c = getattr(avion, "cobros_tc_oficial_count", 0) or 0
+    if c > 0:
+        partes.append(f"{c} vuelo(s) con cobros MXN sin TC")
+    if not partes:
+        return None
+    return (
+        " y ".join(partes)
+        + " se convirtieron con el TC oficial de referencia del día "
+        "(open.er-api / BCE); ya están dentro de las cifras."
+    )
+
+
+def _nota_tc_oficial_global(tc) -> str | None:
+    """Nota del periodo (resumen): vuelos/gastos convertidos con TC oficial."""
+    if tc is None:
+        return None
+    gastos = tc.gastos.count if tc.gastos is not None else 0
+    if tc.vuelos <= 0 and gastos <= 0:
+        return None
+    partes = []
+    if gastos > 0:
+        partes.append(f"{gastos} gasto(s) MXN (${tc.gastos.monto_mxn:,.2f} MXN)")
+    if tc.vuelos > 0:
+        partes.append(f"{tc.vuelos} vuelo(s) con cobros MXN")
+    fuentes = f" Fuente(s): {' / '.join(tc.fuentes)}." if tc.fuentes else ""
+    return (
+        "Tipo de cambio de referencia: "
+        + " y ".join(partes)
+        + " sin TC capturado se convirtieron con el TC oficial del día de la "
+        "cotización o del gasto (open.er-api / BCE); ya están dentro de las cifras."
+        + fuentes
+    )
+
+
 def _usd(value: float) -> str:
     return f"${value:,.2f}"
 
@@ -192,6 +232,12 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
                 s_sub,
             )
         )
+    # Nota global del TC oficial de respaldo (29-ago-2026): cuántos vuelos y
+    # gastos del periodo entraron convertidos con él (open.er-api / BCE).
+    nota_global = _nota_tc_oficial_global(req.tc_oficial)
+    if nota_global:
+        story.append(Spacer(1, 2 * mm))
+        story.append(Paragraph(nota_global, s_sub))
     story.append(Spacer(1, 8 * mm))
 
     # ---- Por aeronave ----
@@ -402,6 +448,15 @@ def _bloque_avion(avion: RepartoAvion, estilo_titulo: ParagraphStyle) -> KeepTog
         for a in avisos:
             bloque.append(Spacer(1, 1 * mm))
             bloque.append(Paragraph(f"AVISO: {a}", aviso_style))
+
+    # Nota INFORMATIVA (no advertencia, 29-ago-2026): montos MXN sin tipo de
+    # cambio capturado que SÍ entraron, convertidos con el TC oficial de
+    # referencia del día (open.er-api / BCE). Ya están dentro de las cifras.
+    nota_tc = _nota_tc_oficial(avion)
+    if nota_tc:
+        nota_style = ParagraphStyle("nota_tc", fontSize=7.5, textColor=MUTED, leading=10)
+        bloque.append(Spacer(1, 1 * mm))
+        bloque.append(Paragraph(f"Nota: {nota_tc}", nota_style))
 
     if avion.reparto:
         rfilas = [["Socio", "%", "Monto"]]

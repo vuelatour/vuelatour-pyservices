@@ -44,6 +44,26 @@ class RepartoVueloLinea(BaseModel):
     tramos_avion: str | None = None
 
 
+class RepartoTcOficialGastos(BaseModel):
+    """Gastos MXN sin tc_gasto convertidos con el TC oficial de referencia
+    del día del gasto (regla del cliente, 29-ago-2026). Ya están DENTRO de
+    los montos del avión: solo alimentan una nota informativa."""
+
+    count: int = 0
+    monto_mxn: float = 0.0
+
+
+class RepartoTcOficial(BaseModel):
+    """Resumen global del TC oficial de respaldo usado en el periodo
+    (open.er-api diario / BCE histórico): vuelos con cobros MXN sin TC y
+    gastos MXN sin TC convertidos con él. Informativo, opcional."""
+
+    vuelos: int = 0
+    gastos: RepartoTcOficialGastos | None = None
+    fuentes: list[str] = Field(default_factory=list)
+    leyenda: str | None = None
+
+
 class RepartoAvion(BaseModel):
     matricula: str
     modelo: str
@@ -86,6 +106,10 @@ class RepartoAvion(BaseModel):
     reparto: list[RepartoSocioLinea] = Field(default_factory=list)
     # Detalle de vuelos del avión (opcional): vacío = no se imprime.
     vuelos: list[RepartoVueloLinea] = Field(default_factory=list)
+    # ADITIVOS (29-ago-2026): convertidos con el TC oficial de referencia del
+    # día (ya dentro de los montos; solo nota). None/0 = nada que anotar.
+    gastos_tc_oficial: RepartoTcOficialGastos | None = None
+    cobros_tc_oficial_count: int = 0
 
 
 class RepartoPdfRequest(BaseModel):
@@ -97,3 +121,5 @@ class RepartoPdfRequest(BaseModel):
     otros_ingresos_vuelatour_total_usd: float = 0.0
     # Composición del Σ anterior (opcional; incluye comision_usd).
     otros_ingresos_vuelatour_desglose: RepartoOtrosIngresosDesglose | None = None
+    # Nota global del TC oficial de respaldo (opcional, 29-ago-2026).
+    tc_oficial: RepartoTcOficial | None = None
