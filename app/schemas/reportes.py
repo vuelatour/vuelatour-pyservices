@@ -98,6 +98,50 @@ class CotizacionPdfRequest(BaseModel):
 
 
 
+# ===== Recibo de pago por cobro (documento NO fiscal). El API manda TODO
+# calculado (folio, cobrado a la fecha, saldo, liquidado): aquí SOLO se pinta.
+# TODO con default (aditivo): tolera skew de deploy en ambos sentidos. =====
+class ReciboAbonoPdf(BaseModel):
+    """Abono previo del vuelo (historial del recibo). Un monto NEGATIVO es un
+    reembolso: se pinta restando, con su etiqueta."""
+
+    fecha: str | None = None
+    monto: float = 0
+    moneda: str = "USD"
+    # "Abono" / "Reembolso" (la pone el API); None = sin etiqueta.
+    etiqueta: str | None = None
+
+
+class ReciboPdfRequest(BaseModel):
+    folio_recibo: str = ""
+    empresa: str = "VuelaTour — Aero Charter Cancún"
+    cliente: str = ""
+    vuelo_folio: str = ""
+    ruta: str = ""
+    fecha_vuelo: str | None = None
+    fecha_cobro: str | None = None
+    # Monto BRUTO que pagó el cliente, en su moneda (la comisión bancaria
+    # NUNCA aparece en el recibo).
+    monto: float = 0
+    moneda: str = "USD"
+    # TC usado y equivalente en USD (solo cobros MXN); None = no se pinta.
+    tc_usd_mxn: float | None = None
+    equivalente_usd: float | None = None
+    # Método YA legible ("Transferencia", "BillPocket"…), armado por el API.
+    metodo: str = ""
+    cuenta_destino: str | None = None
+    referencia: str | None = None
+    # Resumen del vuelo (fuente única cobrosEnUsd, neto de reembolsos).
+    total_cotizacion_usd: float = 0
+    cobrado_a_la_fecha_usd: float = 0
+    saldo_pendiente_usd: float = 0
+    liquidado: bool = False
+    # Cobros MXN sin TC fuera de la suma (jamás desaparecen en silencio).
+    sin_tc_nota: str | None = None
+    notas: str | None = None
+    cobros_previos: list[ReciboAbonoPdf] = Field(default_factory=list)
+
+
 # ===== Reporte consolidado de UN vuelo (cotización + ingreso + combustible +
 # tacómetro + gastos). Lo arma vuelatour-api y lo renderiza pyservices. =====
 class ReporteVueloTramo(BaseModel):

@@ -9,6 +9,7 @@ from app.schemas.reportes import (
     BalanceGeneralRequest,
     BitacoraTacoRequest,
     DineroXlsxRequest,
+    ReciboPdfRequest,
     ReporteVueloRequest,
 )
 from app.schemas.tabla import TablaXlsxRequest
@@ -21,6 +22,7 @@ from app.services.balance_avion_xlsx import (
 from app.services.bitacora_taco_pdf import render_bitacora_taco_pdf
 from app.services.cardex_libro_xlsx import render_cardex_libro_xlsx
 from app.services.dinero_xlsx import render_dinero_xlsx
+from app.services.recibo_pdf import render_recibo_pdf
 from app.services.reparto_pdf import render_reparto_pdf
 from app.services.reparto_xlsx import render_reparto_xlsx
 from app.services.reporte_vuelo_pdf import render_reporte_vuelo_pdf
@@ -103,6 +105,21 @@ def bitacora_taco_pdf(payload: BitacoraTacoRequest) -> Response:
     """Tira imprimible de bitácora de tacómetros (formato monomotor)."""
     pdf_bytes = render_bitacora_taco_pdf(payload)
     filename = f"bitacora-{payload.matricula or 'avion'}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.post("/recibo")
+def recibo_pdf(payload: ReciboPdfRequest) -> Response:
+    """Recibo de pago de UN cobro (documento NO fiscal, no sustituye al CFDI).
+
+    El API manda todo precalculado; aquí SOLO se renderiza el recibo.
+    """
+    pdf_bytes = render_recibo_pdf(payload)
+    filename = f"recibo-{payload.folio_recibo or 'pago'}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
