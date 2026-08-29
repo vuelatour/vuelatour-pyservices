@@ -9,6 +9,15 @@ class TablaColumna(BaseModel):
     tipo: str = "texto"
 
 
+class CeldaResalte(BaseModel):
+    """Celda de `filas` a resaltar (índices 0-based relativos a `filas`)."""
+
+    fila: int
+    col: int
+    # Color hex del texto SIN "#" (default: naranja).
+    color: str = "ED7D31"
+
+
 class TablaXlsxRequest(BaseModel):
     titulo: str
     subtitulo: str | None = None
@@ -21,3 +30,7 @@ class TablaXlsxRequest(BaseModel):
     # (el valor numérico se pinta como moneda). P. ej. total por categoría.
     resumen_titulo: str | None = None
     resumen: list[list] | None = None
+    # ADITIVO: celdas de `filas` a resaltar (p. ej. montos SIN conciliar en
+    # naranja). None/[] = render idéntico al de siempre para el resto de
+    # callers de tabla-xlsx.
+    resaltes: list[CeldaResalte] | None = None

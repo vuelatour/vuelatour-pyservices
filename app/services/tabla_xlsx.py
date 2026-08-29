@@ -28,6 +28,8 @@ BRAND = "0F4C81"
 LIGHT = "EEF2F7"
 WHITE = "FFFFFF"
 MONEY = '"$"#,##0.00'
+# Fondo suave de las celdas resaltadas (el texto lleva el color del resalte).
+RESALTE_FILL = "FFF3E6"
 
 _thin = Side(style="thin", color="D5DBE3")
 _border = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
@@ -98,7 +100,8 @@ def render_tabla_xlsx(req: TablaXlsxRequest) -> bytes:
     # Filas.
     r = hrow + 1
     for fila in req.filas:
-        for col, (c, v) in enumerate(zip(req.columnas, fila), start=1):
+        # strict=False: una fila corta/larga se pinta hasta donde alcance.
+        for col, (c, v) in enumerate(zip(req.columnas, fila, strict=False), start=1):
             cell = ws.cell(row=r, column=col, value=v)
             cell.border = _border
             fmt = _fmt_for(c.tipo)
@@ -106,9 +109,19 @@ def render_tabla_xlsx(req: TablaXlsxRequest) -> bytes:
                 cell.number_format = fmt
         r += 1
 
+    # Resaltes (opcional, ADITIVO): celdas de `filas` en color (p. ej. montos
+    # SIN conciliar en naranja). Índices 0-based relativos a `filas`; los
+    # fuera de rango se ignoran. El formato numérico y el borde se conservan.
+    if req.resaltes:
+        for res in req.resaltes:
+            if 0 <= res.fila < len(req.filas) and 0 <= res.col < ncols:
+                cell = ws.cell(row=hrow + 1 + res.fila, column=res.col + 1)
+                cell.font = Font(bold=True, color=res.color)
+                cell.fill = PatternFill("solid", fgColor=RESALTE_FILL)
+
     # Totales (opcional).
     if req.totales:
-        for col, (c, v) in enumerate(zip(req.columnas, req.totales), start=1):
+        for col, (c, v) in enumerate(zip(req.columnas, req.totales, strict=False), start=1):
             cell = ws.cell(row=r, column=col, value=v)
             cell.font = Font(bold=True)
             cell.fill = PatternFill("solid", fgColor=LIGHT)
