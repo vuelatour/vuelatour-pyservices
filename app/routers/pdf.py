@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
+from app.schemas.cardex_libro import CardexLibroRequest
 from app.schemas.reparto import RepartoPdfRequest
 from app.schemas.reportes import (
     BalanceAvionRequest,
@@ -18,6 +19,7 @@ from app.services.balance_avion_xlsx import (
     render_balance_general_xlsx,
 )
 from app.services.bitacora_taco_pdf import render_bitacora_taco_pdf
+from app.services.cardex_libro_xlsx import render_cardex_libro_xlsx
 from app.services.dinero_xlsx import render_dinero_xlsx
 from app.services.reparto_pdf import render_reparto_pdf
 from app.services.reparto_xlsx import render_reparto_xlsx
@@ -67,6 +69,20 @@ def tabla_xlsx(payload: TablaXlsxRequest) -> Response:
         content=xlsx_bytes,
         media_type=XLSX_MEDIA,
         headers={"Content-Disposition": 'attachment; filename="reporte.xlsx"'},
+    )
+
+
+@router.post("/cardex-libro-xlsx")
+def cardex_libro_xlsx(payload: CardexLibroRequest) -> Response:
+    """Cardex de un ítem en formato LIBRO (ENTRADAS | SALIDAS con venta y ganancia).
+
+    El API manda todo precalculado; aquí SOLO se renderiza el libro.
+    """
+    xlsx_bytes = render_cardex_libro_xlsx(payload)
+    return Response(
+        content=xlsx_bytes,
+        media_type=XLSX_MEDIA,
+        headers={"Content-Disposition": 'attachment; filename="cardex-libro.xlsx"'},
     )
 
 
