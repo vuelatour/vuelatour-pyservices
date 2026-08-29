@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -119,6 +121,20 @@ class ReporteVueloLinea(BaseModel):
     litros: float | None = None
 
 
+class ReporteVueloParticipacion(BaseModel):
+    """Parte de la VENTA DEL AVIÓN que toca a una matrícula en un vuelo
+    MULTI-AVIÓN (regla B, 28-ago-2026): factores Σ == 1 y venta ya repartida
+    por el API (centavos exactos). Todo opcional salvo la matrícula."""
+
+    aeronave_id: str | None = None
+    matricula: str = ""
+    factor: float | None = None
+    # Tramos del avión en el vuelo: el API puede mandar cuenta (int), texto
+    # ("CUN→MID") o lista de órdenes — se formatea tolerante.
+    tramos: Any = None
+    venta_usd: float | None = None
+
+
 class ReporteVueloRequest(BaseModel):
     generado: str
     folio: str
@@ -150,15 +166,28 @@ class ReporteVueloRequest(BaseModel):
     total_mxn: float | None = None
     tc_usd_mxn: float | None = None
     # Comisión del vendedor (interna): el cliente paga el total completo;
-    # neto = total − comisión es lo que queda a VuelaTour.
+    # neto = total − comisión es lo que queda a VuelaTour. Regla A
+    # (28-ago-2026 tarde): la comisión es INGRESO de VuelaTour (va dentro de
+    # otros_ingresos_vuelatour_usd) y su pago sale de VuelaTour, no del
+    # avión; este reporte —economía COMPLETA del vuelo— la sigue restando
+    # UNA sola vez en su ganancia.
     comision_vendedor_usd: float = 0
     comision_vendedor_nombre: str | None = None
     neto_vuelatour_usd: float | None = None
+    # PAGO al vendedor = comisión + su IVA cuando grava (`pagoVendedorUsd`,
+    # fuente única del API): es lo que se resta en "(−) Pago comisión
+    # vendedor" y en el neto. None = API viejo → se usa comision_vendedor_usd.
+    pago_vendedor_usd: float | None = None
     # Regla 28-ago-2026 (informativos): del total, cuánto es VENTA DEL AVIÓN
     # (tiempo + ajuste + IVA proporcional) y cuánto ingreso de VuelaTour
-    # (TUAs/extras/pernocta + su IVA). None = API viejo → no se pintan.
+    # (TUAs/extras/pernocta/comisión del vendedor + su IVA). None = API
+    # viejo → no se pintan.
     venta_avion_usd: float | None = None
     otros_ingresos_vuelatour_usd: float | None = None
+    # Regla B (28-ago-2026): vuelo MULTI-AVIÓN — cómo se repartió la venta
+    # del avión entre las matrículas (por tramo). None o 1 elemento = vuelo
+    # de un solo avión (no se pinta).
+    participacion_aviones: list[ReporteVueloParticipacion] | None = None
     metodo_cobro: str | None = None
     # Secciones
     tramos: list[ReporteVueloTramo] = Field(default_factory=list)
@@ -236,15 +265,23 @@ class BalanceAvionVuelo(BaseModel):
     tarifa_usd: float | None = None
     iva_hr_usd: float | None = None
     # VENTA DEL AVIÓN (regla 28-ago-2026): tiempo de vuelo (tarifa × horas
-    # cobradas) + ajuste/descuento + su IVA proporcional. Los TUAs, extras y
-    # viáticos de pernocta cobrados NO están aquí: son ingreso de VuelaTour
-    # (pestaña "otros movimientos" del Balance general).
+    # cobradas) + ajuste/descuento + su IVA proporcional. Los TUAs, extras,
+    # viáticos de pernocta y la comisión del vendedor cobrados NO están
+    # aquí: son ingreso de VuelaTour (pestaña "otros movimientos" del
+    # Balance general). En vuelos MULTI-AVIÓN (regla B) es la parte
+    # proporcional de esta matrícula (ver `participacion`).
     total_usd: float | None = None
     iva_usd: float | None = None
     tc_venta: float | None = None
-    # true = la cotización no traía TC: se usó el oficial (Banxico FIX/DOF)
-    # del día de la cotización — el Excel pinta las celdas en azul claro.
+    # true = la cotización no traía TC: se usó el oficial de REFERENCIA del
+    # día de la cotización (TipoCambioService.oficialDetallePara) — el Excel
+    # pinta las celdas en azul claro y la nota dice fuente y fecha del dato.
     tc_venta_oficial: bool = False
+    # Fuente del oficial: 'OPEN_ER_API' (diario) · 'ECB_FRANKFURTER' (fechas
+    # pasadas) · 'BANXICO_FIX' (legado). None = API viejo (sin detalle).
+    tc_venta_oficial_fuente: str | None = None
+    # Fecha (YYYY-MM-DD) del dato del TC usado.
+    tc_venta_oficial_fecha: str | None = None
     total_mxn: float | None = None
     iva_mxn: float | None = None
     subtotal_mxn: float | None = None
@@ -288,6 +325,9 @@ class BalanceAvionVuelo(BaseModel):
     iva_pagado_mxn: float | None = None
     remanente_mxn: float | None = None
     dif_iva_mxn: float | None = None
+    # Regla A (28-ago-2026 tarde): la comisión del vendedor ya NO es venta
+    # ni costo del avión (es ingreso y pago de VuelaTour: 'otros
+    # movimientos'). El API la manda None; la columna se conserva por layout.
     comision_vendedor_mxn: float | None = None
     ganancia_mxn: float | None = None
     ganancia_usd: float | None = None
@@ -309,10 +349,21 @@ class BalanceAvionVuelo(BaseModel):
     cobrado_real_mxn: float | None = None
     # venta avión ÷ total cotización (factor del prorrateo de los cobros).
     venta_factor: float | None = None
-    # Parte VuelaTour del vuelo (TUAs/extras/pernocta + su IVA).
+    # Parte VuelaTour del vuelo (TUAs/extras/pernocta/comisión del vendedor
+    # + su IVA).
     otros_ingresos_usd: float | None = None
     # TUA pagado del vuelo: SOLO informativo (nota en OPERACIONES); no resta.
     tua_pagado_mxn: float | None = None
+    # --- Regla B (28-ago-2026): vuelo MULTI-AVIÓN (todo opcional) ---
+    # Fracción de la venta del avión que toca a esta matrícula (Σ == 1 entre
+    # los aviones del vuelo; 1 o None = vuelo de un solo avión). La RUTA ya
+    # trae el texto "· 50 % …" armado por el API; aquí solo se anota.
+    participacion: float | None = None
+    multi_avion: bool | None = None
+    # Base del reparto: 'tramos' (partes iguales por tramo vendido; los
+    # ferries/tramos operativos no reparten) · 'unico' (un solo avión). El
+    # API no emite otra fuente (nunca por horas).
+    participacion_fuente: str | None = None
 
 
 class BalanceAvionTotales(BaseModel):
@@ -332,6 +383,7 @@ class BalanceAvionTotales(BaseModel):
     costo_total_mxn: float | None = None
     remanente_mxn: float | None = None
     dif_iva_mxn: float | None = None
+    # None/0 desde el 28-ago-2026 tarde (regla A): ya no es costo del avión.
     comision_vendedor_mxn: float | None = None
     ganancia_mxn: float | None = None
     ganancia_usd: float | None = None
@@ -340,8 +392,9 @@ class BalanceAvionTotales(BaseModel):
     por_cobrar_usd: float | None = None
     tc_promedio: float | None = None  # AVERAGE de los TC de costos no nulos
     costo_hr_prom_usd: float | None = None  # AVERAGE de costo/hr USD no nulos
-    # TUAs/extras/pernocta cobrados (+ su IVA) EXCLUIDOS de las filas: ingreso
-    # de VuelaTour (pestaña "otros movimientos" del Balance general).
+    # TUAs/extras/pernocta/comisión del vendedor cotizados (+ su IVA)
+    # EXCLUIDOS de las filas: ingreso de VuelaTour (pestaña "otros
+    # movimientos" del Balance general).
     otros_ingresos_usd: float | None = None
     # --- Regla 28-ago-2026 (opcionales) ---
     cobrado_real_mxn: float | None = None  # depósitos reales del periodo
@@ -410,7 +463,11 @@ class BalanceOtroMovimientoFila(BaseModel):
     """Fila de la pestaña "Otros movimientos" (28-ago, hoja manual del
     cliente): egreso pagado apareado con el ingreso cobrado por concepto y
     su remanente. Cualquier lado puede venir vacío (solo-ingreso o
-    solo-egreso); viene YA calculada del API — aquí jamás se recalcula."""
+    solo-egreso); viene YA calculada del API — aquí jamás se recalcula.
+    Desde el 28-ago-2026 tarde (regla A) incluye la comisión del vendedor
+    como INGRESO de VuelaTour y su pago al vendedor como EGRESO apareado
+    (PROVISIÓN a la fecha del vuelo mientras no exista gasto real; la nota
+    de la celda lo dice)."""
 
     clave: str = ""
     avion_color: str | None = None
@@ -480,9 +537,11 @@ class BalanceGeneralResumenFila(BaseModel):
     costo_mxn: float | None = None
     # "Gasto de combustible" del mes.
     combustible_mxn: float | None = None
-    # Comisiones de vendedor (la ganancia ya las netea).
+    # Comisiones de vendedor: desde el 28-ago-2026 tarde (regla A) llegan
+    # None/0 — la comisión es ingreso y pago de VuelaTour, no del avión.
+    # La columna se conserva por layout.
     comisiones_mxn: float | None = None
-    # VENTA − COSTO − COMBUSTIBLE − COMISIONES = GANANCIA (leyenda impresa).
+    # VENTA − COSTO TOTAL − COMBUSTIBLE = GANANCIA (leyenda impresa).
     ganancia_mxn: float | None = None
     cobrado_mxn: float | None = None
     por_cobrar_mxn: float | None = None
@@ -550,8 +609,11 @@ class DineroCobroPago(BaseModel):
 class DineroVueloFila(BaseModel):
     """Una fila de la hoja 'dinero-vlos' (un vuelo del periodo).
 
-    Las columnas SIN regla todavía (costo proveedor, comisiones, pagos)
-    viajan en None y se pintan vacías conservando su columna del libro.
+    Las columnas SIN regla todavía (costo proveedor, pagos) viajan en None
+    y se pintan vacías conservando su columna del libro. Las de COMISIÓN
+    también van vacías, pero por regla (28-ago-2026 tarde): la comisión del
+    vendedor es ingreso y pago de VuelaTour y vive en la hoja 'Otros
+    ingresos', no en la fila del avión.
     """
 
     clave: str = ""
@@ -565,7 +627,8 @@ class DineroVueloFila(BaseModel):
     iva_hr_usd: float | None = None
     venta_hr_masiva_usd: float | None = None
     # VENTA DEL AVIÓN (regla 28-ago-2026): tiempo + ajuste + IVA proporcional
-    # — sin TUAs/extras/pernocta (esos van en la hoja "Otros ingresos").
+    # — sin TUAs/extras/pernocta/comisión del vendedor (esos van en la hoja
+    # "Otros ingresos"). Multi-avión: parte proporcional de esta matrícula.
     total_cobrado_usd: float | None = None
     iva_total_usd: float | None = None
     tc_venta: float | None = None
@@ -581,18 +644,26 @@ class DineroVueloFila(BaseModel):
     # columna informativa junto al STATUS DE COBROS (regla 28-ago-2026).
     total_cliente_usd: float | None = None
     total_cliente_mxn: float | None = None
+    # Regla B (28-ago-2026): vuelo MULTI-AVIÓN — fracción de la venta del
+    # avión que toca a esta matrícula (la CLAVE ya trae el sufijo del API).
+    participacion: float | None = None
+    multi_avion: bool | None = None
 
 
 class DineroOtroIngresoFila(BaseModel):
-    """Fila de la hoja 'Otros ingresos' (TUAs/extras/pernocta por vuelo —
-    ingreso de VuelaTour, no del avión; desde 28-ago también líneas
-    'iva de tuas/extras' con el mismo shape)."""
+    """Fila de la hoja 'Otros ingresos' (TUAs/extras/pernocta y comisión del
+    vendedor por vuelo — ingreso de VuelaTour, no del avión; desde 28-ago
+    también líneas 'iva de tuas/extras' con el mismo shape y el pago de la
+    comisión al vendedor como egreso apareado en PROVISIÓN)."""
 
     clave: str = ""
     fecha_vuelo: str | None = None
     concepto_egreso: str | None = None
     egreso_mxn: float | None = None
     fecha_egreso: str | None = None
+    # Nota de la celda del egreso (p. ej. "PROVISIÓN: pago al vendedor =
+    # comisión + IVA…"); se pinta como comentario de Excel.
+    nota_egreso: str | None = None
     concepto_ingreso: str | None = None
     ingreso_mxn: float | None = None
     fecha_ingreso: str | None = None
@@ -653,6 +724,9 @@ class DineroXlsxRequest(BaseModel):
     # "Gasto de combustible" del mes: resta en la hoja utilidades.
     utilidades_combustible_mxn: float | None = None
     utilidades_otros_ingresos_mxn: float | None = None
+    # Provisión del pago al vendedor (comisión + IVA) ya restada de
+    # utilidades_otros_ingresos_mxn (regla 28-ago); informativa para la nota.
+    utilidades_comision_vendedor_provisionada_mxn: float | None = None
     utilidades_otros_gastos_mxn: float | None = None
     utilidades_tc: float | None = None
     utilidades_aviones: list[DineroUtilidadAvion] = Field(default_factory=list)

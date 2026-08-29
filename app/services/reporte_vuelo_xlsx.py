@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from app.schemas.reportes import ReporteVueloRequest
+from app.schemas.reportes import ReporteVueloParticipacion, ReporteVueloRequest
 from app.services.tabla_xlsx import sheet_title
 
 _CANCUN = ZoneInfo("America/Cancun")
@@ -38,6 +38,30 @@ def _fecha(s: str | None) -> str:
     except ValueError:
         return s
 
+def _pct(factor: float | None) -> str:
+    """0.5 → '50 %' (hasta 2 decimales, sin ceros de más)."""
+    return "—" if factor is None else f"{round(factor * 100, 2):g} %"
+
+
+def _tramos_txt(tramos) -> str:
+    """Tramos del avión en un vuelo multi-avión: el API puede mandar la
+    cuenta (int), un texto ("CUN→MID") o una lista de órdenes."""
+    if tramos is None or tramos == "" or tramos == []:
+        return ""
+    if isinstance(tramos, (list, tuple)):
+        return "tramos " + ", ".join(str(t) for t in tramos)
+    if isinstance(tramos, int):
+        return f"{tramos} tramo{'s' if tramos != 1 else ''}"
+    return str(tramos)
+
+
+def _participacion_txt(p: ReporteVueloParticipacion) -> str:
+    """'N990GG 50 % (CUN→MID) = $1,000.00 USD' — una matrícula del reparto."""
+    tramos = _tramos_txt(p.tramos)
+    venta = f" = ${p.venta_usd:,.2f} USD" if p.venta_usd is not None else ""
+    return f"{p.matricula or '—'} {_pct(p.factor)}" + (f" ({tramos})" if tramos else "") + venta
+
+
 BRAND = "DC2626"
 NAVY = "102A43"
 LIGHT = "F0F4F8"
@@ -46,6 +70,22 @@ MONEY = '"$"#,##0.00'
 PCT = "0.0%"
 MUTED = "627D98"
 N_COLS = 8
+
+
+def _pago_vendedor(r: ReporteVueloRequest) -> float:
+    """Pago al vendedor = comisión + su IVA cuando grava (`pagoVendedorUsd`,
+    fuente única del API). API viejo sin el campo: la comisión pre-IVA."""
+    return (
+        r.pago_vendedor_usd
+        if r.pago_vendedor_usd is not None
+        else r.comision_vendedor_usd
+    )
+
+
+def _etiqueta_pago_vendedor(r: ReporteVueloRequest) -> str:
+    quien = f" ({r.comision_vendedor_nombre})" if r.comision_vendedor_nombre else ""
+    con_iva = " (c/IVA)" if _pago_vendedor(r) > r.comision_vendedor_usd + 0.005 else ""
+    return f"(−) Pago comisión vendedor{quien}{con_iva}"
 
 
 def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
@@ -106,6 +146,14 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
     kv("Fecha de vuelo", _fecha(r.fecha_vuelo))
     kv("Ruta", r.ruta or "—")
     kv("Aeronave", r.aeronave or "—")
+    # Vuelo MULTI-AVIÓN (regla B, 28-ago-2026): venta del avión repartida por
+    # tramo entre las matrículas (gastos al avión de su tramo; TUAs/extras/
+    # pernocta/comisión del vendedor son de VuelaTour, no se reparten).
+    if r.participacion_aviones and len(r.participacion_aviones) > 1:
+        kv(
+            "Venta del avión por tramo (partes iguales por tramo vendido)",
+            " · ".join(_participacion_txt(p) for p in r.participacion_aviones),
+        )
     pil = r.piloto or "—"
     if r.copiloto:
         pil += f" / {r.copiloto} (copiloto)"
@@ -173,27 +221,41 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
     row += 1
     # Regla 28-ago-2026 (informativo, solo si el API lo manda): del total, la
     # VENTA DEL AVIÓN (tiempo + ajuste + IVA proporcional) y el ingreso de
-    # VuelaTour (TUAs/extras/pernocta + su IVA).
+    # VuelaTour (TUAs/extras/pernocta/comisión del vendedor + su IVA).
     for label, val in (
         ("    De esto, venta del avión USD", r.venta_avion_usd),
-        ("    Ingreso VuelaTour (TUAs/extras/pernocta) USD", r.otros_ingresos_vuelatour_usd),
+        (
+            "    Ingreso VuelaTour (TUAs/extras/pernocta/comisión vendedor) USD",
+            r.otros_ingresos_vuelatour_usd,
+        ),
     ):
         if val is not None:
             ws.cell(row=row, column=1, value=label).font = Font(color=MUTED, size=9, italic=True)
             money_cell(row, 2, val, color=MUTED)
             row += 1
     # Comisión del vendedor (interna): el cliente paga el total completo; el
-    # NETO VuelaTour (total − comisión) es lo que fluye al reparto — distinto
-    # de la GANANCIA del balance (que además resta gastos).
+    # NETO VuelaTour (total − pago al vendedor) — distinto de la GANANCIA del
+    # balance (que además resta gastos). Regla A (28-ago-2026): la comisión
+    # es ingreso de VuelaTour y su pago sale de VuelaTour (no del avión);
+    # este reporte mira la economía COMPLETA del vuelo y la resta UNA vez.
     if r.comision_vendedor_usd:
         quien = f" ({r.comision_vendedor_nombre})" if r.comision_vendedor_nombre else ""
-        ws.cell(row=row, column=1, value=f"Comisión vendedor{quien}").font = Font(color=MUTED)
-        money_cell(row, 2, -r.comision_vendedor_usd)
+        # Se resta el PAGO al vendedor (comisión + su IVA cuando grava), no la
+        # comisión pre-IVA: así Total − esta fila = Neto y la aritmética
+        # visible cuadra (antes restaba 832.00 a la vista y 965.12 en el neto).
+        pago = _pago_vendedor(r)
+        con_iva = " (comisión + IVA)" if pago > r.comision_vendedor_usd + 0.005 else ""
+        ws.cell(
+            row=row, column=1, value=f"Pago comisión vendedor{quien}{con_iva}"
+        ).font = Font(color=MUTED)
+        money_cell(row, 2, -pago)
         row += 1
+        # Neto = total − PAGO al vendedor (comisión + su IVA), misma regla
+        # que el balance de abajo.
         neto = (
             r.neto_vuelatour_usd
             if r.neto_vuelatour_usd is not None
-            else r.total_usd - r.comision_vendedor_usd
+            else r.total_usd - pago
         )
         ws.cell(row=row, column=1, value="Neto VuelaTour USD").font = Font(bold=True)
         money_cell(row, 2, neto, bold=True)
@@ -374,9 +436,10 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
                 mxn=round(venta_mxn - gas_mxn - gtos_mxn, 2),
             )
         comv_mxn = comb_mxn = 0.0
-        if r.comision_vendedor_usd:
-            quien = f" ({r.comision_vendedor_nombre})" if r.comision_vendedor_nombre else ""
-            comv_mxn = bal(f"(−) Comisión vendedor{quien}", r.comision_vendedor_usd, signo=-1)
+        if _pago_vendedor(r):
+            # Pago de VuelaTour al vendedor (regla A): se resta UNA vez, con
+            # su IVA cuando grava (pago_vendedor_usd del API).
+            comv_mxn = bal(_etiqueta_pago_vendedor(r), _pago_vendedor(r), signo=-1)
         if r.comision_banco_usd:
             comb_mxn = bal("(−) Comisiones bancarias", r.comision_banco_usd, signo=-1)
         if r.ganancia_final_usd is not None:

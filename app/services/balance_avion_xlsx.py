@@ -4,8 +4,11 @@ control del equipo ("Balance N990GG.xlsx").
 Ocho hojas en el orden del libro:
   1. reporte horas <MATRÍCULA> — maestro: 1 fila = 1 vuelo, TOTALES al final.
      VENTA AVIÓN = tiempo de vuelo + ajuste + IVA proporcional (regla
-     28-ago-2026: TUAs/extras/pernocta cobrados son ingreso de VuelaTour y
-     viven en 'otros movimientos' del Balance general). Costos SIN
+     28-ago-2026: TUAs/extras/pernocta y la comisión del vendedor son
+     ingreso de VuelaTour y viven en 'otros movimientos' del Balance
+     general; la columna COMISIÓN VENDEDOR se conserva por layout pero va
+     vacía). Vuelos MULTI-AVIÓN (regla B): la venta se reparte entre las
+     matrículas por tramo; los gastos van al avión de su tramo. Costos SIN
      combustible; el TUA pagado es SOLO nota en OPERACIONES (no resta).
      STATUS DE COBROS trae los depósitos REALES (COBRO 1..4 y su Σ) y,
      aparte, COBRADO AVIÓN = la parte prorrateada al avión.
@@ -55,7 +58,8 @@ LIGHT = "EEF2F7"
 GREEN = "15803D"
 RED = "DC2626"
 AMBER = "FCD34D"  # horas cobradas < voladas (regla: nunca cobrar de menos)
-# TC oficial autocompletado (Banxico FIX): azul claro, sutil (pedido 27-ago).
+# TC oficial de referencia autocompletado (la cotización no traía TC): azul
+# claro, sutil (pedido 27-ago). La nota de la celda dice fuente y fecha.
 TC_OFICIAL_FILL = "DCE9F8"
 # Colores suaves por bloque (ayuda visual pedida en el contrato).
 FILL_VENTA = "E8F0FB"  # azul suave
@@ -176,6 +180,22 @@ _COLS: list[tuple[str, str, str | None, str | None]] = [
     ("STATUS DE COBROS", "POR COBRAR\nUSD", "por_cobrar_usd", MONEY),
 ]
 _COBRO1_COL = next(i for i, c in enumerate(_COLS, start=1) if c[1] == "COBRO 1\nFECHA")
+_COMISION_COL = next(
+    i for i, c in enumerate(_COLS, start=1) if c[2] == "comision_vendedor_mxn"
+)
+# Base del reparto de la venta en vuelos MULTI-AVIÓN (participacion_fuente):
+# SIEMPRE partes iguales por tramo vendido (nunca por horas); 'unico' no
+# lleva base.
+_FUENTE_PARTICIPACION = {
+    "tramos": "partes iguales por tramo vendido (ferries/tramos operativos "
+    "no reparten)",
+}
+# Fuente del TC oficial de referencia (TipoCambioService.oficialDetallePara).
+_TC_FUENTE_LABEL = {
+    "OPEN_ER_API": "open.er-api.com",
+    "ECB_FRANKFURTER": "referencia BCE (frankfurter)",
+    "BANXICO_FIX": "Banxico FIX",
+}
 # Celdas de costos con NOTA de desglose (comentario de Excel): al pasar el
 # cursor se ve qué gastos componen el total ("Comida · Starbucks — $206.00").
 _DETALLE_ATTR = {
@@ -215,6 +235,45 @@ def _cobros_a_4(cobros: list[BalanceAvionCobro]) -> list[BalanceAvionCobro]:
     return [*cobros[:3], BalanceAvionCobro(fecha=etiqueta, monto_mxn=agg)]
 
 
+def _pct(factor: float | None) -> str:
+    """0.5 → '50 %' (hasta 2 decimales, sin ceros de más)."""
+    return "—" if factor is None else f"{round(factor * 100, 2):g} %"
+
+
+def _nota_participacion(v: BalanceAvionVuelo) -> str:
+    """Nota de la celda VENTA AVIÓN USD de una fila de vuelo MULTI-AVIÓN
+    (regla B, 28-ago-2026): cuánto le toca a esta matrícula y con qué base."""
+    base = _FUENTE_PARTICIPACION.get(v.participacion_fuente or "")
+    return (
+        f"Vuelo multi-avión: esta fila trae el {_pct(v.participacion)} de la "
+        "venta del avión (repartida entre las matrículas del vuelo"
+        + (f" por {base}" if base else "")
+        + "); horas cobradas, cobros y por cobrar van en la misma "
+        "proporción. Los gastos de la fila son los de ESTE avión (por "
+        "tramo), sin repartir. TUAs/extras/pernocta/comisión del vendedor "
+        "son de VuelaTour y no se reparten."
+    )
+
+
+def _nota_tc_oficial(v: BalanceAvionVuelo) -> str:
+    """Nota de la celda TC VENTA cuando la cotización no traía tipo de cambio
+    y el API usó el oficial de referencia del día (fuente y fecha del dato,
+    si el API las manda)."""
+    detalle: list[str] = []
+    if v.tc_venta_oficial_fuente:
+        fuente = _TC_FUENTE_LABEL.get(
+            v.tc_venta_oficial_fuente, v.tc_venta_oficial_fuente
+        )
+        detalle.append(f"fuente {fuente}")
+    if v.tc_venta_oficial_fecha:
+        detalle.append(f"dato del {v.tc_venta_oficial_fecha}")
+    return (
+        "TC oficial de referencia del día de la cotización"
+        + (f" ({', '.join(detalle)})" if detalle else "")
+        + ": la cotización no traía tipo de cambio."
+    )
+
+
 def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
     ws.title = sheet_title(f"reporte horas {req.matricula}")
     n = len(_COLS)
@@ -241,6 +300,17 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = _border
     ws.row_dimensions[2].height = 38
+    # Regla A (28-ago-2026 tarde): la columna COMISIÓN VENDEDOR se conserva
+    # por layout pero llega vacía — la nota del encabezado lo explica.
+    nota_com = Comment(
+        "Vacía desde el 28-ago-2026: la comisión del vendedor ya no es venta "
+        "ni costo del avión. Es ingreso de VuelaTour y su pago al vendedor "
+        "sale de VuelaTour: ambos en 'otros movimientos' del Balance general.",
+        "VuelaTour",
+    )
+    nota_com.width = 300
+    nota_com.height = 90
+    ws.cell(row=2, column=_COMISION_COL).comment = nota_com
 
     # Datos: 1 fila por vuelo.
     row = 3
@@ -281,6 +351,14 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
                     cell = _num(ws, row, i, val, fmt)
                 if attr == "horas_cobradas" and horas_menores:
                     fill = AMBER
+                # Vuelo MULTI-AVIÓN (regla B, 28-ago-2026): la VENTA de la
+                # fila es la parte proporcional de esta matrícula — la nota
+                # de la celda dice cuánto y con qué base se repartió.
+                if attr == "total_usd" and v.multi_avion:
+                    nota_part = Comment(_nota_participacion(v), "VuelaTour")
+                    nota_part.width = 320
+                    nota_part.height = 110
+                    cell.comment = nota_part
                 # TC no capturado en la cotización → se usó el oficial: la
                 # celda del TC y las que derivan de él (MXN) se marcan.
                 if v.tc_venta_oficial and attr in (
@@ -288,11 +366,10 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
                 ):
                     fill = TC_OFICIAL_FILL
                     if attr == "tc_venta":
-                        cell.comment = Comment(
-                            "TC oficial (Banxico FIX / DOF) del día de la cotización: "
-                            "la cotización no traía tipo de cambio.",
-                            "VuelaTour",
-                        )
+                        nota_tc = Comment(_nota_tc_oficial(v), "VuelaTour")
+                        nota_tc.width = 320
+                        nota_tc.height = 80
+                        cell.comment = nota_tc
                 # Salto INTERNO entre tramos del MISMO vuelo: infla las horas
                 # sin romper la cadena entre vuelos — se pinta en la celda de
                 # horas voladas con el tramo culpable en la nota.
@@ -372,7 +449,8 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
     row += 1
 
     # Renglones informativos (regla 28-ago-2026): lo que NO está en las filas.
-    # 1) TUAs/extras/pernocta COTIZADOS (+ su IVA) = ingreso de VuelaTour,
+    # 1) TUAs/extras/pernocta/comisión del vendedor COTIZADOS (+ su IVA) =
+    #    ingreso de VuelaTour,
     #    EXCLUIDOS de VENTA AVIÓN; el detalle vive en 'otros movimientos'
     #    del Balance general. Es lo cotizado de TODOS los estados (misma
     #    base que VENTA AVIÓN), no lo cobrado.
@@ -381,10 +459,11 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         lc = ws.cell(
             row=row,
             column=1,
-            value="TUAs/extras/pernocta COTIZADOS en el periodo (con su IVA; "
-            "todos los estados salvo CANCELADO, cuya venta es solo lo cobrado "
-            "y retenido) — EXCLUIDOS de las filas: ingreso de VuelaTour, "
-            "detalle en 'otros movimientos' del Balance general:",
+            value="TUAs/extras/pernocta/comisión del vendedor COTIZADOS en el "
+            "periodo (con su IVA; todos los estados salvo CANCELADO, cuya "
+            "venta es solo lo cobrado y retenido) — EXCLUIDOS de las filas: "
+            "ingreso de VuelaTour, detalle en 'otros movimientos' del "
+            "Balance general:",
         )
         lc.font = Font(bold=True, size=9)
         lc.alignment = Alignment(wrap_text=True, vertical="top")
@@ -414,14 +493,21 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "* VENTA AVIÓN de cada fila = tiempo de vuelo (tarifa × horas "
         "cobradas) + ajuste/descuento + su IVA proporcional. IVA VENTA "
         "AVIÓN (USD y MXN) es SOLO el IVA proporcional de la venta del "
-        "avión — el IVA de TUAs/extras/pernocta viaja con ellos. TUAs, "
-        "extras y viáticos de pernocta NO son venta del avión: son ingreso "
-        "de VuelaTour (pestaña 'otros movimientos' del Balance general). "
-        "Sin cotización: horas × tarifa.",
+        "avión — el IVA de TUAs/extras/pernocta/comisión viaja con ellos. "
+        "TUAs, extras, viáticos de pernocta y la COMISIÓN DEL VENDEDOR NO "
+        "son venta del avión: son ingreso de VuelaTour (pestaña 'otros "
+        "movimientos' del Balance general). Sin cotización: horas × tarifa.",
+        "COMISIÓN VENDEDOR MXN va vacía a propósito (regla 28-ago-2026): la "
+        "comisión del vendedor ya no es venta ni costo del avión — es "
+        "ingreso de VuelaTour y su pago al vendedor sale de VuelaTour; "
+        "ambos viven en 'otros movimientos' (el pago apareado como "
+        "PROVISIÓN a la fecha del vuelo). GANANCIA de la fila = REMANENTE "
+        "(VENTA − COSTO TOTAL), ya sin comisión.",
         "**** COBRADO REAL = Σ de los depósitos tal cual entraron (COBRO "
         "1..4). COBRADO AVIÓN = depósitos reales × (venta avión ÷ total "
         "cotización): la parte de los cobros que corresponde a TUAs/extras/"
-        "pernocta es de VuelaTour (ver 'otros movimientos'). POR COBRAR "
+        "pernocta/comisión del vendedor es de VuelaTour (ver 'otros "
+        "movimientos'). POR COBRAR "
         "es la parte del avión. COBRADO AVIÓN y POR COBRAR van al TC de "
         "venta (un depósito en pesos con su propio TC se pasa a USD con ese "
         "TC y se re-expresa al TC de venta), así que COBRADO AVIÓN puede "
@@ -444,10 +530,15 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "OPERACIONES ('TUA $x**'); cobro y pago del TUA viven en 'otros "
         "movimientos' del Balance general. Los servicios FBO sí son costo "
         "(columna OTROS).",
-        "*** Filas 'COMPARTIDO': el vuelo mezcló aviones — aquí van SOLO los "
-        "tramos, horas y costos de esta matrícula; la VENTA completa está en "
-        "el balance del avión principal (el prorrateo del precio entre "
-        "aviones está pendiente de decisión).",
+        "*** Filas 'COMPARTIDO' / con porcentaje en la RUTA (vuelo "
+        "MULTI-AVIÓN, regla 28-ago-2026): la fila trae la parte "
+        "proporcional de la VENTA del avión (repartida entre las matrículas "
+        "del vuelo en partes iguales por tramo vendido; los ferries/tramos "
+        "operativos no reparten) y en la misma proporción sus "
+        "horas cobradas, cobros y por cobrar; sus GASTOS son los de su "
+        "avión (los del tramo que voló), sin repartir. TUAs/extras/pernocta/"
+        "comisión del vendedor no son de ningún avión y no se reparten. La "
+        "nota de la celda VENTA AVIÓN USD dice el porcentaje y la base.",
         "TACO INICIO / TACO FINAL en ámbar = salto en la cadena de "
         "tacómetros (el valor esperado está en la nota de la celda) y/u "
         "OBSERVACIÓN del equipo capturada en Tacómetros en vivo — pasa el "
@@ -675,12 +766,15 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
     row += 2
 
     for nota in (
-        "TOTAL A COBRAR = venta del avión. COBRADO = parcialidades reales × "
-        "(venta avión ÷ total cotización): la parte de los cobros que "
-        "corresponde a TUAs/extras/pernocta es de VuelaTour. El detalle trae "
-        "los depósitos reales y la comisión que retuvo el banco.",
+        "TOTAL A COBRAR = venta del avión (tiempo + ajuste + IVA "
+        "proporcional; en vuelos multi-avión, la parte de esta matrícula). "
+        "COBRADO = parcialidades reales × (venta avión ÷ total cotización): "
+        "la parte de los cobros que corresponde a TUAs/extras/pernocta/"
+        "comisión del vendedor es de VuelaTour. El detalle trae los "
+        "depósitos reales y la comisión que retuvo el banco.",
         "TOTAL COTIZACIÓN = lo cobrado al cliente COMPLETO (con TUAs/extras/"
-        "pernocta y su IVA); en un vuelo CANCELADO la celda (gris) es solo "
+        "pernocta/comisión del vendedor y su IVA); en un vuelo CANCELADO la "
+        "celda (gris) es solo "
         "referencia de lo cotizado y NO suma en el total. COBRADO REAL = "
         "depósitos tal cual entraron. "
         "% COBRADO = COBRADO ÷ TOTAL A COBRAR (misma base que POR COBRAR). "
@@ -688,10 +782,13 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "su propio TC se convierte a USD con ese TC y se re-expresa al TC de "
         "venta, por lo que COBRADO puede diferir de COBRADO REAL sin que "
         "falte dinero.",
-        "Filas COMPARTIDO y clientes INTERNOS van sin venta a propósito (la "
-        "venta del compartido vive en el balance del avión principal; el "
-        "interno no cobra). CANCELADO: su venta es lo realmente cobrado y "
-        "retenido (cargo por cancelación / anticipo no reembolsado) — sin "
+        "Filas COMPARTIDO (vuelo multi-avión) traen SU parte proporcional "
+        "de la venta, cobros y por cobrar (partes iguales por tramo vendido; "
+        "ferries/tramos operativos no reparten — regla 28-ago-2026); los "
+        "clientes INTERNOS van sin venta a "
+        "propósito (el interno no cobra). CANCELADO: su venta es lo "
+        "realmente cobrado y retenido (cargo por cancelación / anticipo no "
+        "reembolsado; también repartido si fue multi-avión) — sin "
         "pendiente; sus gastos cuentan igual.",
     ):
         ws.cell(row=row, column=1, value=nota).font = Font(
@@ -990,14 +1087,21 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
     row += 1
     for nota in (
         "VENTA = tiempo de vuelo + ajuste + IVA proporcional (sin TUAs/extras/"
-        "pernocta: ver 'otros movimientos'). GANANCIA = VENTA − COSTO TOTAL − "
-        "COMBUSTIBLE − COMISIONES; los TUAs pagados no restan a ningún avión. "
-        "La GANANCIA va antes de otros/indirectos/permisos — la utilidad "
-        "final por avión está en la hoja 'balance'.",
-        "Vuelos multi-avión: los costos de columnas de la fila COMPARTIDO "
-        "suman al COSTO de su avión pero su ganancia va vacía (prorrateo "
-        "pendiente) — en esos meses el cruce de columnas difiere por ese "
-        "monto.",
+        "pernocta/comisión del vendedor: ver 'otros movimientos'). GANANCIA = "
+        "VENTA − COSTO TOTAL − COMBUSTIBLE; los TUAs pagados no restan a "
+        "ningún avión. La GANANCIA va antes de otros/indirectos/permisos — la "
+        "utilidad final por avión está en la hoja 'balance'.",
+        "COMISIONES VENDEDOR va vacía a propósito (regla 28-ago-2026): la "
+        "comisión del vendedor ya no es venta ni costo de ningún avión — es "
+        "INGRESO de VuelaTour y su pago al vendedor sale de VuelaTour; los "
+        "dos viven en 'otros movimientos' (ingreso cobrado y pago apareado "
+        "como PROVISIÓN a la fecha del vuelo).",
+        "Vuelos multi-avión (regla 28-ago-2026): la VENTA se reparte entre "
+        "las matrículas del vuelo en partes iguales por tramo vendido — los "
+        "ferries/tramos operativos no reparten — (cada fila COMPARTIDO "
+        "trae su parte proporcional de venta, cobros y por cobrar) y los "
+        "GASTOS van al avión del tramo que los generó — así el cruce de "
+        "columnas cuadra por avión.",
         "El detalle está en las hojas siguientes: los datos de TODOS los "
         "aviones juntos, en el mismo orden del libro individual — cada fila "
         "se identifica por su CLAVE y el color de su avión. El libro "
@@ -1032,8 +1136,11 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
     )
     ws.cell(
         row=2, column=1,
-        value="Ingreso de VuelaTour (no del avión): TUAs, extras y viáticos de "
-        "pernocta cobrados al cliente (con su IVA) vs lo pagado. UNA FILA POR "
+        value="Ingreso de VuelaTour (no del avión): TUAs, extras, viáticos de "
+        "pernocta y comisión del vendedor cobrados al cliente (con su IVA) vs "
+        "lo pagado — el pago de la comisión al vendedor va apareado en la "
+        "misma fila como PROVISIÓN a la fecha del vuelo mientras no exista el "
+        "gasto real (lo dice la nota de la celda). UNA FILA POR "
         "VUELO: los ingresos van sumados en una celda y los egresos en otra; "
         "el desglose concepto por concepto está en el COMENTARIO de cada "
         "celda (pasa el cursor sobre el triángulo rojo). Una fila puede traer "
@@ -1131,8 +1238,9 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
     hojas que el libro individual pero con los datos de TODOS los aviones
     JUNTOS — 1 reporte de horas, 1 combustible (mensual), 1 gastos
     indirectos, 1 otros gastos (parte repartida a cada avión; sin TUAs),
-    1 permisos, 1 otros movimientos (TUAs/extras/pernocta cobrados y
-    pagados: dinero de VuelaTour), 1 balance (bloques por avión: los socios
+    1 permisos, 1 otros movimientos (TUAs/extras/pernocta/comisión del
+    vendedor cobrados y pagados: dinero de VuelaTour), 1 balance (bloques
+    por avión: los socios
     son por avión) y 1 pendientes. Cada
     fila se identifica por su clave y el COLOR del avión
     (aeronave.color_calendario, editable en el apartado del avión)."""

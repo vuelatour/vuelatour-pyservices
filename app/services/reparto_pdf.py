@@ -15,7 +15,12 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from app.schemas.reparto import RepartoAvion, RepartoPdfRequest
+from app.schemas.reparto import (
+    RepartoAvion,
+    RepartoOtrosIngresosDesglose,
+    RepartoPdfRequest,
+    RepartoVueloLinea,
+)
 
 BRAND = colors.HexColor("#0F4C81")
 LIGHT = colors.HexColor("#EEF2F7")
@@ -24,6 +29,42 @@ MUTED = colors.HexColor("#5B6470")
 
 def _usd(value: float) -> str:
     return f"${value:,.2f}"
+
+
+def _pct(factor: float | None) -> str:
+    """0.5 → '50 %' (hasta 2 decimales, sin ceros de más)."""
+    return "—" if factor is None else f"{round(factor * 100, 2):g} %"
+
+
+def _desglose_txt(d: RepartoOtrosIngresosDesglose | None) -> str | None:
+    """'TUAs $100.00 · comisión del vendedor $1,000.00 · IVA $176.00' con la
+    composición COTIZADA de otros ingresos VuelaTour; None si no hay nada."""
+    if d is None:
+        return None
+    partes = [
+        f"{label} {_usd(val)}"
+        for label, val in (
+            ("TUAs", d.tuas_usd),
+            ("extras", d.extras_usd),
+            ("pernocta", d.pernocta_usd),
+            ("comisión del vendedor", d.comision_usd),
+            ("IVA", d.iva_usd),
+        )
+        if val
+    ]
+    return " · ".join(partes) or None
+
+
+def _folio_vuelo(v: RepartoVueloLinea) -> str:
+    """'#105 · 50 % (CUN-MID)' cuando el vuelo fue MULTI-AVIÓN (regla B,
+    28-ago-2026: la venta del avión se repartió por tramo); '#105' si no.
+    Helvetica no dibuja '→' (sale una caja): se sustituye por '-'."""
+    texto = f"#{v.folio}" if v.folio is not None else "—"
+    if v.participacion is not None and v.participacion < 0.9999:
+        texto += f" · {_pct(v.participacion)}"
+        if v.tramos_avion:
+            texto += f" ({v.tramos_avion.replace('→', '-')})"
+    return texto
 
 
 def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
@@ -94,6 +135,9 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
     # ---- Resumen global ----
     total_ingresos = sum(a.ingresos_cobrado_usd for a in req.aviones)
     total_saldo = sum(a.saldo_usd for a in req.aviones)
+    # comisiones_venta_usd llega 0 desde el 28-ago-2026 (regla A: la comisión
+    # del vendedor es ingreso/pago de VuelaTour, no costo del avión); se suma
+    # solo por compat con payloads viejos.
     total_gastos = sum(
         _gastos_avion(a) + a.comisiones_venta_usd for a in req.aviones
     )
@@ -135,6 +179,19 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
         )
     )
     story.append(resumen)
+    # Composición cotizada de "Otros ingresos VuelaTour" (regla A: incluye la
+    # comisión del vendedor) — solo si el API manda el desglose.
+    desglose_txt = _desglose_txt(req.otros_ingresos_vuelatour_desglose)
+    if desglose_txt:
+        story.append(Spacer(1, 2 * mm))
+        story.append(
+            Paragraph(
+                "Otros ingresos VuelaTour del periodo (cotizado, no se reparte): "
+                f"{desglose_txt}. El pago de la comisión al vendedor sale de "
+                "VuelaTour (otros movimientos), no del avión.",
+                s_sub,
+            )
+        )
     story.append(Spacer(1, 8 * mm))
 
     # ---- Por aeronave ----
@@ -188,10 +245,14 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
         Paragraph(
             "Solo se reparte lo cobrado. El pendiente de cobro (parte avión) se "
             "distribuye cuando entra el pago; la deuda total del cliente incluye "
-            "además TUAs/extras/pernocta. La venta del avión = tiempo de vuelo + ajuste + "
-            "IVA proporcional; los TUAs, extras y viáticos de pernocta cobrados son "
-            "ingreso de VuelaTour: no entran al saldo ni se reparten (detalle en "
-            "'otros movimientos' del Balance general). Montos en USD. "
+            "además TUAs/extras/pernocta/comisión del vendedor. La venta del avión = "
+            "tiempo de vuelo + ajuste + IVA proporcional (en vuelos multi-avión, la "
+            "parte de cada matrícula en partes iguales por tramo vendido; los "
+            "ferries/tramos operativos no reparten); los TUAs, extras, viáticos de "
+            "pernocta y la comisión del vendedor cobrados son ingreso de VuelaTour: "
+            "no entran al saldo ni se reparten, y el pago de la comisión al vendedor "
+            "sale de VuelaTour, no del avión (detalle en 'otros movimientos' del "
+            "Balance general). Montos en USD. "
             "Vuela Tour · Aero Charter Cancún.",
             s_foot,
         )
@@ -227,8 +288,18 @@ def _bloque_avion(avion: RepartoAvion, estilo_titulo: ParagraphStyle) -> KeepTog
     if avion.otros_ingresos_vuelatour_usd:
         info_rows.append(len(filas))
         filas.append([
-            "Otros ingresos VuelaTour (TUAs/extras/pernocta) — no se reparten",
+            "Otros ingresos VuelaTour (TUAs/extras/pernocta/comisión vendedor) — no se reparten",
             _usd(avion.otros_ingresos_vuelatour_usd),
+        ])
+    # Regla A (28-ago-2026): la comisión del vendedor es ingreso de VuelaTour
+    # (ya dentro de la línea anterior) y su pago sale de VuelaTour — se anota
+    # solo si el API manda el desglose.
+    desg = avion.otros_ingresos_vuelatour_desglose
+    if desg is not None and desg.comision_usd:
+        info_rows.append(len(filas))
+        filas.append([
+            "   incluye comisión del vendedor cotizada (pre-IVA) — su pago no es costo del avión",
+            _usd(desg.comision_usd),
         ])
     pendiente = avion.pendiente_cobro_usd or 0.0
     bruto = avion.pendiente_bruto_usd or 0.0
@@ -239,7 +310,8 @@ def _bloque_avion(avion: RepartoAvion, estilo_titulo: ParagraphStyle) -> KeepTog
         info_rows.append(len(filas))
         filas.append([texto, _usd(pendiente)])
     filas += [
-        # Comisiones de venta: parte del cobro que no es de VuelaTour.
+        # Comisiones de venta: solo payloads viejos (antes del 28-ago-2026);
+        # hoy el API manda 0 y la fila NO se imprime (regla A).
         *(
             [["(-) Comisiones de venta", _usd(-avion.comisiones_venta_usd)]]
             if avion.comisiones_venta_usd
@@ -273,6 +345,35 @@ def _bloque_avion(avion: RepartoAvion, estilo_titulo: ParagraphStyle) -> KeepTog
     cascada.setStyle(TableStyle(estilo))
 
     bloque: list = [titulo, Spacer(1, 2 * mm), cascada]
+
+    # Detalle de vuelos (solo si el API lo manda): el folio lleva ' · 50 %'
+    # cuando el vuelo fue MULTI-AVIÓN (regla B: la venta del avión se
+    # repartió por tramo entre las matrículas).
+    if avion.vuelos:
+        vfilas = [["Vuelo", "Cliente", "Cobrado avión", "Pendiente avión"]]
+        for v in avion.vuelos:
+            vfilas.append([
+                _folio_vuelo(v),
+                v.cliente or "",
+                _usd(v.cobrado_usd or 0.0),
+                _usd(v.pendiente_usd or 0.0),
+            ])
+        vtabla = Table(vfilas, colWidths=[60 * mm, 60 * mm, 25 * mm, 25 * mm])
+        vtabla.setStyle(
+            TableStyle(
+                [
+                    ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+                    ("TEXTCOLOR", (0, 0), (-1, -1), MUTED),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                    ("LINEBELOW", (0, 0), (-1, 0), 0.4, LIGHT),
+                ]
+            )
+        )
+        bloque.append(Spacer(1, 2 * mm))
+        bloque.append(vtabla)
 
     # Advertencias de integridad: dinero que NO pudo entrar al balance. El
     # supervisor debe verlo aquí mismo, no descubrirlo cuadrando a mano.

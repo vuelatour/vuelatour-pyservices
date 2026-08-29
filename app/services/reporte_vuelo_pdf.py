@@ -8,7 +8,7 @@ from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
 
-from app.schemas.reportes import ReporteVueloRequest
+from app.schemas.reportes import ReporteVueloParticipacion, ReporteVueloRequest
 
 _BRAND = "#dc2626"
 _NAVY = "#102a43"
@@ -37,6 +37,33 @@ def _fecha(s: str | None) -> str:
         return s
 
 
+def _pct(factor: float | None) -> str:
+    """0.5 → '50 %' (hasta 2 decimales, sin ceros de más)."""
+    return "—" if factor is None else f"{round(factor * 100, 2):g} %"
+
+
+def _tramos_txt(tramos) -> str:
+    """Tramos del avión en un vuelo multi-avión: el API puede mandar la
+    cuenta (int), un texto ("CUN→MID") o una lista de órdenes."""
+    if tramos is None or tramos == "" or tramos == []:
+        return ""
+    if isinstance(tramos, (list, tuple)):
+        return "tramos " + ", ".join(str(t) for t in tramos)
+    if isinstance(tramos, int):
+        return f"{tramos} tramo{'s' if tramos != 1 else ''}"
+    return str(tramos)
+
+
+def _participacion_txt(p: ReporteVueloParticipacion) -> str:
+    """'N990GG 50 % (CUN→MID) = $1,000.00 USD' — una matrícula del reparto."""
+    tramos = _tramos_txt(p.tramos)
+    return (
+        f"{p.matricula or '—'} {_pct(p.factor)}"
+        + (f" ({tramos})" if tramos else "")
+        + (f" = {_money(p.venta_usd)}" if p.venta_usd is not None else "")
+    )
+
+
 def _row(label: str, value: str) -> str:
     return (
         f'<tr><td class="k">{escape(label)}</td>'
@@ -56,6 +83,22 @@ def _sub(texto: str) -> str:
     )
 
 
+def _pago_vendedor(r: ReporteVueloRequest) -> float:
+    """Pago al vendedor = comisión + su IVA cuando grava (`pagoVendedorUsd`,
+    fuente única del API). API viejo sin el campo: la comisión pre-IVA."""
+    return (
+        r.pago_vendedor_usd
+        if r.pago_vendedor_usd is not None
+        else r.comision_vendedor_usd
+    )
+
+
+def _etiqueta_pago_vendedor(r: ReporteVueloRequest) -> str:
+    quien = f" ({r.comision_vendedor_nombre})" if r.comision_vendedor_nombre else ""
+    con_iva = " (c/IVA)" if _pago_vendedor(r) > r.comision_vendedor_usd + 0.005 else ""
+    return f"(−) Pago comisión vendedor{quien}{con_iva}"
+
+
 def _build_html(r: ReporteVueloRequest) -> str:
     # --- Resumen del vuelo ---
     resumen = "<table class='kv'>"
@@ -64,6 +107,16 @@ def _build_html(r: ReporteVueloRequest) -> str:
     resumen += _row("Ruta", escape(r.ruta or "—"))
     resumen += _row("Tipo / Estado", escape(f"{r.tipo} · {r.estado}".strip(" ·")))
     resumen += _row("Aeronave", escape(r.aeronave or "—"))
+    # Vuelo MULTI-AVIÓN (regla B, 28-ago-2026): la venta del avión se
+    # repartió entre las matrículas por tramo — se dice junto al avión.
+    if r.participacion_aviones and len(r.participacion_aviones) > 1:
+        resumen += _sub(
+            "Venta del avión repartida en partes iguales por tramo vendido: "
+            + " · ".join(_participacion_txt(p) for p in r.participacion_aviones)
+            + ". Los ferries/tramos operativos no reparten; los gastos van al "
+            "avión de su tramo; TUAs/extras/pernocta/comisión del vendedor son "
+            "de VuelaTour y no se reparten."
+        )
     piloto = r.piloto or "—"
     if r.copiloto:
         piloto += f" / {r.copiloto} (copiloto)"
@@ -94,40 +147,52 @@ def _build_html(r: ReporteVueloRequest) -> str:
             f"style='font-size:10px;padding:0 4px 3px 14px'>{escape(det)}</td></tr>"
         )
     if r.viaticos_pernocta_usd:
-        cot += _row("Pernocta (vi&aacute;ticos)", _money(r.viaticos_pernocta_usd))
+        cot += _row("Pernocta (viáticos)", _money(r.viaticos_pernocta_usd))
     if r.extras_total_usd:
         cot += _row("Extras", _money(r.extras_total_usd))
     if r.ajuste_final_usd:
         cot += _row("Ajuste", _money(r.ajuste_final_usd))
     cot += _row("IVA", _money(r.iva_usd))
-    cot += _row("<b>Total</b>", f"<b>{_money(r.total_usd)}</b>")
+    cot += _row("Total", f"<b>{_money(r.total_usd)}</b>")
     if r.total_mxn:
         tc = f" (TC {r.tc_usd_mxn:.2f})" if r.tc_usd_mxn else ""
         cot += _row("Total MXN", f"{_money(r.total_mxn, 'MXN')}{escape(tc)}")
     # Regla 28-ago-2026 (informativo): del total, cuánto es VENTA DEL AVIÓN
     # (tiempo + ajuste + IVA proporcional) y cuánto ingreso de VuelaTour
-    # (TUAs/extras/pernocta + su IVA). Solo si el API los manda.
+    # (TUAs/extras/pernocta/comisión del vendedor + su IVA). Solo si el API
+    # los manda.
     if r.venta_avion_usd is not None:
         cot += _sub(f"De esto, venta del avión: {_money(r.venta_avion_usd)}")
     if r.otros_ingresos_vuelatour_usd is not None:
         cot += _sub(
-            "Ingreso VuelaTour (TUAs/extras/pernocta): "
+            "Ingreso VuelaTour (TUAs/extras/pernocta/comisión vendedor): "
             f"{_money(r.otros_ingresos_vuelatour_usd)}"
         )
     # Comisión del vendedor (interna): el cliente paga el total completo; el
-    # neto es lo que queda a VuelaTour (lo que fluye al reparto).
+    # neto es lo que queda a VuelaTour. Regla A (28-ago-2026): la comisión es
+    # ingreso de VuelaTour y su pago sale de VuelaTour (no del avión); este
+    # reporte mira la economía COMPLETA del vuelo, por eso la resta UNA vez.
     if r.comision_vendedor_usd:
         quien = f" ({r.comision_vendedor_nombre})" if r.comision_vendedor_nombre else ""
+        # Se resta el PAGO al vendedor (comisión + su IVA cuando grava), no la
+        # comisión pre-IVA: así total − esta línea = neto y la aritmética
+        # visible cuadra (antes restaba 832.00 a la vista y 965.12 en el neto).
+        pago = _pago_vendedor(r)
+        con_iva = " (comisión + IVA)" if pago > r.comision_vendedor_usd + 0.005 else ""
+        # _row ya escapa la etiqueta: texto plano (una entidad o <b> aquí
+        # saldrían literales en el PDF).
         cot += _row(
-            f"Comisi&oacute;n vendedor{escape(quien)}",
-            f"&minus;{_money(r.comision_vendedor_usd)}",
+            f"Pago comisión vendedor{quien}{con_iva}",
+            f"&minus;{_money(pago)}",
         )
+        # Neto = total − PAGO al vendedor (comisión + su IVA), misma regla
+        # que el balance de abajo.
         neto = (
             r.neto_vuelatour_usd
             if r.neto_vuelatour_usd is not None
-            else r.total_usd - r.comision_vendedor_usd
+            else r.total_usd - pago
         )
-        cot += _row("<b>Neto VuelaTour</b>", f"<b>{_money(neto)}</b>")
+        cot += _row("Neto VuelaTour", f"<b>{_money(neto)}</b>")
     if r.metodo_cobro:
         cot += _row("Método de cobro", escape(r.metodo_cobro))
     cot += "</table>"
@@ -309,13 +374,10 @@ def _build_html(r: ReporteVueloRequest) -> str:
             + _bal_row("(−) Gastos del vuelo", r.gastos_total_usd or 0, signo=-1)
             + _bal_row("REMANENTE (venta − costo)", r.remanente_usd, bold=True)
             + (
-                _bal_row(
-                    "(−) Comisión vendedor"
-                    + (f" ({r.comision_vendedor_nombre})" if r.comision_vendedor_nombre else ""),
-                    r.comision_vendedor_usd,
-                    signo=-1,
-                )
-                if r.comision_vendedor_usd
+                # Pago de VuelaTour al vendedor (regla A): se resta UNA vez,
+                # con su IVA cuando grava (pago_vendedor_usd del API).
+                _bal_row(_etiqueta_pago_vendedor(r), _pago_vendedor(r), signo=-1)
+                if _pago_vendedor(r)
                 else ""
             )
             + (

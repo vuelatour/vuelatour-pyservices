@@ -5,13 +5,20 @@
                       status de cobros/pagos). Fila coloreada con el color del
                       avión (el de su calendario) y la CLAVE lleva nota con la
                       matrícula. Las columnas SIN regla en el sistema todavía
-                      (costo proveedor, comisiones, pagos) van VACÍAS
-                      conservando su lugar. VENTA AVIÓN (regla 28-ago-2026)
-                      = tiempo + ajuste + IVA proporcional; el TOTAL FACTURA
-                      AL CLIENTE (con TUAs/extras/pernocta) va junto al
-                      STATUS DE COBROS como informativo.
-  2. Otros ingresos — TUAs/extras/pernocta (+ su IVA) por vuelo: ingreso de
-                      VuelaTour, no del avión (ingreso vs egreso).
+                      (costo proveedor, pagos) van VACÍAS conservando su
+                      lugar; las de COMISIÓN también van vacías pero por
+                      regla (28-ago-2026 tarde): la comisión del vendedor es
+                      ingreso y pago de VuelaTour, vive en 'Otros ingresos'.
+                      VENTA AVIÓN (regla 28-ago-2026) = tiempo + ajuste + IVA
+                      proporcional (multi-avión: la parte de cada matrícula
+                      en partes iguales por tramo vendido, la clave trae el
+                      sufijo); el TOTAL FACTURA
+                      AL CLIENTE (con TUAs/extras/pernocta/comisión) va junto
+                      al STATUS DE COBROS como informativo.
+  2. Otros ingresos — TUAs/extras/pernocta y comisión del vendedor (+ su IVA)
+                      por vuelo: ingreso de VuelaTour, no del avión (ingreso
+                      vs egreso; el pago de la comisión al vendedor apareado
+                      como PROVISIÓN a la fecha del vuelo).
   3. otros gastos   — gastos del mes sin vuelo, con acumulado.
   4. utilidades     — resumen del periodo (lo computable hoy).
 
@@ -53,6 +60,11 @@ def _fecha(s: str | None) -> str:
         return dt.strftime("%d/%m/%Y")
     except ValueError:
         return s
+
+
+def _pct(factor: float | None) -> str:
+    """0.5 → '50 %' (hasta 2 decimales, sin ceros de más)."""
+    return "—" if factor is None else f"{round(factor * 100, 2):g} %"
 
 
 def _hex(color: str | None) -> str | None:
@@ -234,9 +246,21 @@ def _hoja_vuelos(ws: Worksheet, req: DineroXlsxRequest) -> None:
                 cell.fill = fila_fill
             if attr == "clave":
                 cell.font = Font(size=9)
-                if v.matricula:
+                if v.matricula or v.multi_avion:
+                    texto = v.matricula or ""
+                    # Vuelo MULTI-AVIÓN (regla B, 28-ago-2026): la fila trae
+                    # la parte proporcional de la venta del avión de esta
+                    # matrícula (la clave ya lleva el sufijo del API).
+                    if v.multi_avion:
+                        texto += (
+                            f" · vuelo multi-avión: {_pct(v.participacion)} de "
+                            "la venta del avión (partes iguales por tramo "
+                            "vendido)"
+                        )
                     nota = Comment(
-                        f"{v.matricula}", "VuelaTour", width=140, height=40
+                        texto.strip(" ·"), "VuelaTour",
+                        width=300 if v.multi_avion else 140,
+                        height=70 if v.multi_avion else 40,
                     )
                     cell.comment = nota
             if attr is not None and isinstance(val, (int, float)) and attr in _TOTAL_ATTRS:
@@ -275,10 +299,14 @@ def _hoja_vuelos(ws: Worksheet, req: DineroXlsxRequest) -> None:
         row=nrow,
         column=1,
         value="VENTA AVIÓN = tiempo de vuelo + ajuste + IVA proporcional (regla "
-        "28-ago-2026). Los TUAs, extras y viáticos de pernocta cobrados NO son "
-        "venta del avión: son ingreso de VuelaTour (hoja 'Otros ingresos'). "
+        "28-ago-2026; en vuelos multi-avión, la parte de cada matrícula en "
+        "partes iguales por tramo vendido — la clave lo indica). Los TUAs, "
+        "extras, viáticos de pernocta y "
+        "la COMISIÓN DEL VENDEDOR cobrados NO son venta del avión: son ingreso "
+        "de VuelaTour (hoja 'Otros ingresos'); por eso el bloque COMISIÓN de "
+        "esta hoja va vacío y la comisión no resta al avión. "
         "TOTAL FACTURA AL CLIENTE = lo cobrado completo (con TUAs/extras/"
-        "pernocta y su IVA) — contra eso cuadran los cobros.",
+        "pernocta/comisión y su IVA) — contra eso cuadran los cobros.",
     ).font = Font(italic=True, size=9, color="5B6470")
     ws.merge_cells(start_row=nrow, start_column=1, end_row=nrow, end_column=14)
 
@@ -290,6 +318,13 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
     ws.cell(row=1, column=1, value="RELACION DE OTROS INGRESOS VUELATOUR").font = Font(
         bold=True, size=12, color=NAVY
     )
+    ws.cell(
+        row=2, column=1,
+        value="Ingreso de VuelaTour (no del avión): TUAs, extras, pernocta y "
+        "comisión del vendedor cobrados (con su IVA) vs lo pagado. El pago de "
+        "la comisión al vendedor va apareado en su fila como PROVISIÓN a la "
+        "fecha del vuelo mientras no exista el gasto real (regla 28-ago-2026).",
+    ).font = Font(italic=True, size=9, color="5B6470")
     headers = [
         "clave", "fecha\nvuelo", "concepto", "egreso", "fecha", "concepto",
         "ingreso", "fecha", "remanente", "factura\nvuelatour",
@@ -316,6 +351,15 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
             cell.border = _border
             if isinstance(v, (int, float)):
                 cell.number_format = MONEY
+        # El detalle del egreso (p. ej. la provisión del pago al vendedor =
+        # comisión + IVA) va como COMENTARIO de su celda, igual que en el
+        # Balance general.
+        if f.nota_egreso:
+            lineas = f.nota_egreso.count("\n") + 1
+            com = Comment(f.nota_egreso, "VuelaTour")
+            com.width = 420
+            com.height = max(60, 18 * lineas + 20)
+            ws.cell(row=row, column=4).comment = com
         if isinstance(f.egreso_mxn, (int, float)):
             tot_e += f.egreso_mxn
         if isinstance(f.ingreso_mxn, (int, float)):
@@ -473,9 +517,11 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
     ws.cell(
         row=6,
         column=1,
-        value="CHARTERS y UTILIDAD dependen del costo por hora del proveedor y "
-        "las comisiones (reglas pendientes de definir con el equipo): esas "
-        "celdas van vacías a propósito — no se inventan números.",
+        value="CHARTERS y UTILIDAD dependen del costo por hora del proveedor "
+        "(regla pendiente de definir con el equipo): esas celdas van vacías a "
+        "propósito — no se inventan números. Las comisiones del vendedor ya "
+        "tienen regla (28-ago-2026): ingreso y pago de VuelaTour en la hoja "
+        "'Otros ingresos', no restan al avión.",
     ).font = Font(italic=True, size=9, color="5B6470")
     ws.cell(
         row=7,
@@ -490,11 +536,19 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
         "solo lo asignado/repartido a cada aeronave — la diferencia es gasto "
         "de la empresa VuelaTour (y partidas sin tipo de cambio).",
     ).font = Font(italic=True, size=9, color="5B6470")
+    provision = req.utilidades_comision_vendedor_provisionada_mxn
+    nota_provision = (
+        f" Provisión restada en este periodo: ${provision:,.2f} MXN."
+        if provision is not None and provision > 0
+        else ""
+    )
     ws.cell(
         row=9,
         column=1,
-        value="OTROS INGRESOS = ingreso de VuelaTour (TUAs/extras/pernocta + su "
-        "IVA), no del avión (regla 28-ago-2026): ver hoja 'Otros ingresos'.",
+        value="OTROS INGRESOS = ingreso de VuelaTour (TUAs/extras/pernocta/"
+        "comisión del vendedor + su IVA), no del avión (regla 28-ago-2026), "
+        "NETO de la provisión del pago al vendedor (comisión + su IVA): "
+        "ver hoja 'Otros ingresos'." + nota_provision,
     ).font = Font(italic=True, size=9, color="5B6470")
 
 

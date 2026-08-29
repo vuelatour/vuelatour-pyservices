@@ -12,7 +12,11 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from app.schemas.reparto import RepartoPdfRequest
+from app.schemas.reparto import (
+    RepartoOtrosIngresosDesglose,
+    RepartoPdfRequest,
+    RepartoVueloLinea,
+)
 
 BRAND = "0F4C81"
 LIGHT = "EEF2F7"
@@ -21,6 +25,43 @@ MONEY = '"$"#,##0.00'
 
 _thin = Side(style="thin", color="D5DBE3")
 _border = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
+
+
+def _pct(factor: float | None) -> str:
+    """0.5 → '50 %' (hasta 2 decimales, sin ceros de más)."""
+    return "—" if factor is None else f"{round(factor * 100, 2):g} %"
+
+
+def _usd(value: float) -> str:
+    return f"${value:,.2f}"
+
+
+def _desglose_txt(d: RepartoOtrosIngresosDesglose | None) -> str | None:
+    """'TUAs $100.00 · comisión del vendedor $1,000.00 · IVA $176.00' con la
+    composición COTIZADA de otros ingresos VuelaTour; None si no hay nada."""
+    if d is None:
+        return None
+    partes = [
+        f"{label} {_usd(val)}"
+        for label, val in (
+            ("TUAs", d.tuas_usd),
+            ("extras", d.extras_usd),
+            ("pernocta", d.pernocta_usd),
+            ("comisión del vendedor", d.comision_usd),
+            ("IVA", d.iva_usd),
+        )
+        if val
+    ]
+    return " · ".join(partes) or None
+
+
+def _folio_vuelo(v: RepartoVueloLinea) -> str:
+    """'#105 · 50 %' cuando el vuelo fue MULTI-AVIÓN (regla B, 28-ago-2026:
+    la venta del avión se repartió por tramo); '#105' si no."""
+    texto = f"#{v.folio}" if v.folio is not None else "—"
+    if v.participacion is not None and v.participacion < 0.9999:
+        texto += f" · {_pct(v.participacion)}"
+    return texto
 
 
 def _title(ws, text: str, row: int, span: int, size: int = 14):
@@ -123,18 +164,57 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     cd.fill = PatternFill("solid", fgColor=LIGHT)
     cd.border = _border
     r += 1
+    # Regla A (28-ago-2026): la comisión del vendedor ya no se descuenta al
+    # avión — el API manda 0. La columna se conserva por índice (money_cols,
+    # widths) pero se OCULTA cuando nadie trae monto (solo un payload viejo
+    # la muestra).
+    if not any(a.comisiones_venta_usd for a in req.aviones):
+        ws.column_dimensions[get_column_letter(5)].hidden = True
     nota = ws.cell(
         row=r,
         column=1,
-        value="Venta del avión cobrada = tiempo de vuelo + ajuste + IVA proporcional. "
-        "Otros ingr. VuelaTour = TUAs/extras/pernocta cobrados (con su IVA): ingreso "
-        "de VuelaTour, fuera del saldo y del reparto (ver 'otros movimientos' del "
-        "Balance general). Pendiente de cobro = parte del avión (se reparte al "
-        "cobrar); Deuda total del cliente = lo que debe COMPLETO (con TUAs/extras/"
-        "pernocta), solo cuando es mayor a la parte del avión.",
+        value="Venta del avión cobrada = tiempo de vuelo + ajuste + IVA proporcional "
+        "(en vuelos multi-avión, la parte de cada matrícula en partes iguales por "
+        "tramo vendido; los ferries/tramos operativos no reparten). "
+        "Otros ingr. VuelaTour = TUAs/extras/pernocta/comisión del vendedor cobrados "
+        "(con su IVA): ingreso de VuelaTour, fuera del saldo y del reparto; el pago "
+        "de la comisión al vendedor sale de VuelaTour, no del avión (ver 'otros "
+        "movimientos' del Balance general). Pendiente de cobro = parte del avión "
+        "(se reparte al cobrar); Deuda total del cliente = lo que debe COMPLETO "
+        "(con TUAs/extras/pernocta/comisión), solo cuando es mayor a la parte del "
+        "avión.",
     )
     nota.font = Font(italic=True, size=9, color="5B6470")
     ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
+    # Composición cotizada de "Otros ingr. VuelaTour" (regla A: incluye la
+    # comisión del vendedor) — global y por avión, solo si el API la manda.
+    desglose_txt = _desglose_txt(req.otros_ingresos_vuelatour_desglose)
+    if desglose_txt:
+        r += 1
+        nd = ws.cell(
+            row=r,
+            column=1,
+            value="Otros ingr. VuelaTour del periodo (cotizado, no se reparte): "
+            f"{desglose_txt}.",
+        )
+        nd.font = Font(italic=True, size=9, color="5B6470")
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
+    por_avion = [
+        f"{a.matricula} {_usd(a.otros_ingresos_vuelatour_desglose.comision_usd)}"
+        for a in req.aviones
+        if a.otros_ingresos_vuelatour_desglose is not None
+        and a.otros_ingresos_vuelatour_desglose.comision_usd
+    ]
+    if por_avion:
+        r += 1
+        nc = ws.cell(
+            row=r,
+            column=1,
+            value="Comisión del vendedor cotizada por avión (ingreso de VuelaTour, "
+            "su pago no es costo del avión): " + " · ".join(por_avion) + ".",
+        )
+        nc.font = Font(italic=True, size=9, color="5B6470")
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
 
     # Anchos de columna.
     widths = [12, 16, 13, 16, 16, 17, 15, 16, 12, 16, 16, 16, 18, 18]
@@ -171,6 +251,28 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
             )
             aviso.font = Font(color="B45309", italic=True, size=9)
             r += 1
+
+    # Detalle de vuelos (solo si el API lo manda): el folio lleva ' · 50 %'
+    # cuando el vuelo fue MULTI-AVIÓN (regla B, 28-ago-2026: la venta del
+    # avión se repartió por tramo entre las matrículas).
+    if any(a.vuelos for a in req.aviones):
+        r += 2
+        _title(ws, "Detalle de vuelos (venta del avión cobrada)", r, 6, size=12)
+        r += 1
+        _header_row(ws, r, ["Avión", "Vuelo", "Cliente", "Cobrado avión USD",
+                            "Pendiente avión USD", "Tramos del avión"])
+        r += 1
+        for a in req.aviones:
+            for v in a.vuelos:
+                ws.cell(row=r, column=1, value=a.matricula).border = _border
+                ws.cell(row=r, column=2, value=_folio_vuelo(v)).border = _border
+                ws.cell(row=r, column=3, value=v.cliente).border = _border
+                for col, val in ((4, v.cobrado_usd), (5, v.pendiente_usd)):
+                    mc = ws.cell(row=r, column=col, value=val)
+                    mc.number_format = MONEY
+                    mc.border = _border
+                ws.cell(row=r, column=6, value=v.tramos_avion).border = _border
+                r += 1
 
     buf = BytesIO()
     wb.save(buf)
