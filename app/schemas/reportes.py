@@ -47,6 +47,12 @@ class CotizacionPdfRequest(BaseModel):
     fecha_traslado_inicial: str | None = None
     fecha_traslado_final: str | None = None
     escalas: list[EscalaPdf] = Field(default_factory=list)
+    # Ruta VISIBLE ya resuelta por el API ("CUN → AZP → BZE → CZM → CUN"):
+    # con tramos ocultos (pdf_oculto) el título NO puede derivarse de las
+    # escalas (el walk une los huecos en NestJS, que es quien filtra).
+    # ADITIVO: sin el campo (payload viejo) el título se arma de las escalas
+    # como siempre — tolera skew de deploy en ambos sentidos.
+    ruta: str | None = None
     tiempo_cobrable_hr: float | None = None
     tarifa_hora_usd: float | None = None
     subtotal_usd: float = 0

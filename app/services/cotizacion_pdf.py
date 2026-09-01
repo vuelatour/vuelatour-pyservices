@@ -200,7 +200,12 @@ def _build_html(r: CotizacionPdfRequest) -> str:
     mostrar_matricula = bool(r.matricula and "VGV" in r.matricula.upper())
     # Título con la RUTA COMPLETA (26-ago): "CUN → CTM → CUN", no solo
     # origen→destino. Fuente más chica si la ruta es larga (multiescala).
-    if r.escalas:
+    # Si el API ya mandó la ruta VISIBLE resuelta (tramos ocultos con los
+    # huecos unidos, 31-ago) se usa TAL CUAL; el walk local queda solo como
+    # fallback para payloads viejos (skew tolerante).
+    if r.ruta:
+        ruta_titulo = escape(r.ruta)
+    elif r.escalas:
         ordenadas = sorted(r.escalas, key=lambda x: x.orden)
         puntos = [ordenadas[0].origen] + [e.destino for e in ordenadas]
         ruta_titulo = " → ".join(escape(pt) for pt in puntos)
