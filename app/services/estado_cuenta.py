@@ -12,6 +12,7 @@ from app.schemas.conciliacion import (
     ConciliacionSugerirResponse,
     MovimientoParseado,
 )
+from app.services.ia_usage import uso_ia_de
 
 
 def _norm(s: str) -> str:
@@ -167,6 +168,7 @@ def _parse_pdf(req: ConciliacionParseRequest) -> ConciliacionParseResponse:
             }
         ],
     )
+    uso = uso_ia_de(resp)
     # Truncado por límite de salida: la conciliación exige el universo COMPLETO
     # de movimientos — importar una lista parcial en silencio es peor que
     # fallar con instrucciones claras.
@@ -201,7 +203,11 @@ def _parse_pdf(req: ConciliacionParseRequest) -> ConciliacionParseResponse:
             )
         )
     return ConciliacionParseResponse(
-        movimientos=movimientos, total=len(movimientos), formato="pdf", modelo=s.anthropic_model
+        movimientos=movimientos,
+        total=len(movimientos),
+        formato="pdf",
+        modelo=s.anthropic_model,
+        uso_ia=uso,
     )
 
 
@@ -278,6 +284,7 @@ def sugerir_conciliacion(req: ConciliacionSugerirRequest) -> ConciliacionSugerir
             }
         ],
     )
+    uso = uso_ia_de(resp)
     text = next((b.text for b in resp.content if b.type == "text"), "")
     data = _extract_json(text)
 
@@ -292,4 +299,5 @@ def sugerir_conciliacion(req: ConciliacionSugerirRequest) -> ConciliacionSugerir
         confianza=float(data.get("confianza", 0.0)) if sugerido else 0.0,
         razon=str(data.get("razon", "")),
         modelo=s.anthropic_model,
+        uso_ia=uso,
     )

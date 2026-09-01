@@ -7,6 +7,8 @@ fecha cercana); Claude solo elige entre ellos usando el contexto del gasto
 
 from pydantic import BaseModel, Field
 
+from app.schemas.uso_ia import UsoIA
+
 
 class GastoParaMatch(BaseModel):
     fecha: str | None = Field(default=None, description="fecha_gasto YYYY-MM-DD")
@@ -42,6 +44,7 @@ class GastoVueloSugerirResponse(BaseModel):
     confianza: float = Field(ge=0, le=1, default=0.0)
     razon: str = ""
     modelo: str
+    uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")
 
 
 # --- Carga masiva de combustible (plantilla XLSX + parseo estructural) ---

@@ -5,6 +5,7 @@ import anthropic
 
 from app.config import get_settings
 from app.schemas.compras import CompraExtraerRequest, CompraExtraerResponse, CompraLinea
+from app.services.ia_usage import uso_ia_de
 
 _SYSTEM = (
     "Eres un asistente de compras para una empresa de aviación. A partir de una "
@@ -78,6 +79,7 @@ def extraer_compra(req: CompraExtraerRequest) -> CompraExtraerResponse:
             }
         ],
     )
+    uso = uso_ia_de(resp)
     text = next((b.text for b in resp.content if b.type == "text"), "")
     data = _extract_json(text)
 
@@ -110,4 +112,5 @@ def extraer_compra(req: CompraExtraerRequest) -> CompraExtraerResponse:
         confianza=float(data.get("confianza", 0.0)),
         notas=str(data.get("notas", "")),
         modelo=s.anthropic_model,
+        uso_ia=uso,
     )

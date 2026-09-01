@@ -18,6 +18,7 @@ from app.schemas.vision import (
     TacometroRequest,
     TacometroResponse,
 )
+from app.services.ia_usage import uso_ia_de
 
 _SYSTEM = (
     "Eres un asistente de operaciones de aviación. Lees el HORÓMETRO/TACÓMETRO "
@@ -172,6 +173,7 @@ def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
             }
         ],
     )
+    uso = uso_ia_de(resp)
     text = next((b.text for b in resp.content if b.type == "text"), "")
     data = _extract_json(text)
 
@@ -191,6 +193,7 @@ def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
         notas=str(data.get("notas", ""))[:400],
         calidad_foto=calidad,
         modelo=s.anthropic_model,
+        uso_ia=uso,
     )
 
 
@@ -350,6 +353,7 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
             }
         ],
     )
+    uso = uso_ia_de(resp)
     if resp.stop_reason == "max_tokens":
         raise ValueError("Respuesta truncada por max_tokens (subir el límite)")
     text = next((b.text for b in resp.content if b.type == "text"), "")
@@ -411,6 +415,7 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         legible=bool(data.get("legible", monto is not None)),
         notas=str(data.get("notas", "")),
         modelo=s.anthropic_model,
+        uso_ia=uso,
     )
 
 
@@ -563,6 +568,7 @@ def leer_constancia_fiscal(req: ConstanciaFiscalRequest) -> ConstanciaFiscalResp
             }
         ],
     )
+    uso = uso_ia_de(resp)
     text = next((b.text for b in resp.content if b.type == "text"), "")
     data = _extract_json(text)
 
@@ -585,6 +591,7 @@ def leer_constancia_fiscal(req: ConstanciaFiscalRequest) -> ConstanciaFiscalResp
         domicilio=_str_or_none(data.get("domicilio")),
         confianza=confianza,
         motivo=_str_or_none(data.get("motivo")),
+        uso_ia=uso,
     )
 
 
@@ -640,6 +647,7 @@ def leer_ticket_combustible(req: GastoTicketRequest) -> CombustibleTicketRespons
             }
         ],
     )
+    uso = uso_ia_de(resp)
     text = next((b.text for b in resp.content if b.type == "text"), "")
     data = _extract_json(text)
 
@@ -672,6 +680,7 @@ def leer_ticket_combustible(req: GastoTicketRequest) -> CombustibleTicketRespons
         legible=bool(data.get("legible", data.get("total") is not None)),
         notas=str(data.get("notas", "")),
         modelo=s.anthropic_model,
+        uso_ia=uso,
     )
 
 
@@ -855,6 +864,7 @@ def leer_producto_inventario(req: InventarioItemRequest) -> InventarioItemRespon
             }
         ],
     )
+    uso = uso_ia_de(resp)
     if resp.stop_reason == "max_tokens":
         raise ValueError("Respuesta truncada por max_tokens (subir el límite)")
     text = next((b.text for b in resp.content if b.type == "text"), "")
@@ -899,4 +909,5 @@ def leer_producto_inventario(req: InventarioItemRequest) -> InventarioItemRespon
         confianza=confianza,
         notas_ia=" ".join(notas) or None,
         modelo=s.anthropic_model,
+        uso_ia=uso,
     )

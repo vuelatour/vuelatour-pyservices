@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.uso_ia import UsoIA
+
 MediaType = Literal["image/jpeg", "image/png", "image/webp", "image/gif"]
 
 
@@ -47,3 +49,4 @@ class VencimientoExtraerResponse(BaseModel):
     confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1 de la extracción")
     notas: str = Field(default="", description="Observaciones breves en español")
     modelo: str = Field(description="Modelo de Claude usado")
+    uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")

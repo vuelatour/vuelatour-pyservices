@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.uso_ia import UsoIA
+
 
 class ConciliacionParseRequest(BaseModel):
     """Estado de cuenta a parsear. CSV/Excel (preferido) o PDF, en base64."""
@@ -24,6 +26,9 @@ class ConciliacionParseResponse(BaseModel):
     formato: str = Field(description="csv | excel | pdf")
     notas: str = Field(default="")
     modelo: str | None = Field(default=None, description="Modelo de Claude si se usó (PDF)")
+    uso_ia: UsoIA | None = Field(
+        default=None, description="Consumo de tokens (solo PDF; CSV/Excel = None)"
+    )
 
 
 class MovimientoSinConciliar(BaseModel):
@@ -55,3 +60,4 @@ class ConciliacionSugerirResponse(BaseModel):
     confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1 del match")
     razon: str = Field(default="", description="Explicación breve en español del match")
     modelo: str = Field(description="Modelo de Claude usado")
+    uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")

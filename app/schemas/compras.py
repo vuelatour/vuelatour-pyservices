@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from app.schemas.uso_ia import UsoIA
+
 
 class CompraExtraerRequest(BaseModel):
     """PDF de una factura/orden de compra (ej. Aircraft Spruce) en base64."""
@@ -27,3 +29,4 @@ class CompraExtraerResponse(BaseModel):
     confianza: float = Field(ge=0, le=1, default=0.0)
     notas: str = Field(default="")
     modelo: str = Field(description="Modelo de Claude usado")
+    uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")

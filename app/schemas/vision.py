@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.uso_ia import UsoIA
+
 MediaType = Literal["image/jpeg", "image/png", "image/webp", "image/gif"]
 
 
@@ -39,6 +41,7 @@ class TacometroResponse(BaseModel):
         ),
     )
     modelo: str = Field(description="Modelo de Claude usado")
+    uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")
 
 
 class ImagenFuente(BaseModel):
@@ -183,6 +186,7 @@ class GastoTicketResponse(BaseModel):
     legible: bool = Field(default=False, description="true si el ticket se pudo leer")
     notas: str = Field(default="", description="Observaciones")
     modelo: str = Field(description="Modelo de Claude usado")
+    uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")
 
 
 class ConstanciaFiscalRequest(BaseModel):
@@ -238,6 +242,7 @@ class ConstanciaFiscalResponse(BaseModel):
     motivo: str | None = Field(
         default=None, description="Por qué no se pudo leer / observaciones de la extracción"
     )
+    uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")
 
 
 class CombustibleTicketResponse(BaseModel):
@@ -268,6 +273,7 @@ class CombustibleTicketResponse(BaseModel):
     legible: bool = Field(default=False, description="true si el ticket se pudo leer")
     notas: str = Field(default="", description="Observaciones")
     modelo: str = Field(description="Modelo de Claude usado")
+    uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")
 
 
 # --- Inventario: ficha del producto a partir de fotos (28-ago-2026) ---
@@ -325,3 +331,4 @@ class InventarioItemResponse(BaseModel):
     confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1")
     notas_ia: str | None = Field(default=None, description="Dudas/observaciones de la IA")
     modelo: str = Field(default="", description="Modelo de Claude usado")
+    uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")

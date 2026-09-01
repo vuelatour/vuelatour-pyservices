@@ -9,6 +9,7 @@ import json
 from app.config import get_settings
 from app.schemas.gastos import GastoVueloSugerirRequest, GastoVueloSugerirResponse
 from app.services.estado_cuenta import _client, _extract_json
+from app.services.ia_usage import uso_ia_de
 
 _SYSTEM = (
     "Eres un asistente de una operadora de vuelos chárter en Cancún. Un piloto "
@@ -67,6 +68,7 @@ def sugerir_vuelo_para_gasto(
             }
         ],
     )
+    uso = uso_ia_de(resp)
     text = next((b.text for b in resp.content if b.type == "text"), "")
     data = _extract_json(text)
 
@@ -81,4 +83,5 @@ def sugerir_vuelo_para_gasto(
         confianza=float(data.get("confianza", 0.0)) if sugerido else 0.0,
         razon=str(data.get("razon", "")),
         modelo=s.anthropic_model,
+        uso_ia=uso,
     )

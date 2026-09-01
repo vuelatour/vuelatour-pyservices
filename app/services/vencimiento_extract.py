@@ -5,6 +5,7 @@ import anthropic
 
 from app.config import get_settings
 from app.schemas.vencimiento import VencimientoExtraerRequest, VencimientoExtraerResponse
+from app.services.ia_usage import uso_ia_de
 
 _SYSTEM = (
     "Eres un asistente documental para una empresa de aviación. A partir de un "
@@ -85,6 +86,7 @@ def extraer_vencimiento(req: VencimientoExtraerRequest) -> VencimientoExtraerRes
             }
         ],
     )
+    uso = uso_ia_de(resp)
     text = next((b.text for b in resp.content if b.type == "text"), "")
     data = _extract_json(text)
 
@@ -97,4 +99,5 @@ def extraer_vencimiento(req: VencimientoExtraerRequest) -> VencimientoExtraerRes
         confianza=float(data.get("confianza", 0.0)),
         notas=str(data.get("notas", "")),
         modelo=s.anthropic_model,
+        uso_ia=uso,
     )
