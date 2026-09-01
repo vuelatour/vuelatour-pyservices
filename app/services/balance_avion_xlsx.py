@@ -23,7 +23,9 @@ Ocho hojas en el orden del libro:
      permisos) + reparto real de socios.
   9. pendientes de captura — lo que falta para que el libro quede completo.
 El Balance GENERAL comparte estas funciones con otro juego de hojas (ver
-render_balance_general_xlsx).
+render_balance_general_xlsx); ahí la hoja 'refacciones' fue sustituida por
+'inventario' (tiendita, 30-ago-2026: resumen por ítem + detalle de salidas)
+— el libro INDIVIDUAL conserva la suya.
 
 Los montos vienen YA calculados del API (aquí solo se pintan; jamás se
 recalcula dinero). None = celda vacía — nunca un 0 falso.
@@ -49,6 +51,7 @@ from app.schemas.reportes import (
     BalanceAvionVuelo,
     BalanceGeneralRequest,
     BalanceGeneralResumenFila,
+    BalanceHojaInventario,
     BalanceHojaOtrosMovimientos,
     BalanceOtroMovimientoFila,
 )
@@ -1082,6 +1085,22 @@ _NOTA_REFACCIONES_GENERAL = (
     "GANANCIA = venta − costo (0 mientras la salida se cargue a costo, aún "
     "sin precio de venta)."
 )
+# Hoja "inventario" del general (tiendita, 30-ago-2026): sustituye a la hoja
+# 'refacciones' del general — su detalle de salidas es el BLOQUE 2 de esta.
+_NOTA_INVENTARIO = (
+    "INVENTARIO (tiendita) — BLOQUE POR ÍTEM: EXISTENCIA y VALOR A COSTO son "
+    "A HOY (todo el cardex FIFO), NO una foto al corte del periodo; COMPRAS "
+    "= solo ENTRADAs del periodo (una devolución o un ajuste regresan stock "
+    "pero no son compra); VENDIDO = lo cargado a los aviones en salidas CON "
+    "precio de venta y UTILIDAD = vendido − costo FIFO consumido (las "
+    "salidas a costo no llevan venta ni utilidad). DETALLE DE SALIDAS "
+    "(bloque 2) = las salidas de bodega cargadas a aviones en el periodo: "
+    "gasto REFACCION medio BODEGA ligado al cardex, con GANANCIA = venta − "
+    "costo (0 mientras la salida se cargue a costo); antes era la hoja "
+    "'refacciones' de este libro (el libro INDIVIDUAL de cada avión la "
+    "conserva). El dinero salió del banco al COMPRAR la pieza, no al "
+    "consumirla — la conciliación bancaria no cruza estos cargos."
+)
 _NOTA_GASTOS_EMPRESA = (
     "GASTOS VUELATOUR = gastos de la EMPRESA del periodo: sin vuelo y sin "
     "avión (sin PERSONAL_DUENO ni GAS) que nadie reparte, más el REMANENTE "
@@ -1105,6 +1124,162 @@ def _nota_otros_gastos(general: bool) -> str:
         "El TUA pagado NO va aquí (regla 28-ago-2026): queda solo como nota "
         "en OPERACIONES y vive en 'otros movimientos' del Balance general."
     )
+
+
+def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
+                     refacciones: BalanceAvionHojaGastos | None,
+                     req: BalanceAvionRequest) -> None:
+    """Hoja 'inventario' del Balance GENERAL (tiendita, 30-ago-2026).
+
+    BLOQUE 1 = resumen POR ÍTEM del periodo (existencia y valor a costo A
+    HOY; compras / salidas / vendido / utilidad del periodo) con fila
+    TOTALES. BLOQUE 2 = el detalle de salidas que antes pintaba la hoja
+    'refacciones' del general (`refacciones.filas`; el libro INDIVIDUAL
+    conserva su hoja). Todo viene YA calculado del API — aquí solo se pinta
+    (los totales del bloque 2 son re-suma de columnas para mostrar);
+    None = celda vacía, nunca un 0 falso."""
+    n_cols = 9
+    # Anchos para estimar el alto de las filas que envuelven texto (mismo
+    # patrón que _hoja_gastos): ÍTEM del bloque 1 y detalle del bloque 2.
+    ancho_item = 34
+    ancho_detalle = 42
+    _title(ws, f"Inventario (tiendita) — {req.matricula}".strip(" —"), 1, n_cols)
+    periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'}"
+    ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
+
+    # ===== Bloque 1: resumen por ítem =====
+    _header_row(ws, 4, [
+        "ÍTEM", "EXISTENCIA\nACTUAL", "VALOR A\nCOSTO MXN", "COMPRADAS\nCANT",
+        "COMPRAS\nMXN", "SALIDAS\nCANT", "VENDIDO\nMXN", "UTILIDAD\nMXN",
+        "MATRÍCULAS",
+    ])
+    row = 5
+    if inv.filas:
+        for f in inv.filas:
+            ic = ws.cell(row=row, column=1, value=f.nombre)
+            ic.border = _border
+            ic.alignment = Alignment(wrap_text=True, vertical="top")
+            _num(ws, row, 2, f.existencia, "General").border = _border
+            _num(ws, row, 3, f.valor_costo_mxn).border = _border
+            _num(ws, row, 4, f.compradas_cant, "General").border = _border
+            _num(ws, row, 5, f.compradas_costo_mxn).border = _border
+            _num(ws, row, 6, f.salidas_cant, "General").border = _border
+            _num(ws, row, 7, f.vendido_mxn).border = _border
+            _num(ws, row, 8, f.utilidad_mxn).border = _border
+            mc = ws.cell(row=row, column=9, value=f.matriculas)
+            mc.border = _border
+            mc.alignment = Alignment(wrap_text=True, vertical="top")
+            lineas = max(
+                math.ceil(len(f.nombre or "") / ancho_item),
+                math.ceil(len(f.matriculas or "") / 24),
+                1,
+            )
+            if lineas > 1:
+                ws.row_dimensions[row].height = 14 * lineas + 4
+            row += 1
+        # Fila TOTALES (piezas en stock, valorizado, compras, ventas,
+        # utilidad — las columnas de cantidades del periodo van vacías).
+        ws.cell(row=row, column=1, value="TOTALES").font = Font(bold=True)
+        _num(ws, row, 2, inv.total_piezas, "General", bold=True)
+        _num(ws, row, 3, inv.total_valor_mxn, MONEY, bold=True)
+        _num(ws, row, 5, inv.total_compras_mxn, MONEY, bold=True)
+        _num(ws, row, 7, inv.total_vendido_mxn, MONEY, bold=True)
+        _num(ws, row, 8, inv.total_utilidad_mxn, MONEY, bold=True)
+        for c in range(1, n_cols + 1):
+            cell = ws.cell(row=row, column=c)
+            cell.fill = PatternFill("solid", fgColor=LIGHT)
+            cell.border = _border
+        row += 1
+    else:
+        ws.cell(
+            row=row, column=1,
+            value="Sin inventario con existencia ni movimientos en el periodo.",
+        ).font = Font(color=MUTED, italic=True)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
+        row += 1
+
+    # ===== Bloque 2: detalle de salidas (la vieja hoja 'refacciones') =====
+    row += 2
+    bc = ws.cell(row=row, column=1,
+                 value="DETALLE DE SALIDAS DEL PERIODO (cargos a aviones)")
+    bc.font = Font(bold=True, size=12, color=NAVY)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
+    row += 1
+    _header_row(ws, row, ["FECHA", "ÍTEM", "AVIÓN", "COSTO VUELATOUR\nMXN",
+                          "VENTA AL AVIÓN\nMXN", "GANANCIA\nMXN"])
+    row += 1
+    filas_det = refacciones.filas if refacciones is not None else []
+    if filas_det:
+        # Σ de columnas SOLO para mostrar (None si la columna vino vacía).
+        tot_costo: float | None = None
+        tot_venta: float | None = None
+        tot_ganancia: float | None = None
+        for f in filas_det:
+            ws.cell(row=row, column=1, value=_fecha(f.fecha)).border = _border
+            # El detalle del general llega con 'MATRÍCULA · ' al frente
+            # (hoja de flota); aquí el avión tiene su columna — se limpia
+            # para no duplicar.
+            detalle = f.detalle or ""
+            if f.matricula and detalle.startswith(f"{f.matricula} · "):
+                detalle = detalle[len(f.matricula) + 3:]
+            dc = ws.cell(row=row, column=2, value=detalle)
+            dc.border = _border
+            dc.alignment = Alignment(wrap_text=True, vertical="top")
+            ac = ws.cell(row=row, column=3, value=f.matricula)
+            ac.border = _border
+            avion_fill = _hex(f.avion_color)
+            if avion_fill:
+                ac.fill = PatternFill("solid", fgColor=avion_fill)
+            _num(ws, row, 4, f.costo_mxn).border = _border
+            _num(ws, row, 5, f.venta_mxn).border = _border
+            # GANANCIA = venta − costo (solo para MOSTRAR; 0 mientras la
+            # salida se cargue a costo). Falta un lado → celda vacía.
+            ganancia = (
+                round(f.venta_mxn - f.costo_mxn, 2)
+                if f.venta_mxn is not None and f.costo_mxn is not None
+                else None
+            )
+            _num(ws, row, 6, ganancia).border = _border
+            if f.costo_mxn is not None:
+                tot_costo = round((tot_costo or 0.0) + f.costo_mxn, 2)
+            if f.venta_mxn is not None:
+                tot_venta = round((tot_venta or 0.0) + f.venta_mxn, 2)
+            if ganancia is not None:
+                tot_ganancia = round((tot_ganancia or 0.0) + ganancia, 2)
+            lineas = max(1, math.ceil(len(detalle) / ancho_detalle))
+            if lineas > 1:
+                ws.row_dimensions[row].height = 14 * lineas + 4
+            row += 1
+        ws.cell(row=row, column=1, value="TOTALES").font = Font(bold=True)
+        _num(ws, row, 4, tot_costo, MONEY, bold=True)
+        _num(ws, row, 5, tot_venta, MONEY, bold=True)
+        _num(ws, row, 6, tot_ganancia, MONEY, bold=True)
+        for c in range(1, 7):
+            cell = ws.cell(row=row, column=c)
+            cell.fill = PatternFill("solid", fgColor=LIGHT)
+            cell.border = _border
+        row += 1
+    else:
+        ws.cell(
+            row=row, column=1,
+            value="Sin salidas de inventario cargadas a aviones en el periodo.",
+        ).font = Font(color=MUTED, italic=True)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+        row += 1
+
+    row += 1
+    ws.cell(row=row, column=1, value=_NOTA_INVENTARIO).font = Font(
+        color=MUTED, size=9, italic=True
+    )
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
+
+    # Anchos compartidos entre los dos bloques (col 1 = ÍTEM/FECHA, col 2 =
+    # números del bloque 1 y detalle del bloque 2 — por eso va ancha).
+    for i, w in enumerate(
+        [ancho_item, ancho_detalle, 16, 12, 14, 12, 14, 14, 24], start=1
+    ):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A5"
 
 
 def render_balance_avion_xlsx(req: BalanceAvionRequest) -> bytes:
@@ -1200,9 +1375,11 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
         "su avión. Desde el 29-ago-2026 el detalle de COMBUSTIBLE, GASTOS "
         "INDIRECTOS y PERMISOS por avión vive en el libro INDIVIDUAL de cada "
         "avión (se descarga desde su ficha); aquí restan igual en la hoja "
-        "'balance'. Nuevas en el general: 'refacciones' (salidas de "
-        "inventario, costo FIFO vs venta al avión) y 'gastos VuelaTour' "
-        "(gastos de empresa, fuera de toda cascada por avión).",
+        "'balance'. Nuevas en el general: 'inventario' (tiendita: resumen "
+        "por ítem del periodo + detalle de salidas con costo FIFO vs venta "
+        "al avión — sustituye a la antigua hoja 'refacciones' del general) "
+        "y 'gastos VuelaTour' (gastos de empresa, fuera de toda cascada "
+        "por avión).",
     ):
         ws.cell(row=row, column=1, value=nota).font = Font(
             color=MUTED, size=9, italic=True
@@ -1338,9 +1515,11 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
     los datos de TODOS los aviones JUNTOS — 1 reporte de horas, 1 otros
     movimientos (TUAs/extras/pernocta/comisión del vendedor cobrados y
     pagados: dinero de VuelaTour), 1 cobranza, 1 otros gastos (parte
-    repartida a cada avión; sin TUAs), 1 refacciones (salidas de inventario
-    con costo FIFO vs venta al avión), 1 gastos VuelaTour (gastos de
-    EMPRESA sin vuelo ni avión), 1 balance (bloques por avión: los socios
+    repartida a cada avión; sin TUAs), 1 inventario (tiendita, 30-ago:
+    resumen por ítem del periodo + detalle de salidas con costo FIFO vs
+    venta al avión — sustituye a la hoja 'refacciones' del general, que
+    solo se pinta como fallback de un API viejo), 1 gastos VuelaTour
+    (gastos de EMPRESA sin vuelo ni avión), 1 balance (bloques por avión: los socios
     son por avión) y 1 pendientes. Desde el 29-ago el general ya NO pinta
     'combustible', 'gastos indirectos' ni 'permisos' (viven en el libro
     INDIVIDUAL de cada avión); el API los sigue calculando y restan igual
@@ -1370,9 +1549,16 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
             cons.otros_gastos, cons,
             nota=_nota_otros_gastos(general=True),
         )
-        # Hoja "refacciones" (29-ago): salidas de inventario de la flota,
-        # con costo FIFO vs venta al avión cuando el API las manda.
-        if cons.refacciones is not None:
+        # Hoja "inventario" (tiendita, 30-ago): resumen POR ÍTEM del periodo
+        # + el detalle de salidas que antes pintaba la hoja "refacciones" del
+        # general (el libro INDIVIDUAL conserva la suya; la cascada de
+        # 'balance' no cambia — la hoja era informativa). Fallback: un API
+        # viejo sin `inventario` sigue pintando "refacciones" como antes
+        # (skew tolerante).
+        if req.inventario is not None:
+            _hoja_inventario(wb.create_sheet("inventario"), req.inventario,
+                             cons.refacciones, cons)
+        elif cons.refacciones is not None:
             _hoja_gastos(wb.create_sheet("refacciones"), "Refacciones",
                          cons.refacciones, cons,
                          nota=_NOTA_REFACCIONES_GENERAL)

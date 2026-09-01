@@ -611,6 +611,39 @@ class BalanceGeneralResumenFila(BaseModel):
     pendientes: int = 0
 
 
+class BalanceInventarioItemFila(BaseModel):
+    """Fila del bloque POR ÍTEM de la hoja 'inventario' del Balance GENERAL
+    (tiendita, 30-ago-2026). EXISTENCIA y VALOR A COSTO son A HOY (todo el
+    cardex FIFO), no una foto al corte; el resto es del periodo. None =
+    celda vacía (sin actividad de ese tipo), nunca un 0 falso."""
+
+    nombre: str = ""  # nombre del ítem (+ ' · nº de parte' cuando lo tiene)
+    existencia: float | None = None
+    valor_costo_mxn: float | None = None
+    # ENTRADAs del periodo (compras reales; DEVOLUCION/AJUSTE no son compra).
+    compradas_cant: float | None = None
+    compradas_costo_mxn: float | None = None
+    salidas_cant: float | None = None
+    # Σ venta de las salidas CON precio (lo cargado a los aviones) y su
+    # utilidad (venta − costo FIFO consumido).
+    vendido_mxn: float | None = None
+    utilidad_mxn: float | None = None
+    # Matrículas a las que se aplicó en el periodo (únicas, ' + ').
+    matriculas: str | None = None
+
+
+class BalanceHojaInventario(BaseModel):
+    """Hoja 'inventario' del Balance GENERAL (tiendita): bloque por ítem +
+    totales — el bloque 2 (detalle de salidas) sale de `refacciones`."""
+
+    filas: list[BalanceInventarioItemFila] = Field(default_factory=list)
+    total_piezas: float | None = None
+    total_valor_mxn: float | None = None
+    total_compras_mxn: float | None = None
+    total_vendido_mxn: float | None = None
+    total_utilidad_mxn: float | None = None
+
+
 class BalanceGeneralRequest(BaseModel):
     """Balance GENERAL de flota: los libros individuales de varios aviones
     (misma estructura de hojas) concatenados en un workbook + hoja RESUMEN."""
@@ -631,6 +664,12 @@ class BalanceGeneralRequest(BaseModel):
     # manual — egresos de VuelaTour, fuera de toda cascada por avión. Antes
     # salían como filas sueltas de "Otros movimientos". None = API viejo.
     gastos_empresa: BalanceAvionHojaGastos | None = None
+    # Hoja "inventario" (tiendita, 30-ago-2026): resumen POR ÍTEM del
+    # periodo. Cuando viene, SUSTITUYE a la hoja 'refacciones' en el render
+    # del general (el detalle de salidas de `consolidado.refacciones` pasa a
+    # ser su bloque 2); el libro INDIVIDUAL conserva la suya. None = API
+    # viejo → se pinta 'refacciones' como antes (skew tolerante).
+    inventario: BalanceHojaInventario | None = None
 
 
 class BitacoraTacoFila(BaseModel):
