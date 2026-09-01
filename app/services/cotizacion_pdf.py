@@ -102,13 +102,92 @@ def _xy(lon: float, lat: float) -> tuple[float, float]:
     return (offx + (lon - minx) * esc, offy + (maxy - lat) * esc)
 
 
-def _mapa_svg(puntos: list[MapaPuntoPdf]) -> str:
-    """SVG del itinerario: península + arcos numerados (ferry punteado).
+# ===== Contorno LOW-POLY de México (1-sep, mapa auto-ajustable) =====
+# Polígono ilustrativo (~86 vértices, lon/lat) trazado a mano sobre geografía
+# de dominio público — NO es material de navegación. Es el fondo del modo
+# AMPLIO cuando la ruta sale de la península (BJX, AZP, etc.); encima se
+# pinta el GeoJSON peninsular detallado de siempre con el mismo estilo.
+_MEXICO_LOWPOLY: tuple[tuple[float, float], ...] = (
+    # Frontera norte (Tijuana → Matamoros)
+    (-117.12, 32.53), (-115.99, 32.63), (-114.72, 32.72), (-114.83, 32.51),
+    (-113.30, 32.04), (-111.07, 31.33), (-108.21, 31.33), (-108.21, 31.78),
+    (-106.53, 31.78), (-105.03, 30.64), (-104.40, 29.57), (-103.26, 28.98),
+    (-102.34, 29.88), (-101.40, 29.77), (-100.50, 28.70), (-99.50, 27.50),
+    (-99.17, 26.56), (-98.29, 26.09), (-97.15, 25.95),
+    # Golfo de México (bajando hacia el sureste)
+    (-97.65, 24.55), (-97.86, 22.25), (-97.40, 20.95), (-96.90, 19.90),
+    (-96.13, 19.20), (-95.00, 18.70), (-94.40, 18.15), (-93.50, 18.45),
+    (-92.30, 18.65), (-91.55, 18.45), (-90.70, 19.35), (-90.50, 19.85),
+    # Península de Yucatán (contorno grueso; el detalle lo da el GeoJSON)
+    (-90.35, 21.00), (-89.66, 21.30), (-88.60, 21.55), (-87.10, 21.60),
+    (-86.80, 21.16), (-87.05, 20.63), (-87.47, 20.21), (-87.60, 19.10),
+    (-87.83, 18.27), (-88.30, 18.48),
+    # Fronteras con Belice y Guatemala
+    (-88.85, 17.90), (-89.15, 17.95), (-89.15, 17.82), (-90.99, 17.82),
+    (-90.99, 16.07), (-91.45, 16.07), (-92.20, 15.27), (-92.08, 14.85),
+    (-92.15, 14.54),
+    # Costa del Pacífico (subiendo hacia el noroeste)
+    (-93.90, 15.90), (-95.20, 16.17), (-96.50, 15.65), (-97.80, 15.97),
+    (-99.00, 16.45), (-99.90, 16.83), (-101.55, 17.65), (-102.20, 17.95),
+    (-103.50, 18.55), (-104.30, 19.10), (-105.68, 20.40), (-105.25, 20.68),
+    (-105.40, 21.50), (-106.42, 23.20), (-107.90, 24.60), (-109.05, 25.60),
+    (-110.90, 27.90), (-112.70, 29.90), (-113.55, 31.30), (-114.78, 31.78),
+    # Baja California: costa del Golfo de California (bajando)
+    (-114.85, 31.02), (-114.40, 29.90), (-113.55, 28.95), (-112.27, 27.34),
+    (-111.35, 26.15), (-110.30, 24.15), (-109.45, 23.35), (-109.90, 22.87),
+    # Baja California: costa del Pacífico (subiendo)
+    (-110.22, 23.45), (-112.15, 24.60), (-113.30, 26.35), (-115.05, 27.85),
+    (-114.15, 28.05), (-114.45, 29.20), (-115.75, 30.05), (-116.63, 31.86),
+)
 
-    ZOOM a la ruta (27-ago, pedido del cliente): el viewBox se ajusta al
-    bounding box de los puntos con aire — igual que el mapa del admin — para
-    que rutas cortas (CUN–CZM) no se vean diminutas. Trazos, radios y textos
-    se escalan por el factor de zoom para imprimir al tamaño de siempre.
+
+@lru_cache(maxsize=1)
+def _mexico_path() -> str:
+    """Path SVG del contorno low-poly de México en la MISMA proyección
+    lineal de la península (_xy vale para cualquier lon/lat)."""
+    puntos = [_xy(lon, lat) for lon, lat in _MEXICO_LOWPOLY]
+    return "M" + " L".join(f"{x:.1f},{y:.1f}" for x, y in puntos) + " Z"
+
+
+def _letterbox(bx0: float, by0: float, bw: float, bh: float) -> tuple[float, float, float, float]:
+    """Expande la caja (centrada) para conservar el aspecto del lienzo."""
+    aspecto = _VIEW_W / _VIEW_H
+    if bw / bh > aspecto:
+        extra = bw / aspecto - bh
+        by0 -= extra / 2
+        bh = bw / aspecto
+    else:
+        extra = bh * aspecto - bw
+        bx0 -= extra / 2
+        bw = bh * aspecto
+    return bx0, by0, bw, bh
+
+
+# Aire del chequeo "¿cabe en el lienzo peninsular?": un punto apenas afuera
+# sigue siendo modo local (queda dentro del marco al abrir la vista completa).
+_TOL_CABE = 12.0
+# Bbox degenerado: puntos casi en el mismo lugar (~0.3° ≈ 33 km). El modo
+# local ya sabe centrar y acercar con límite; el amplio daría un viewBox
+# minúsculo con artefactos de redondeo.
+_SPAN_DEGENERADO = 24.0
+
+
+def _mapa_svg(puntos: list[MapaPuntoPdf]) -> str:
+    """SVG del itinerario: fondo geográfico + arcos numerados (ferry punteado).
+
+    DOS MODOS elegidos solos (1-sep, caso real del cliente — una escala
+    lejana tipo BJX/AZP se salía del cuadro fijo y la ruta se cortaba):
+
+    - LOCAL (como siempre): si el bbox de los puntos cabe en el lienzo
+      peninsular (+aire) — o es degenerado (todos casi en el mismo lugar) —
+      se conserva el ZOOM a la ruta de 27-ago tal cual: viewBox al bbox con
+      aire, límite de acercamiento y tope en la vista completa.
+    - AMPLIO: si algún punto se sale, el viewBox se ajusta al bbox de TODOS
+      los puntos + ~12% de margen (letterbox al aspecto del lienzo) y de
+      fondo se pinta el contorno low-poly de México además de la península.
+
+    Trazos, radios y textos se escalan por k = bw/_VIEW_W en ambos modos
+    para imprimir al mismo tamaño de siempre.
     """
     if not puntos:
         return ""
@@ -121,37 +200,44 @@ def _mapa_svg(puntos: list[MapaPuntoPdf]) -> str:
         pts_xy.append(_xy(p.d_lon, p.d_lat))
     xs = [x for x, _ in pts_xy]
     ys = [y for _, y in pts_xy]
-    span = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
-    # Aire proporcional + fijo (los arcos curvan hacia afuera y las
-    # etiquetas cuelgan bajo el punto).
-    pad = span * 0.30 + 18.0
-    bx0, by0 = min(xs) - pad, min(ys) - pad
-    bw, bh = (max(xs) - min(xs)) + 2 * pad, (max(ys) - min(ys)) + 2 * pad
-    # Conservar el aspecto del lienzo.
+    span_pts = max(max(xs) - min(xs), max(ys) - min(ys))
+    cabe = (
+        min(xs) >= -_TOL_CABE
+        and max(xs) <= _VIEW_W + _TOL_CABE
+        and min(ys) >= -_TOL_CABE
+        and max(ys) <= _VIEW_H + _TOL_CABE
+    )
+    modo_local = cabe or span_pts < _SPAN_DEGENERADO
     aspecto = _VIEW_W / _VIEW_H
-    if bw / bh > aspecto:
-        extra = bw / aspecto - bh
-        by0 -= extra / 2
-        bh = bw / aspecto
+    if modo_local:
+        span = max(span_pts, 1.0)
+        # Aire proporcional + fijo (los arcos curvan hacia afuera y las
+        # etiquetas cuelgan bajo el punto).
+        pad = span * 0.30 + 18.0
+        bx0, by0 = min(xs) - pad, min(ys) - pad
+        bw, bh = (max(xs) - min(xs)) + 2 * pad, (max(ys) - min(ys)) + 2 * pad
+        # Conservar el aspecto del lienzo.
+        bx0, by0, bw, bh = _letterbox(bx0, by0, bw, bh)
+        # Límite de acercamiento (~3.2x): conservar contexto geográfico.
+        min_w = _VIEW_W / 3.2
+        if bw < min_w:
+            cx, cy = bx0 + bw / 2, by0 + bh / 2
+            bw, bh = min_w, min_w / aspecto
+            bx0, by0 = cx - bw / 2, cy - bh / 2
+        # Nunca más lejos que la vista completa original.
+        if bw > _VIEW_W:
+            bx0, by0, bw, bh = 0.0, 0.0, float(_VIEW_W), float(_VIEW_H)
     else:
-        extra = bh * aspecto - bw
-        bx0 -= extra / 2
-        bw = bh * aspecto
-    # Límite de acercamiento (~3.2x): conservar contexto geográfico.
-    min_w = _VIEW_W / 3.2
-    if bw < min_w:
-        cx, cy = bx0 + bw / 2, by0 + bh / 2
-        bw, bh = min_w, min_w / aspecto
-        bx0, by0 = cx - bw / 2, cy - bh / 2
-    # Nunca más lejos que la vista completa original.
-    if bw > _VIEW_W:
-        bx0, by0, bw, bh = 0.0, 0.0, float(_VIEW_W), float(_VIEW_H)
+        # AMPLIO: todos los puntos + ~12% de aire, sin tope de lejanía.
+        pad = span_pts * 0.12
+        bx0, by0 = min(xs) - pad, min(ys) - pad
+        bw, bh = (max(xs) - min(xs)) + 2 * pad, (max(ys) - min(ys)) + 2 * pad
+        bx0, by0, bw, bh = _letterbox(bx0, by0, bw, bh)
     k = bw / _VIEW_W  # factor de escala de trazos/textos (1 = sin zoom)
 
-    fondo = "".join(
-        f'<path d="{d}" fill="#e8eef5" stroke="#b7c6d6" stroke-width="{1 * k:.2f}"/>'
-        for d in paths
-    )
+    estilo_tierra = f'fill="#e8eef5" stroke="#b7c6d6" stroke-width="{1 * k:.2f}"'
+    fondo = "" if modo_local else f'<path d="{_mexico_path()}" {estilo_tierra}/>'
+    fondo += "".join(f'<path d="{d}" {estilo_tierra}/>' for d in paths)
     arcos: list[str] = []
     marcadores: list[str] = []
     etiquetas: dict[str, tuple[float, float]] = {}
