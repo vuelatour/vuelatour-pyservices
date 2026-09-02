@@ -102,7 +102,13 @@ def dinero_xlsx(payload: DineroXlsxRequest) -> Response:
 
 @router.post("/bitacora-taco")
 def bitacora_taco_pdf(payload: BitacoraTacoRequest) -> Response:
-    """Tira imprimible de bitácora de tacómetros (formato monomotor)."""
+    """Bitácoras de vuelo por componente (planeador, motor, hélice).
+
+    Una tira por página, una fila por vuelo, para recortar y pegar en cada
+    libro. Los tiempos de cada componente llegan YA derivados por el API
+    (``tiras``); el payload LEGADO (``formato`` + ``filas`` planas) sigue
+    aceptándose y se pinta como una sola tira.
+    """
     pdf_bytes = render_bitacora_taco_pdf(payload)
     filename = f"bitacora-{payload.matricula or 'avion'}.pdf"
     return Response(

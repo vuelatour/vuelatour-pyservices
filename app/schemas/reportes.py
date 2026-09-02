@@ -681,11 +681,12 @@ class BalanceGeneralRequest(BaseModel):
 
 
 class BitacoraTacoFila(BaseModel):
-    """Una fila = UN vuelo: fecha, tacómetro inicial→final, horas y ruta.
+    """LEGADO (payload plano, anterior a las tiras por componente).
 
-    Mismo renglón que el equipo llenaba a mano en la plantilla Excel
-    ("Imprimir planeador" / "MOTOR - HÉLICE") para recortar y pegar en la
-    bitácora física. Los tiempos de hélice solo vienen en formato bimotor.
+    Una fila = UN vuelo: fecha, tacómetro inicial→final, horas y ruta. Los
+    tiempos de hélice solo venían en el formato bimotor (MOTOR_HELICE). Se
+    conserva para que un API viejo siga imprimiendo durante el deploy
+    (pyservices sale ANTES que el API); el payload nuevo usa ``BitacoraTira``.
     """
 
     fecha: str  # ISO (date o datetime); se formatea dd-mmm en hora Cancún
@@ -697,21 +698,60 @@ class BitacoraTacoFila(BaseModel):
     helice_final: float | None = None
 
 
-class BitacoraTacoRequest(BaseModel):
-    """Tira imprimible de bitácora de tacómetros.
+class BitacoraTiraFila(BaseModel):
+    """Una fila = UN vuelo dentro de una tira (planeador, motor o hélice).
 
-    formato PLANEADOR (monomotor): Fecha | Taco inicial | Horas | Taco final
-    | Ruta. formato MOTOR_HELICE (bimotor): agrega Tiempo hélice inicial y
-    final junto a cada tacómetro (offset que arrastra el equipo en su hoja).
+    Mismo renglón que el equipo llenaba a mano en la plantilla Excel para
+    recortar y pegar en cada libro. ``tiempo_inicial``/``tiempo_final`` son el
+    acumulado del componente al inicio y al final del vuelo, YA derivados por
+    el API desde el tacómetro y la base capturada en la ficha; ``None`` se
+    pinta "—" para llenarlo a mano.
+    """
+
+    fecha: str  # ISO (date o datetime); se formatea dd-mmm en hora Cancún
+    taco_inicial: float
+    horas: float
+    taco_final: float
+    tiempo_inicial: float | None = None
+    tiempo_final: float | None = None
+    ruta: str  # "cun-pps-cun" (minúsculas, guiones)
+
+
+class BitacoraTira(BaseModel):
+    """Una bitácora imprimible (una página): planeador, motor o hélice.
+
+    ``con_tiempo`` decide las columnas: True ⇒ 7 (tacómetro + tiempo del
+    componente inicial/final); False ⇒ 5 (solo tacómetro, la tira histórica).
+    ``etiqueta`` encabeza las columnas de tiempo ("Tiempo planeador", ...).
+    """
+
+    tipo: str  # PLANEADOR | MOTOR | HELICE
+    titulo: str
+    etiqueta: str
+    nota: str | None = None
+    con_tiempo: bool = True
+    filas: list[BitacoraTiraFila] = Field(default_factory=list)
+
+
+class BitacoraTacoRequest(BaseModel):
+    """Bitácoras de vuelo por componente, una tira por página.
+
+    Payload nuevo: ``tiras`` (planeador / motor / hélice), cada una con sus
+    filas ya derivadas por el API. Payload LEGADO (skew de deploy): ``formato``
+    + ``filas`` planas; el servicio lo convierte a UNA tira equivalente
+    (``_tiras_normalizadas``): MOTOR_HELICE ⇒ 7 columnas con los tiempos de
+    hélice, PLANEADOR ⇒ 5 columnas (solo tacómetro). Si vienen ambas, mandan
+    las ``tiras``.
     """
 
     matricula: str = ""
     modelo: str | None = None
-    formato: str = "PLANEADOR"  # PLANEADOR | MOTOR_HELICE
+    formato: str = "PLANEADOR"  # LEGADO: PLANEADOR | MOTOR_HELICE
     desde: str | None = None
     hasta: str | None = None
     generado: str | None = None
-    filas: list[BitacoraTacoFila] = Field(default_factory=list)
+    filas: list[BitacoraTacoFila] = Field(default_factory=list)  # LEGADO
+    tiras: list[BitacoraTira] = Field(default_factory=list)
 
 
 class DineroCobroPago(BaseModel):
