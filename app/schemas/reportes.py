@@ -665,10 +665,12 @@ class BalanceGeneralRequest(BaseModel):
     # (los socios son POR avión).
     consolidado: BalanceAvionRequest | None = None
     aviones: list[BalanceAvionRequest] = Field(default_factory=list)
-    # Hoja "gastos VuelaTour" (29-ago): gastos de EMPRESA (sin vuelo ni
-    # avión; sin PERSONAL_DUENO ni GAS) sin reparto + remanentes de reparto
-    # manual — egresos de VuelaTour, fuera de toda cascada por avión. Antes
-    # salían como filas sueltas de "Otros movimientos". None = API viejo.
+    # Hoja 'otros gastos' del GENERAL (29-ago; 1-sep-2026: antes se llamaba
+    # "gastos VuelaTour" — solo cambió el NOMBRE de la hoja, este campo del
+    # contrato NO): gastos de EMPRESA (sin vuelo ni avión; sin PERSONAL_DUENO
+    # ni GAS) sin reparto + remanentes de reparto manual — egresos de
+    # VuelaTour, fuera de toda cascada por avión. Antes salían como filas
+    # sueltas de "Otros movimientos". None = API viejo.
     gastos_empresa: BalanceAvionHojaGastos | None = None
     # Hoja "inventario" (tiendita, 30-ago-2026): resumen POR ÍTEM del
     # periodo. Cuando viene, SUSTITUYE a la hoja 'refacciones' en el render

@@ -573,7 +573,11 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
 
 
 def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
-                 req: BalanceAvionRequest, nota: str | None = None) -> None:
+                 req: BalanceAvionRequest, nota: str | None = None, *,
+                 titulo_exacto: bool = False) -> None:
+    # `titulo_exacto`: pinta `titulo` tal cual, sin el sufijo "— MATRÍCULA"
+    # (lo usa la hoja 'otros gastos' del GENERAL, cuyo título ya trae
+    # "VuelaTour" y el sufijo "FLOTA" solo estorba).
     # Ancho de la columna DETALLE: el texto ENVUELVE (wrap) y el alto de la
     # fila se estima con él — mismo patrón que DETALLE DE COBROS en la hoja
     # cobranza (el cliente ajustaba estas filas a mano).
@@ -584,7 +588,12 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
         f.costo_mxn is not None or f.venta_mxn is not None for f in hoja.filas
     )
     n_cols = 9 if con_costo_venta else 6
-    _title(ws, f"{titulo} — {req.matricula}".strip(" —"), 1, n_cols)
+    _title(
+        ws,
+        titulo if titulo_exacto else f"{titulo} — {req.matricula}".strip(" —"),
+        1,
+        n_cols,
+    )
     periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'}"
     ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
 
@@ -981,10 +990,14 @@ def _hoja_balance(ws: Worksheet, req: BalanceAvionRequest) -> None:
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
-def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int) -> int:
+def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int, *,
+                    general: bool = False) -> int:
     """Bloque utilidad + reparto de socios de UN avión, empezando en `row`.
     Devuelve la siguiente fila libre (el balance GENERAL apila un bloque por
-    avión — los socios son POR avión, no hay un reparto de flota)."""
+    avión — los socios son POR avión, no hay un reparto de flota).
+    `general` solo ajusta la etiqueta de OTROS GASTOS (1-sep-2026): en el
+    general su detalle es la hoja 'repartidos a aviones' — la hoja 'otros
+    gastos' de ese libro es la de empresa y NO resta aquí."""
     b = req.balance
     filas: list[tuple[str, float | None, bool]] = [
         ("UTILIDAD ANTES DE GASTOS USD", b.utilidad_antes_usd, False),
@@ -994,7 +1007,13 @@ def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int) -> int:
         # gastos indirectos — indirectos + refacciones == lo de antes.
         # None = API viejo (celda vacía; ya venían dentro de indirectos).
         ("(−) REFACCIONES (INVENTARIO) USD", b.refacciones_usd, False),
-        ("(−) OTROS GASTOS USD", b.otros_usd, False),
+        (
+            "(−) OTROS GASTOS REPARTIDOS AL AVIÓN USD"
+            if general
+            else "(−) OTROS GASTOS USD",
+            b.otros_usd,
+            False,
+        ),
         ("(−) PERMISOS USD", b.permisos_usd, False),
         ("UTILIDAD DESPUÉS DE GASTOS USD", b.utilidad_despues_usd, True),
         ("(−) PENDIENTE DE PAGO (COBRANZA PENDIENTE) USD", b.por_cobrar_usd, False),
@@ -1101,26 +1120,40 @@ _NOTA_INVENTARIO = (
     "conserva). El dinero salió del banco al COMPRAR la pieza, no al "
     "consumirla — la conciliación bancaria no cruza estos cargos."
 )
+# Nota de la hoja 'otros gastos' del GENERAL (payload `gastos_empresa`;
+# 1-sep-2026: la pestaña se llamaba 'gastos VuelaTour' — solo cambió el
+# NOMBRE de la hoja, el campo del contrato sigue igual).
 _NOTA_GASTOS_EMPRESA = (
-    "GASTOS VUELATOUR = gastos de la EMPRESA del periodo: sin vuelo y sin "
-    "avión (sin PERSONAL_DUENO ni GAS) que nadie reparte, más el REMANENTE "
-    "de los repartidos a mano (los parciales viven en la hoja 'otros "
-    "gastos' de cada avión). Son egresos de VuelaTour: NO restan en la "
-    "cascada de ningún avión. Antes salían como 'MOVIMIENTOS SIN AVIÓN / "
-    "SIN VUELO' en 'otros movimientos' (allá quedan solo 'gas sin avión' y "
-    "'tuas sin vuelo')."
+    "OTROS GASTOS = gastos de la EMPRESA del periodo NO asignados a ningún "
+    "avión: sin vuelo y sin avión (sin PERSONAL_DUENO ni GAS) que nadie "
+    "reparte, más el REMANENTE de los repartidos a mano. Son egresos de "
+    "VuelaTour: NO restan en la cascada de ningún avión. Se pueden repartir "
+    "a aviones desde 'Otros gastos' del panel — la parte asignada a cada "
+    "avión aparece en la hoja 'repartidos a aviones' de este libro (y en la "
+    "hoja 'otros gastos' del libro individual del avión). Antes salían como "
+    "'MOVIMIENTOS SIN AVIÓN / SIN VUELO' en 'otros movimientos' (allá "
+    "quedan solo 'gas sin avión' y 'tuas sin vuelo')."
 )
 
 
 def _nota_otros_gastos(general: bool) -> str:
-    parte = (
-        "solo la parte asignada a cada avión (fila con su color)"
-        if general
-        else "solo la parte de este avión"
-    )
+    if general:
+        # Hoja 'repartidos a aviones' del GENERAL (1-sep-2026: antes se
+        # llamaba 'otros gastos' y confundía — se veía vacía sin repartos).
+        return (
+            "REPARTIDOS A AVIONES = gastos administrativos de la empresa "
+            "(nómina, IMSS, pensión, fijos…) repartidos a mano entre "
+            "aviones — aquí solo la parte asignada a cada avión (fila con "
+            "su color); en el libro INDIVIDUAL de cada avión esta parte es "
+            "su hoja 'otros gastos'. Lo que NADIE ha repartido (y el "
+            "remanente) vive en la hoja 'otros gastos' de este libro. El "
+            "TUA pagado NO va aquí (regla 28-ago-2026): queda solo como "
+            "nota en OPERACIONES y vive en 'otros movimientos'."
+        )
     return (
         "OTROS GASTOS = gastos administrativos de la empresa (nómina, IMSS, "
-        f"pensión, fijos…) repartidos a mano entre aviones — aquí {parte}. "
+        "pensión, fijos…) repartidos a mano entre aviones — aquí solo la "
+        "parte de este avión. "
         "El TUA pagado NO va aquí (regla 28-ago-2026): queda solo como nota "
         "en OPERACIONES y vive en 'otros movimientos' del Balance general."
     )
@@ -1377,9 +1410,10 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
         "avión (se descarga desde su ficha); aquí restan igual en la hoja "
         "'balance'. Nuevas en el general: 'inventario' (tiendita: resumen "
         "por ítem del periodo + detalle de salidas con costo FIFO vs venta "
-        "al avión — sustituye a la antigua hoja 'refacciones' del general) "
-        "y 'gastos VuelaTour' (gastos de empresa, fuera de toda cascada "
-        "por avión).",
+        "al avión — sustituye a la antigua hoja 'refacciones' del general), "
+        "'otros gastos' (gastos de la empresa sin avión ni vuelo, fuera de "
+        "toda cascada por avión — antes 'gastos VuelaTour') y 'repartidos "
+        "a aviones' (la parte de esos gastos asignada a mano a cada avión).",
     ):
         ws.cell(row=row, column=1, value=nota).font = Font(
             color=MUTED, size=9, italic=True
@@ -1423,8 +1457,8 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
         "se marcan (clave · CANCELADO en rojo) y los demás estados no "
         "normales llevan su estado junto a la clave. Los MOVIMIENTOS SIN "
         "AVIÓN / SIN VUELO de abajo son solo 'gas sin avión' y 'tuas sin "
-        "vuelo' (29-ago: los gastos de empresa viven en la hoja 'gastos "
-        "VuelaTour').",
+        "vuelo' (29-ago: los gastos de empresa viven en la hoja 'otros "
+        "gastos' — antes llamada 'gastos VuelaTour').",
     ).font = Font(italic=True, size=9, color=MUTED)
     headers = [
         "clave", "fecha\nvuelo", "concepto", "egreso", "fecha", "concepto",
@@ -1514,13 +1548,20 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
     """Balance GENERAL (regla del cliente, 18-ago; hojas 29-ago): RESUMEN +
     los datos de TODOS los aviones JUNTOS — 1 reporte de horas, 1 otros
     movimientos (TUAs/extras/pernocta/comisión del vendedor cobrados y
-    pagados: dinero de VuelaTour), 1 cobranza, 1 otros gastos (parte
-    repartida a cada avión; sin TUAs), 1 inventario (tiendita, 30-ago:
+    pagados: dinero de VuelaTour), 1 cobranza, 1 otros gastos (gastos de
+    EMPRESA sin vuelo ni avión, payload `gastos_empresa`), 1 repartidos a
+    aviones (parte de esos gastos repartida a mano a cada avión; sin
+    TUAs), 1 inventario (tiendita, 30-ago:
     resumen por ítem del periodo + detalle de salidas con costo FIFO vs
     venta al avión — sustituye a la hoja 'refacciones' del general, que
-    solo se pinta como fallback de un API viejo), 1 gastos VuelaTour
-    (gastos de EMPRESA sin vuelo ni avión), 1 balance (bloques por avión: los socios
-    son por avión) y 1 pendientes. Desde el 29-ago el general ya NO pinta
+    solo se pinta como fallback de un API viejo),
+    1 balance (bloques por avión: los socios
+    son por avión) y 1 pendientes. Renombre 1-sep-2026 (modelo mental del
+    equipo: lo sin avión ni vuelo "cae en otros gastos"): la hoja de
+    empresa se llamaba 'gastos VuelaTour' y la de parciales 'otros
+    gastos' — SOLO cambian nombres de hoja en el GENERAL; el libro
+    INDIVIDUAL y los campos del contrato del API no cambian. Desde el
+    29-ago el general ya NO pinta
     'combustible', 'gastos indirectos' ni 'permisos' (viven en el libro
     INDIVIDUAL de cada avión); el API los sigue calculando y restan igual
     en la cascada de la hoja 'balance'. Cada fila se identifica por su
@@ -1544,8 +1585,23 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
         # crean en el GENERAL: el detalle por avión vive en su libro
         # individual. SOLO se quita el render — el API sigue mandando esas
         # hojas y sus totales restan igual en los bloques de 'balance'.
+        # Hoja 'otros gastos' (payload `gastos_empresa`, 29-ago): gastos de
+        # EMPRESA sin avión ni vuelo — egresos de VuelaTour, fuera de toda
+        # cascada por avión (1-sep-2026: antes 'gastos VuelaTour'; solo
+        # cambió el nombre de la hoja, el campo del contrato sigue igual).
+        # Va en la posición que el equipo conoce como 'otros gastos', JUNTO
+        # a 'repartidos a aviones'.
+        if req.gastos_empresa is not None:
+            _hoja_gastos(wb.create_sheet("otros gastos"),
+                         "Otros gastos — VuelaTour (sin avión ni vuelo)",
+                         req.gastos_empresa, cons,
+                         nota=_NOTA_GASTOS_EMPRESA, titulo_exacto=True)
+        # Hoja 'repartidos a aviones' (payload `otros_gastos`; 1-sep-2026:
+        # antes 'otros gastos' — se veía vacía sin repartos y ese nombre
+        # ahora es de la hoja de gastos de empresa).
         _hoja_gastos(
-            wb.create_sheet("otros gastos"), "Otros gastos",
+            wb.create_sheet("repartidos a aviones"),
+            "Otros gastos repartidos a aviones",
             cons.otros_gastos, cons,
             nota=_nota_otros_gastos(general=True),
         )
@@ -1562,13 +1618,6 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
             _hoja_gastos(wb.create_sheet("refacciones"), "Refacciones",
                          cons.refacciones, cons,
                          nota=_NOTA_REFACCIONES_GENERAL)
-        # Hoja "gastos VuelaTour" (29-ago): gastos de EMPRESA — egresos de
-        # VuelaTour, fuera de toda cascada por avión.
-        if req.gastos_empresa is not None:
-            _hoja_gastos(wb.create_sheet("gastos VuelaTour"),
-                         "Gastos VuelaTour", req.gastos_empresa, cons,
-                         nota=_NOTA_GASTOS_EMPRESA)
-
         # Hoja balance: un BLOQUE por avión (título teñido con su color).
         ws_b = wb.create_sheet("balance")
         _title(ws_b, "Balance por avión", 1, 3)
@@ -1585,7 +1634,7 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
             swatch = _hex(avion.avion_color)
             if swatch:
                 tc.fill = PatternFill("solid", fgColor=swatch)
-            row = _bloque_balance(ws_b, avion, row + 1) + 2
+            row = _bloque_balance(ws_b, avion, row + 1, general=True) + 2
         for i, w in enumerate([46, 14, 16], start=1):
             ws_b.column_dimensions[get_column_letter(i)].width = w
 
