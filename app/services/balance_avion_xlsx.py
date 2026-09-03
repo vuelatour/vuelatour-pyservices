@@ -15,13 +15,21 @@ Ocho hojas en el orden del libro:
   2. cobranza — estatus de cobro por vuelo: venta avión prorrateada, total
      cotización (c/extras), depósitos reales, comisión y cuenta del banco.
   3. combustible — el gas del avión POR MES (litros y $/L), 26-ago-2026.
-  4. gastos indirectos (gastos del avión sin vuelo)  5. refacciones
-     (salidas de inventario — 29-ago-2026: antes dentro de indirectos)
-  6. otros gastos (parte de este avión de los gastos administrativos
-     repartidos a mano)  7. permisos (todo AFAC).
-  8. balance — cascada (− combustible − indirectos − refacciones − otros −
-     permisos) + reparto real de socios.
-  9. pendientes de captura — lo que falta para que el libro quede completo.
+  4. Gastos Indirectos — UNA sola pestaña (pedido del cliente 2-sep-2026:
+     'gastos indirectos' y 'otros gastos' se confundían) con las DOS listas
+     que el API sigue mandando aparte: `gastos_indirectos` (gastos del avión
+     sin vuelo) + `otros_gastos` (la parte de este avión de los gastos
+     administrativos repartidos a mano — filas "reparto manual: $X de $Y",
+     con tinte suave). Fusión de PRESENTACIÓN (_fusionar_hojas_gastos): el
+     contrato del API no cambia ni un campo.
+  5. refacciones (salidas de inventario — 29-ago-2026: antes dentro de
+     indirectos; solo si el API la manda)  6. permisos (todo AFAC).
+  7. balance — cascada (− combustible − GASTOS INDIRECTOS [una sola fila =
+     gastos_indirectos_usd + otros_usd] − refacciones − permisos) + reparto
+     real de socios. La cascada la calcula el API (utilidad_despues_usd ya
+     resta ambas listas UNA vez); aquí solo se suman las dos celdas para
+     mostrarlas juntas — restar otros además de indirectos contaría doble.
+  8. pendientes de captura — lo que falta para que el libro quede completo.
 El Balance GENERAL comparte estas funciones con otro juego de hojas (ver
 render_balance_general_xlsx); ahí la hoja 'refacciones' fue sustituida por
 'inventario' (tiendita, 30-ago-2026: resumen por ítem + detalle de salidas)
@@ -127,6 +135,26 @@ def _num(ws: Worksheet, row: int, col: int, value: float | None, fmt: str = MONE
     if font:
         cell.font = Font(**font)
     return cell
+
+
+def _suma_none(a: float | None, b: float | None) -> float | None:
+    """Suma None-tolerante de dos montos que YA manda el API (solo para
+    mostrarlos juntos, nunca negocio): None + None = None (celda vacía, no
+    un 0 falso), None + x = x, x + y = round(x + y, 2)."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return round(a + b, 2)
+
+
+# Marca que el API deja en el DETALLE de un parcial del reparto manual
+# (aircraft-balance.service: "reparto manual: $X de $Y MXN").
+_MARCA_PARCIAL = "reparto manual:"
+
+
+def _es_parcial_reparto(detalle: str | None) -> bool:
+    return bool(detalle) and _MARCA_PARCIAL in detalle
 
 
 # ===== Hoja maestra: definición de columnas (orden del Excel original) =====
@@ -283,7 +311,7 @@ def _nota_tc_oficial(v: BalanceAvionVuelo) -> str:
 def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
                   general: bool = False) -> None:
     # `general` solo ajusta las notas al pie (29-ago): en el Balance general
-    # las hojas 'combustible'/'gastos indirectos'/'permisos' ya no existen —
+    # las hojas 'combustible'/'Gastos Indirectos'/'permisos' ya no existen —
     # viven en el libro individual de cada avión.
     ws.title = sheet_title(f"reporte horas {req.matricula}")
     n = len(_COLS)
@@ -574,10 +602,16 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
 
 def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
                  req: BalanceAvionRequest, nota: str | None = None, *,
-                 titulo_exacto: bool = False) -> None:
+                 titulo_exacto: bool = False,
+                 resaltar_parciales: bool = False) -> None:
     # `titulo_exacto`: pinta `titulo` tal cual, sin el sufijo "— MATRÍCULA"
     # (lo usa la hoja 'otros gastos' del GENERAL, cuyo título ya trae
     # "VuelaTour" y el sufijo "FLOTA" solo estorba).
+    # `resaltar_parciales` (2-sep-2026, SOLO la hoja "Gastos Indirectos" del
+    # libro INDIVIDUAL): las filas del reparto manual (DETALLE con "reparto
+    # manual: $X de $Y") llevan un tinte suave en la celda DETALLE para
+    # distinguirlas de los gastos capturados directo al avión. El GENERAL
+    # no lo usa: ahí esa celda lleva el color del avión.
     # Ancho de la columna DETALLE: el texto ENVUELVE (wrap) y el alto de la
     # fila se estima con él — mismo patrón que DETALLE DE COBROS en la hoja
     # cobranza (el cliente ajustaba estas filas a mano).
@@ -620,6 +654,10 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
             dc = ws.cell(row=row, column=3, value=f.detalle)
             dc.border = _border
             dc.alignment = Alignment(wrap_text=True, vertical="top")
+            # Tinte suave del parcial (sin columnas nuevas: anchos y merges
+            # siguen por índice); el color del avión, si viene, gana abajo.
+            if resaltar_parciales and _es_parcial_reparto(f.detalle):
+                dc.fill = PatternFill("solid", fgColor=LIGHT)
             _num(ws, row, 4, f.monto_mxn).border = _border
             # Moneda/monto original solo cuando el gasto NO se capturó en MXN.
             ws.cell(row=row, column=5, value=f.moneda_original).border = _border
@@ -670,6 +708,25 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
     for i, w in enumerate(anchos, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A8"
+
+
+def _fusionar_hojas_gastos(
+    a: BalanceAvionHojaGastos, b: BalanceAvionHojaGastos
+) -> BalanceAvionHojaGastos:
+    """Hoja "Gastos Indirectos" del libro INDIVIDUAL (2-sep-2026): UNA sola
+    lista con `gastos_indirectos` + `otros_gastos`, que el API sigue
+    mandando aparte (el contrato no cambia; `otros_gastos` alimenta además
+    la hoja 'repartidos a aviones' del general). Función PURA de
+    presentación: filas de ambas ordenadas por fecha (sort estable — a
+    igual fecha primero las de `a`, cada lista en su orden) y totales =
+    suma None-tolerante de los totales que YA vienen calculados del API.
+    Jamás se recalcula el USD desde el MXN."""
+    return BalanceAvionHojaGastos(
+        filas=sorted([*a.filas, *b.filas], key=lambda f: f.fecha or ""),
+        total_mxn=_suma_none(a.total_mxn, b.total_mxn),
+        usd=_suma_none(a.usd, b.usd),
+        usd_hr=_suma_none(a.usd_hr, b.usd_hr),
+    )
 
 
 def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
@@ -990,30 +1047,58 @@ def _hoja_balance(ws: Worksheet, req: BalanceAvionRequest) -> None:
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
+# Etiqueta de la fila ÚNICA de indirectos en la cascada (2-sep-2026).
+_FILA_INDIRECTOS = "(−) GASTOS INDIRECTOS USD"
+
+
+def _nota_otros_en_indirectos(otros_usd: float, general: bool) -> Comment:
+    """Nota de la celda "(−) GASTOS INDIRECTOS USD" cuando parte del monto
+    es reparto manual (otros_usd ≠ 0): dice cuánto y dónde está el detalle."""
+    # Signo delante del "$" (un reparto negativo —reembolso/ajuste— no
+    # debe salir como "$-X"): $1,234.56 / -$1,234.56.
+    monto = f"-${abs(otros_usd):,.2f}" if otros_usd < 0 else f"${otros_usd:,.2f}"
+    texto = (
+        f"Incluye {monto} USD repartidos a mano a este avión (detalle en la "
+        "hoja repartidos a aviones)."
+        if general
+        else f"Incluye {monto} USD de gastos administrativos repartidos a "
+        "mano (filas reparto manual de la hoja Gastos Indirectos)."
+    )
+    com = Comment(texto, "VuelaTour")
+    com.width = 320
+    com.height = 80
+    return com
+
+
 def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int, *,
                     general: bool = False) -> int:
     """Bloque utilidad + reparto de socios de UN avión, empezando en `row`.
     Devuelve la siguiente fila libre (el balance GENERAL apila un bloque por
     avión — los socios son POR avión, no hay un reparto de flota).
-    `general` solo ajusta la etiqueta de OTROS GASTOS (1-sep-2026): en el
-    general su detalle es la hoja 'repartidos a aviones' — la hoja 'otros
-    gastos' de ese libro es la de empresa y NO resta aquí."""
+    Desde el 2-sep-2026 la cascada pinta UNA sola fila "(−) GASTOS
+    INDIRECTOS USD" = gastos_indirectos_usd + otros_usd (suma None-tolerante
+    de dos celdas que YA manda el API). La cascada la calculó el API:
+    utilidad_despues_usd ya resta ambas listas UNA vez — pintar otros
+    además de indirectos contaría doble; por eso ya no hay fila de OTROS
+    GASTOS. Si otros_usd ≠ 0 la celda lleva una NOTA con cuánto de ese
+    total es reparto manual. `general` solo cambia el texto de esa nota:
+    en el general el detalle de esa parte es la hoja 'repartidos a
+    aviones' (la hoja 'otros gastos' de ese libro es la de EMPRESA y NO
+    resta aquí); en el individual son las filas "reparto manual" de la
+    hoja 'Gastos Indirectos'. Las demás filas (combustible, refacciones,
+    permisos, utilidad después, pendiente de pago, utilidad cobrada,
+    socios) no cambian."""
     b = req.balance
     filas: list[tuple[str, float | None, bool]] = [
         ("UTILIDAD ANTES DE GASTOS USD", b.utilidad_antes_usd, False),
         ("(−) COMBUSTIBLE DEL MES USD", b.combustible_usd, False),
-        ("(−) GASTOS INDIRECTOS USD", b.gastos_indirectos_usd, False),
+        # Indirectos + otros (reparto manual) en UNA fila — solo se muestran
+        # juntos; la resta ya la hizo el API una sola vez.
+        (_FILA_INDIRECTOS, _suma_none(b.gastos_indirectos_usd, b.otros_usd), False),
         # Refacciones (29-ago): salidas de inventario, ANTES dentro de
         # gastos indirectos — indirectos + refacciones == lo de antes.
         # None = API viejo (celda vacía; ya venían dentro de indirectos).
         ("(−) REFACCIONES (INVENTARIO) USD", b.refacciones_usd, False),
-        (
-            "(−) OTROS GASTOS REPARTIDOS AL AVIÓN USD"
-            if general
-            else "(−) OTROS GASTOS USD",
-            b.otros_usd,
-            False,
-        ),
         ("(−) PERMISOS USD", b.permisos_usd, False),
         ("UTILIDAD DESPUÉS DE GASTOS USD", b.utilidad_despues_usd, True),
         ("(−) PENDIENTE DE PAGO (COBRANZA PENDIENTE) USD", b.por_cobrar_usd, False),
@@ -1028,6 +1113,8 @@ def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int, *,
             color = GREEN if val >= 0 else RED
         cell = _num(ws, row, 2, val, MONEY, bold=bold, color=color or ("000000" if bold else MUTED))
         cell.border = _border
+        if label == _FILA_INDIRECTOS and b.otros_usd is not None and b.otros_usd != 0:
+            cell.comment = _nota_otros_en_indirectos(b.otros_usd, general)
         row += 1
 
     row += 1
@@ -1082,11 +1169,20 @@ def _hoja_pendientes(ws: Worksheet, req: BalanceAvionRequest) -> None:
 
 
 # Definiciones de las hojas de gastos (regla del cliente, 28-ago-2026).
+# Nota de la hoja "Gastos Indirectos" del libro INDIVIDUAL (2-sep-2026:
+# fusiona la vieja nota de 'gastos indirectos' con la de 'otros gastos').
 _NOTA_INDIRECTOS = (
-    "GASTOS INDIRECTOS = gastos del avión que no se pudieron ligar a un vuelo "
-    "(capturados con la aeronave, sin vuelo): cualquier categoría salvo "
-    "combustible (hoja 'combustible'), permisos (hoja 'permisos') y salidas "
-    "de inventario (hoja 'refacciones', 29-ago)."
+    "GASTOS INDIRECTOS = todo lo que se cargó a este avión SIN un vuelo: (1) "
+    "gastos capturados con la aeronave y sin vuelo, de cualquier categoría "
+    "salvo combustible (hoja 'combustible'), permisos (hoja 'permisos') y "
+    "salidas de inventario (hoja 'refacciones'); y (2) la parte de este "
+    "avión de los gastos administrativos de la empresa repartidos a mano "
+    "(nómina, IMSS, pensión, fijos…): son las filas cuyo DETALLE dice "
+    "reparto manual: $X de $Y. Todo resta UNA sola vez en la hoja "
+    "'balance'. El TUA pagado NO va aquí (regla 28-ago-2026): queda solo "
+    "como nota en OPERACIONES y vive en 'otros movimientos' del Balance "
+    "general VuelaTour. Hasta el 2-sep-2026 la parte (2) era la hoja 'otros "
+    "gastos' de este libro."
 )
 _NOTA_PERMISOS = "PERMISOS = todo lo de AFAC (permisos y provisiones del avión)."
 _NOTA_REFACCIONES = (
@@ -1129,34 +1225,30 @@ _NOTA_GASTOS_EMPRESA = (
     "reparte, más el REMANENTE de los repartidos a mano. Son egresos de "
     "VuelaTour: NO restan en la cascada de ningún avión. Se pueden repartir "
     "a aviones desde 'Otros gastos' del panel — la parte asignada a cada "
-    "avión aparece en la hoja 'repartidos a aviones' de este libro (y en la "
-    "hoja 'otros gastos' del libro individual del avión). Antes salían como "
+    "avión aparece en la hoja 'repartidos a aviones' de este libro (y dentro "
+    "de la hoja 'Gastos Indirectos' del libro individual del avión). Antes "
+    "salían como "
     "'MOVIMIENTOS SIN AVIÓN / SIN VUELO' en 'otros movimientos' (allá "
     "quedan solo 'gas sin avión' y 'tuas sin vuelo')."
 )
 
 
-def _nota_otros_gastos(general: bool) -> str:
-    if general:
-        # Hoja 'repartidos a aviones' del GENERAL (1-sep-2026: antes se
-        # llamaba 'otros gastos' y confundía — se veía vacía sin repartos).
-        return (
-            "REPARTIDOS A AVIONES = gastos administrativos de la empresa "
-            "(nómina, IMSS, pensión, fijos…) repartidos a mano entre "
-            "aviones — aquí solo la parte asignada a cada avión (fila con "
-            "su color); en el libro INDIVIDUAL de cada avión esta parte es "
-            "su hoja 'otros gastos'. Lo que NADIE ha repartido (y el "
-            "remanente) vive en la hoja 'otros gastos' de este libro. El "
-            "TUA pagado NO va aquí (regla 28-ago-2026): queda solo como "
-            "nota en OPERACIONES y vive en 'otros movimientos'."
-        )
-    return (
-        "OTROS GASTOS = gastos administrativos de la empresa (nómina, IMSS, "
-        "pensión, fijos…) repartidos a mano entre aviones — aquí solo la "
-        "parte de este avión. "
-        "El TUA pagado NO va aquí (regla 28-ago-2026): queda solo como nota "
-        "en OPERACIONES y vive en 'otros movimientos' del Balance general."
-    )
+# Nota de la hoja 'repartidos a aviones' del GENERAL (1-sep-2026: antes se
+# llamaba 'otros gastos' y confundía — se veía vacía sin repartos). Solo
+# existe en el general: en el libro INDIVIDUAL esa lista va fusionada en la
+# hoja "Gastos Indirectos" (2-sep-2026), por eso ya no hay variante
+# individual de esta nota.
+_NOTA_REPARTIDOS_A_AVIONES = (
+    "REPARTIDOS A AVIONES = gastos administrativos de la empresa (nómina, "
+    "IMSS, pensión, fijos…) repartidos a mano entre aviones — aquí solo la "
+    "parte asignada a cada avión (fila con su color); en el libro INDIVIDUAL "
+    "de cada avión esta parte está dentro de su hoja 'Gastos Indirectos' "
+    "(filas 'reparto manual') y NO resta aparte: va sumada en la fila "
+    "'(−) GASTOS INDIRECTOS USD' de la hoja 'balance'. Lo que NADIE ha "
+    "repartido (y el remanente) vive en la hoja 'otros gastos' de este "
+    "libro. El TUA pagado NO va aquí (regla 28-ago-2026): queda solo como "
+    "nota en OPERACIONES y vive en 'otros movimientos'."
+)
 
 
 def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
@@ -1316,20 +1408,27 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
 
 
 def render_balance_avion_xlsx(req: BalanceAvionRequest) -> bytes:
+    """Libro INDIVIDUAL de un avión. Pestañas, en orden: reporte horas,
+    cobranza, combustible, Gastos Indirectos, refacciones (solo si el API
+    la manda), permisos, balance, pendientes de captura."""
     wb = Workbook()
     _hoja_maestra(wb.active, req)
     _hoja_cobranza(wb.create_sheet("cobranza"), req)
     _hoja_combustible(wb.create_sheet("combustible"), req.combustible, req)
-    _hoja_gastos(wb.create_sheet("gastos indirectos"), "Gastos indirectos",
-                 req.gastos_indirectos, req, nota=_NOTA_INDIRECTOS)
+    # Pestaña ÚNICA "Gastos Indirectos" (pedido del cliente 2-sep-2026: las
+    # hojas 'gastos indirectos' y 'otros gastos' se confundían): las DOS
+    # listas del API pintadas juntas, ordenadas por fecha y con los
+    # parciales del reparto manual resaltados. Fusión de PRESENTACIÓN — el
+    # contrato (gastos_indirectos / otros_gastos) y la cascada no cambian.
+    _hoja_gastos(
+        wb.create_sheet("Gastos Indirectos"), "Gastos indirectos",
+        _fusionar_hojas_gastos(req.gastos_indirectos, req.otros_gastos), req,
+        nota=_NOTA_INDIRECTOS, resaltar_parciales=True,
+    )
     # Hoja "refacciones" (29-ago): solo si el API la manda (skew tolerante).
     if req.refacciones is not None:
         _hoja_gastos(wb.create_sheet("refacciones"), "Refacciones",
                      req.refacciones, req, nota=_NOTA_REFACCIONES)
-    _hoja_gastos(
-        wb.create_sheet("otros gastos"), "Otros gastos", req.otros_gastos, req,
-        nota=_nota_otros_gastos(general=False),
-    )
     _hoja_gastos(wb.create_sheet("permisos"), "Permisos", req.permisos, req,
                  nota=_NOTA_PERMISOS)
     _hoja_balance(wb.create_sheet("balance"), req)
@@ -1369,7 +1468,7 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
     ws.title = "RESUMEN flota"
     _title(
         ws,
-        f"Balance general de flota · {req.periodo_desde or ''} a {req.periodo_hasta or ''}",
+        f"Balance general VuelaTour · {req.periodo_desde or ''} a {req.periodo_hasta or ''}",
         1,
         12,
     )
@@ -1390,8 +1489,9 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
         "VENTA = tiempo de vuelo + ajuste + IVA proporcional (sin TUAs/extras/"
         "pernocta/comisión del vendedor: ver 'otros movimientos'). GANANCIA = "
         "VENTA − COSTO TOTAL − COMBUSTIBLE; los TUAs pagados no restan a "
-        "ningún avión. La GANANCIA va antes de otros/indirectos/permisos — la "
-        "utilidad final por avión está en la hoja 'balance'.",
+        "ningún avión. La GANANCIA va antes de GASTOS INDIRECTOS (incluida la "
+        "parte repartida a mano), refacciones y permisos — la utilidad final "
+        "por avión está en la hoja 'balance'.",
         "COMISIONES VENDEDOR va vacía a propósito (regla 28-ago-2026): la "
         "comisión del vendedor ya no es venta ni costo de ningún avión — es "
         "INGRESO de VuelaTour y su pago al vendedor sale de VuelaTour; los "
@@ -1405,15 +1505,16 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
         "columnas cuadra por avión.",
         "El detalle está en las hojas siguientes: los datos de TODOS los "
         "aviones juntos — cada fila se identifica por su CLAVE y el color de "
-        "su avión. Desde el 29-ago-2026 el detalle de COMBUSTIBLE, GASTOS "
-        "INDIRECTOS y PERMISOS por avión vive en el libro INDIVIDUAL de cada "
-        "avión (se descarga desde su ficha); aquí restan igual en la hoja "
-        "'balance'. Nuevas en el general: 'inventario' (tiendita: resumen "
-        "por ítem del periodo + detalle de salidas con costo FIFO vs venta "
-        "al avión — sustituye a la antigua hoja 'refacciones' del general), "
-        "'otros gastos' (gastos de la empresa sin avión ni vuelo, fuera de "
-        "toda cascada por avión — antes 'gastos VuelaTour') y 'repartidos "
-        "a aviones' (la parte de esos gastos asignada a mano a cada avión).",
+        "su avión. El detalle de COMBUSTIBLE, GASTOS INDIRECTOS (incluida la "
+        "parte repartida a mano) y PERMISOS por avión vive en el libro "
+        "INDIVIDUAL de cada avión (Reportes › Balance por avión); aquí "
+        "restan igual en la hoja 'balance' (indirectos y reparto manual en "
+        "una sola fila). Hojas propias de este libro: 'inventario' "
+        "(tiendita: resumen por ítem del periodo + detalle de salidas con "
+        "costo FIFO vs venta al avión), 'otros gastos' (gastos de la EMPRESA "
+        "sin avión ni vuelo, fuera de toda cascada por avión) y 'repartidos "
+        "a aviones' (la parte de esos gastos asignada a mano a cada avión; "
+        "en el libro individual va dentro de su hoja 'Gastos Indirectos').",
     ):
         ws.cell(row=row, column=1, value=nota).font = Font(
             color=MUTED, size=9, italic=True
@@ -1545,28 +1646,30 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
 
 
 def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
-    """Balance GENERAL (regla del cliente, 18-ago; hojas 29-ago): RESUMEN +
-    los datos de TODOS los aviones JUNTOS — 1 reporte de horas, 1 otros
-    movimientos (TUAs/extras/pernocta/comisión del vendedor cobrados y
-    pagados: dinero de VuelaTour), 1 cobranza, 1 otros gastos (gastos de
-    EMPRESA sin vuelo ni avión, payload `gastos_empresa`), 1 repartidos a
-    aviones (parte de esos gastos repartida a mano a cada avión; sin
-    TUAs), 1 inventario (tiendita, 30-ago:
-    resumen por ítem del periodo + detalle de salidas con costo FIFO vs
-    venta al avión — sustituye a la hoja 'refacciones' del general, que
-    solo se pinta como fallback de un API viejo),
-    1 balance (bloques por avión: los socios
-    son por avión) y 1 pendientes. Renombre 1-sep-2026 (modelo mental del
-    equipo: lo sin avión ni vuelo "cae en otros gastos"): la hoja de
-    empresa se llamaba 'gastos VuelaTour' y la de parciales 'otros
-    gastos' — SOLO cambian nombres de hoja en el GENERAL; el libro
-    INDIVIDUAL y los campos del contrato del API no cambian. Desde el
-    29-ago el general ya NO pinta
-    'combustible', 'gastos indirectos' ni 'permisos' (viven en el libro
-    INDIVIDUAL de cada avión); el API los sigue calculando y restan igual
-    en la cascada de la hoja 'balance'. Cada fila se identifica por su
-    clave y el COLOR del avión (aeronave.color_calendario, editable en el
-    apartado del avión)."""
+    """Balance general VuelaTour (regla del cliente, 18-ago; hojas 29-ago;
+    apartado propio en Reportes desde el 2-sep-2026 — antes era la opción
+    "Toda la flota" del balance por avión): RESUMEN + los datos de TODOS
+    los aviones JUNTOS — 1 reporte de horas, 1 otros movimientos (TUAs/
+    extras/pernocta/comisión del vendedor cobrados y pagados: dinero de
+    VuelaTour), 1 cobranza, 1 otros gastos (gastos de EMPRESA sin vuelo ni
+    avión, payload `gastos_empresa`), 1 repartidos a aviones (parte de esos
+    gastos repartida a mano a cada avión, payload `otros_gastos`; sin
+    TUAs), 1 inventario (tiendita, 30-ago: resumen por ítem del periodo +
+    detalle de salidas con costo FIFO vs venta al avión — sustituye a la
+    hoja 'refacciones' del general, que solo se pinta como fallback de un
+    API viejo), 1 balance (bloques por avión: los socios son por avión;
+    indirectos + reparto manual en UNA fila, 2-sep) y 1 pendientes.
+    Renombre 1-sep-2026 (modelo mental del equipo: lo sin avión ni vuelo
+    "cae en otros gastos"): la hoja de empresa se llamaba 'gastos
+    VuelaTour' y la de parciales 'otros gastos'. Este libro CONSERVA sus
+    dos hojas ('otros gastos' de empresa y 'repartidos a aviones'): la
+    fusión del 2-sep-2026 es solo del libro INDIVIDUAL (hoja "Gastos
+    Indirectos"); los campos del contrato del API no cambian. Desde el
+    29-ago el general ya NO pinta 'combustible', 'Gastos Indirectos' ni
+    'permisos' (viven en el libro INDIVIDUAL de cada avión); el API los
+    sigue calculando y restan igual en la cascada de la hoja 'balance'.
+    Cada fila se identifica por su clave y el COLOR del avión
+    (aeronave.color_calendario, editable en el apartado del avión)."""
     wb = Workbook()
     _hoja_resumen_general(wb.active, req)
     cons = req.consolidado
@@ -1581,7 +1684,7 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
                 wb.create_sheet("otros movimientos"), cons.otros_movimientos
             )
         _hoja_cobranza(wb.create_sheet("cobranza"), cons)
-        # (29-ago) 'combustible', 'gastos indirectos' y 'permisos' ya NO se
+        # (29-ago) 'combustible', 'Gastos Indirectos' y 'permisos' ya NO se
         # crean en el GENERAL: el detalle por avión vive en su libro
         # individual. SOLO se quita el render — el API sigue mandando esas
         # hojas y sus totales restan igual en los bloques de 'balance'.
@@ -1598,12 +1701,15 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
                          nota=_NOTA_GASTOS_EMPRESA, titulo_exacto=True)
         # Hoja 'repartidos a aviones' (payload `otros_gastos`; 1-sep-2026:
         # antes 'otros gastos' — se veía vacía sin repartos y ese nombre
-        # ahora es de la hoja de gastos de empresa).
+        # ahora es de la hoja de gastos de empresa). Se CONSERVA en el
+        # general (2-sep): la fusión en "Gastos Indirectos" es solo del
+        # libro individual. Sin `resaltar_parciales`: aquí la celda DETALLE
+        # lleva el color del avión.
         _hoja_gastos(
             wb.create_sheet("repartidos a aviones"),
             "Otros gastos repartidos a aviones",
             cons.otros_gastos, cons,
-            nota=_nota_otros_gastos(general=True),
+            nota=_NOTA_REPARTIDOS_A_AVIONES,
         )
         # Hoja "inventario" (tiendita, 30-ago): resumen POR ÍTEM del periodo
         # + el detalle de salidas que antes pintaba la hoja "refacciones" del
@@ -1620,7 +1726,7 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
                          nota=_NOTA_REFACCIONES_GENERAL)
         # Hoja balance: un BLOQUE por avión (título teñido con su color).
         ws_b = wb.create_sheet("balance")
-        _title(ws_b, "Balance por avión", 1, 3)
+        _title(ws_b, "Balance por avión — Balance general VuelaTour", 1, 3)
         ws_b.cell(
             row=2, column=1,
             value=f"Periodo: {req.periodo_desde or '—'} a "

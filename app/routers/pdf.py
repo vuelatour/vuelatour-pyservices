@@ -175,14 +175,18 @@ def balance_avion_xlsx(payload: BalanceAvionRequest) -> Response:
 
 @router.post("/balance-general-xlsx")
 def balance_general_xlsx(payload: BalanceGeneralRequest) -> Response:
-    """Balance GENERAL de flota: los libros individuales concatenados en un
-    workbook (misma estructura de hojas por avión) + hoja RESUMEN al frente.
+    """Balance general VuelaTour (2-sep-2026: apartado propio en Reportes,
+    antes la opción "Toda la flota" del balance por avión): hoja RESUMEN de
+    flota al frente + los datos de TODOS los aviones juntos en un solo
+    workbook (reporte de horas, otros movimientos, cobranza, otros gastos
+    de empresa, repartidos a aviones, inventario, balance por avión con
+    socios y pendientes de captura).
 
     El API manda todo precalculado; aquí SOLO se renderiza.
     """
     xlsx_bytes = render_balance_general_xlsx(payload)
     filename = (
-        f"balance-general-"
+        f"balance-general-vuelatour-"
         f"{payload.periodo_desde or 's-f'}-{payload.periodo_hasta or 's-f'}.xlsx"
     )
     return Response(
