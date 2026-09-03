@@ -46,6 +46,27 @@ def _fecha_legible(s: str | None) -> str:
         return s
 
 
+# Meses abreviados es-MX (misma tabla que bitacora_taco_pdf).
+_MESES_ES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+
+
+def _fecha_dia(s: str | None) -> str:
+    """Fecha de PARED del tramo para el cliente: '2026-09-03' → '3 sep 2026'.
+
+    Regla (3-sep-2026): `EscalaPdf.fecha` es un DÍA (YYYY-MM-DD) sin hora ni
+    zona, así que NO pasa por `_fecha_legible` (asume UTC y convierte a
+    Cancún: movería el día). Se parsea solo la parte YYYY-MM-DD, sin zona.
+    Vacío → '' (la tabla pinta '—'); texto no parseable → tal cual, escapado.
+    """
+    if not s:
+        return ""
+    try:
+        dt = datetime.strptime(s[:10], "%Y-%m-%d")
+    except ValueError:
+        return escape(s)
+    return f"{dt.day} {_MESES_ES[dt.month - 1]} {dt.year}"
+
+
 @lru_cache(maxsize=1)
 def _logo_data_uri(nombre: str = "logo-vuelatour-blanco.png") -> str | None:
     """Logo como data-URI (el HTML del PDF no puede pedir archivos remotos)."""
@@ -306,12 +327,20 @@ def _build_html(r: CotizacionPdfRequest) -> str:
     mapa_html = _mapa_svg(r.mapa_puntos)
     escalas_html = ""
     if r.escalas:
+        # Columna "Fecha" (3-sep-2026) SOLO si algún tramo trae fecha: sin
+        # ninguna, la tabla queda IDÉNTICA a la de siempre. Los tramos
+        # ocultos no llegan (el API filtra pdf_oculto y renumera), así que
+        # su fecha jamás se imprime. Tramo sin fecha → '—'.
+        con_fecha = any(e.fecha for e in r.escalas)
+        th_fecha = "<th>Fecha</th>" if con_fecha else ""
         filas = "".join(
-            f"<tr><td>{e.orden}</td><td>{escape(e.origen)} → {escape(e.destino)}</td></tr>"
+            f"<tr><td>{e.orden}</td><td>{escape(e.origen)} → {escape(e.destino)}</td>"
+            + (f'<td class="fecha">{_fecha_dia(e.fecha) or "—"}</td>' if con_fecha else "")
+            + "</tr>"
             for e in sorted(r.escalas, key=lambda x: x.orden)
         )
         tabla_itin = (
-            '<table class="grid"><thead><tr><th>#</th><th>Tramo</th></tr></thead>'
+            f'<table class="grid"><thead><tr><th>#</th><th>Tramo</th>{th_fecha}</tr></thead>'
             f"<tbody>{filas}</tbody></table>"
         )
         if not r.mostrar_itinerario:
@@ -544,6 +573,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
   .grid th, .grid td {{ border: 1px solid #e5e5e5; padding: 6px 10px; text-align: left; }}
   .grid th {{ background: #f7f7f8; }}
+  .grid td.fecha {{ white-space: nowrap; }}
   /* Mapa junto al itinerario (26-ago v3): dos columnas en la hoja 1. */
   .itin-row {{ width: 100%; border-collapse: separate; border-spacing: 0; }}
   .itin-row td {{ vertical-align: top; }}

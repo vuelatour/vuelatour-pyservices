@@ -7,6 +7,12 @@ class EscalaPdf(BaseModel):
     orden: int
     origen: str
     destino: str
+    # Fecha de PARED (YYYY-MM-DD, sin hora ni zona) que verá el cliente en
+    # el PDF para este tramo (3-sep-2026): SOLO presentación — no es la
+    # salida operativa ni mueve fechas de vuelo. None = tramo sin fecha
+    # ('—' si otro tramo sí la trae; sin ninguna, la tabla no lleva la
+    # columna). ADITIVO: un API viejo no la manda y el PDF queda igual.
+    fecha: str | None = None
 
 
 class ExtraPdf(BaseModel):

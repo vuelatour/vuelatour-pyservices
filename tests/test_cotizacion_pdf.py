@@ -4,12 +4,21 @@ título de ruta, tabla de itinerario y numeración del mapa.
 Regla 31-ago (tramos ocultos): el API filtra pdf_oculto, RENUMERA 1..N y
 manda la ruta visible resuelta en `ruta`; aquí solo se pinta lo que llega —
 la numeración del mapa sale de `orden` del payload, nunca de índices propios.
+
+Fecha por tramo (3-sep-2026): `EscalaPdf.fecha` es un DÍA de pared
+(YYYY-MM-DD) SOLO para el PDF del cliente; sin hora, sin zona, sin fallback.
 """
 
 import re
 
 from app.schemas.reportes import CotizacionPdfRequest, MapaPuntoPdf
-from app.services.cotizacion_pdf import _build_html, _mapa_svg, _peninsula_paths, _xy
+from app.services.cotizacion_pdf import (
+    _build_html,
+    _fecha_dia,
+    _mapa_svg,
+    _peninsula_paths,
+    _xy,
+)
 
 
 def _req(**extra) -> CotizacionPdfRequest:
@@ -210,3 +219,57 @@ def test_bbox_degenerado_lejano_cae_a_modo_local() -> None:
     for lat, lon in (_BJX, cerca):
         x, y = _xy(lon, lat)
         assert bx0 <= x <= bx0 + bw and by0 <= y <= by0 + bh
+
+
+# ===== Fecha por tramo SOLO para el PDF del cliente (3-sep-2026) =====
+
+
+def test_itinerario_con_fechas_agrega_columna_fecha() -> None:
+    # `fecha` es un día de PARED (YYYY-MM-DD) que el API toma de la escala
+    # viva (pdf_fecha) — sin hora ni zona. El tramo 3 trae un datetime con
+    # zona (defensivo): se imprime SOLO el día tal cual, sin convertir a
+    # UTC/Cancún (movería el día) y sin hora.
+    html = _build_html(
+        _req(
+            ruta="CUN → AZP → BZE → CZM → CUN",
+            escalas=[
+                {"orden": 1, "origen": "CUN", "destino": "AZP", "fecha": "2026-09-03"},
+                {"orden": 2, "origen": "BZE", "destino": "CZM"},
+                {
+                    "orden": 3,
+                    "origen": "CZM",
+                    "destino": "CUN",
+                    "fecha": "2026-09-02T19:00:00-05:00",
+                },
+            ],
+        )
+    )
+    assert "<thead><tr><th>#</th><th>Tramo</th><th>Fecha</th></tr></thead>" in html
+    assert '<td>1</td><td>CUN → AZP</td><td class="fecha">3 sep 2026</td></tr>' in html
+    # Tramo sin fecha: guion, nunca un fallback a otra fecha del payload.
+    assert '<td>2</td><td>BZE → CZM</td><td class="fecha">—</td></tr>' in html
+    assert '<td>3</td><td>CZM → CUN</td><td class="fecha">2 sep 2026</td></tr>' in html
+    # Jamás hora ni el formato dd/mm/aaaa de _fecha_legible para el tramo.
+    assert "19:00" not in html
+    assert "02/09/2026" not in html
+    assert "03/09/2026" not in html
+
+
+def test_itinerario_sin_fechas_no_agrega_columna() -> None:
+    # Sin fecha en ningún tramo (API viejo o sin captura): la tabla queda
+    # IDÉNTICA a la de siempre — ni encabezado ni celdas de fecha.
+    html = _build_html(_req(ruta="CUN → AZP → BZE → CZM → CUN"))
+    assert "<thead><tr><th>#</th><th>Tramo</th></tr></thead>" in html
+    assert "<td>1</td><td>CUN → AZP</td></tr>" in html
+    assert "<th>Fecha</th>" not in html
+    assert 'class="fecha"' not in html
+
+
+def test_fecha_dia_es_mx_sin_zona() -> None:
+    assert _fecha_dia("2026-01-01") == "1 ene 2026"
+    assert _fecha_dia("2026-12-31") == "31 dic 2026"
+    assert _fecha_dia(None) == ""
+    assert _fecha_dia("") == ""
+    # Texto no parseable: tal cual (escapado), nunca una excepción.
+    assert _fecha_dia("basura") == "basura"
+    assert _fecha_dia("<x>") == "&lt;x&gt;"
