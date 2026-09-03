@@ -104,6 +104,16 @@ def _folio_vuelo(v: RepartoVueloLinea) -> str:
     return texto
 
 
+# Grupo del desglose de gastos (mismas etiquetas que el panel y el PDF).
+_GRUPO_LABEL = {
+    "DIRECTO": "Directo",
+    "INDIRECTO": "Indirecto",
+    "PERMISO": "Permiso",
+    "FIJO": "Fijo (manual)",
+    "EXCLUIDO": "Excluido",
+}
+
+
 def _title(ws, text: str, row: int, span: int, size: int = 14):
     cell = ws.cell(row=row, column=1, value=text)
     cell.font = Font(bold=True, size=size, color=BRAND)
@@ -327,6 +337,28 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
                     mc.number_format = MONEY
                     mc.border = _border
                 ws.cell(row=r, column=6, value=v.tramos_avion).border = _border
+                r += 1
+
+    # Gastos por categoría (solo si el API lo manda, 2-sep-2026): la categoría
+    # se imprime con su etiqueta amable (homologada con panel/app/API) o con
+    # el código del enum tal cual si no viene. Sección propia al final: no
+    # mueve columnas ni índices de las tablas de arriba.
+    if any(a.gastos_por_categoria for a in req.aviones):
+        r += 2
+        _title(ws, "Gastos por categoría", r, 5, size=12)
+        r += 1
+        _header_row(ws, r, ["Avión", "Categoría de gasto", "Grupo", "# gastos", "USD"])
+        r += 1
+        for a in req.aviones:
+            for g in a.gastos_por_categoria:
+                ws.cell(row=r, column=1, value=a.matricula).border = _border
+                ws.cell(row=r, column=2, value=g.etiqueta or g.categoria).border = _border
+                grupo = _GRUPO_LABEL.get(g.grupo or "", g.grupo or "")
+                ws.cell(row=r, column=3, value=grupo).border = _border
+                ws.cell(row=r, column=4, value=g.count).border = _border
+                mc = ws.cell(row=r, column=5, value=g.usd)
+                mc.number_format = MONEY
+                mc.border = _border
                 r += 1
 
     buf = BytesIO()

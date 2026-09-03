@@ -169,6 +169,10 @@ class ReporteVueloLinea(BaseModel):
     monto: float | None = None
     # Litros (solo combustible): el Excel del equipo muestra litros y $/litro.
     litros: float | None = None
+    # Etiqueta amable de la categoría (2-sep-2026, aditivo): en las líneas de
+    # gastos `concepto` trae el CÓDIGO del enum (OTRO, TUAS, …); cuando el
+    # API manda `etiqueta` se imprime ella en la columna Categoría.
+    etiqueta: str | None = None
 
 
 class ReporteVueloParticipacion(BaseModel):

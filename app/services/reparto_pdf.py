@@ -17,6 +17,7 @@ from reportlab.platypus import (
 
 from app.schemas.reparto import (
     RepartoAvion,
+    RepartoGastoCategoriaLinea,
     RepartoOtrosIngresosDesglose,
     RepartoPdfRequest,
     RepartoVueloLinea,
@@ -105,6 +106,34 @@ def _folio_vuelo(v: RepartoVueloLinea) -> str:
         if v.tramos_avion:
             texto += f" ({v.tramos_avion.replace('→', '-')})"
     return texto
+
+
+# Grupo del desglose de gastos (mismas etiquetas que el panel).
+_GRUPO_LABEL = {
+    "DIRECTO": "Directo",
+    "INDIRECTO": "Indirecto",
+    "PERMISO": "Permiso",
+    "FIJO": "Fijo (manual)",
+    "EXCLUIDO": "Excluido",
+}
+
+
+def _filas_gastos_categoria(
+    gastos: list[RepartoGastoCategoriaLinea],
+) -> list[list[str]]:
+    """Filas (sin encabezado) de la tabla 'Gastos por categoría' del avión.
+    La categoría se imprime con su etiqueta amable (`etiqueta`, homologada
+    con panel/app/API, 2-sep-2026) y, si el API no la manda, con el código
+    tal cual."""
+    return [
+        [
+            g.etiqueta or g.categoria,
+            _GRUPO_LABEL.get(g.grupo or "", g.grupo or ""),
+            str(g.count),
+            _usd(g.usd),
+        ]
+        for g in gastos
+    ]
 
 
 def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
@@ -420,6 +449,28 @@ def _bloque_avion(avion: RepartoAvion, estilo_titulo: ParagraphStyle) -> KeepTog
         )
         bloque.append(Spacer(1, 2 * mm))
         bloque.append(vtabla)
+
+    # Gastos por categoría (solo si el API lo manda, 2-sep-2026): misma tabla
+    # del desglose del panel; la categoría sale con su etiqueta amable.
+    if avion.gastos_por_categoria:
+        gfilas = [["Categoría de gasto", "Grupo", "#", "USD"]]
+        gfilas += _filas_gastos_categoria(avion.gastos_por_categoria)
+        gtabla = Table(gfilas, colWidths=[85 * mm, 35 * mm, 15 * mm, 35 * mm])
+        gtabla.setStyle(
+            TableStyle(
+                [
+                    ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+                    ("TEXTCOLOR", (0, 0), (-1, -1), MUTED),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                    ("LINEBELOW", (0, 0), (-1, 0), 0.4, LIGHT),
+                ]
+            )
+        )
+        bloque.append(Spacer(1, 2 * mm))
+        bloque.append(gtabla)
 
     # Advertencias de integridad: dinero que NO pudo entrar al balance. El
     # supervisor debe verlo aquí mismo, no descubrirlo cuadrando a mano.

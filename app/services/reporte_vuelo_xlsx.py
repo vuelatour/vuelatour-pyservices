@@ -2,10 +2,10 @@
 
 El layout replica el formato de los controles del equipo ("Balance VGV.xlsx" /
 "Dinero <mes>.xlsx"): doble moneda (USD y MXN con el tipo de cambio explícito),
-IVA separado, venta por hora, tacómetro inicio/fin, gasolina con litros y
-$/litro, y el balance del vuelo (remanente → ganancia → ganancia x hr → % de
-ganancia). Los montos vienen YA calculados del API (aquí solo se muestran; a
-lo sumo se multiplica por el TC para la columna en pesos).
+IVA separado, venta por hora, tacómetro inicio/fin, gasavión/turbosina con
+litros y $/litro, y el balance del vuelo (remanente → ganancia → ganancia x hr
+→ % de ganancia). Los montos vienen YA calculados del API (aquí solo se
+muestran; a lo sumo se multiplica por el TC para la columna en pesos).
 """
 
 from __future__ import annotations
@@ -297,8 +297,10 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
         row += 1
     row += 1
 
-    # ===== Gasolina (litros y $/litro, como el control del equipo) =====
-    titulo("Gasolina")
+    # ===== Gasavión / Turbosina: combustible del AVIÓN (litros y $/litro,
+    # como el control del equipo). No confundir con la categoría GASOLINA
+    # (vehículos), que es un gasto común. =====
+    titulo("Gasavión / Turbosina")
     if r.combustible:
         header(["Fecha", "Detalle", "Litros", "$ x litro", "Moneda", "Total"])
         for c in r.combustible:
@@ -312,7 +314,8 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
             money_cell(row, 6, c.monto)
             row += 1
         if r.combustible_total_usd:
-            ws.cell(row=row, column=1, value="Total gasolina USD").font = Font(bold=True)
+            tot = ws.cell(row=row, column=1, value="Total gasavión / turbosina USD")
+            tot.font = Font(bold=True)
             money_cell(row, 2, r.combustible_total_usd, bold=True)
             row += 1
     else:
@@ -328,7 +331,8 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
         header(["Fecha", "Categoría", "Detalle", "Moneda", "Monto"])
         for g in r.gastos:
             ws.cell(row=row, column=1, value=_fecha(g.fecha))
-            ws.cell(row=row, column=2, value=g.concepto or "")
+            # Categoría: etiqueta amable si el API la manda; si no, el código.
+            ws.cell(row=row, column=2, value=g.etiqueta or g.concepto or "")
             ws.cell(row=row, column=3, value=g.detalle or "")
             ws.cell(row=row, column=4, value=g.moneda or "")
             money_cell(row, 5, g.monto)
@@ -425,7 +429,7 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
 
         venta_mxn = bal("Venta total (c/IVA)", r.total_usd, bold=True)
         bal("Venta sin IVA", r.venta_sin_iva_usd or max(r.total_usd - r.iva_usd, 0))
-        gas_mxn = bal("(−) Gasolina", r.combustible_total_usd or 0, signo=-1)
+        gas_mxn = bal("(−) Gasavión / Turbosina", r.combustible_total_usd or 0, signo=-1)
         gtos_mxn = bal("(−) Gastos del vuelo", r.gastos_total_usd or 0, signo=-1)
         rem_mxn = 0.0
         if r.remanente_usd is not None:

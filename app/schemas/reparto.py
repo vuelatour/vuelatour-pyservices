@@ -64,6 +64,25 @@ class RepartoTcOficial(BaseModel):
     leyenda: str | None = None
 
 
+class RepartoGastoCategoriaLinea(BaseModel):
+    """Gastos del avión agrupados por categoría (`detalle.gastos_por_categoria`
+    del API), ADITIVO (2-sep-2026): solo se imprime si el API lo manda.
+    `categoria` es el CÓDIGO del enum (GAS, OTRO, …) y no cambia nunca;
+    `etiqueta` es el texto amable homologado (panel/app/API) que se pinta en
+    su lugar cuando viene — sin ella se imprime el código tal cual."""
+
+    categoria: str = ""
+    etiqueta: str | None = None
+    # DIRECTO / INDIRECTO / PERMISO / FIJO / EXCLUIDO (mismo grupo del panel).
+    grupo: str | None = None
+    count: int = 0
+    usd: float = 0.0
+    sin_tc_count: int = 0
+    sin_tc_mxn: float = 0.0
+    tc_oficial_count: int = 0
+    tc_oficial_mxn: float = 0.0
+
+
 class RepartoAvion(BaseModel):
     matricula: str
     modelo: str
@@ -106,6 +125,9 @@ class RepartoAvion(BaseModel):
     reparto: list[RepartoSocioLinea] = Field(default_factory=list)
     # Detalle de vuelos del avión (opcional): vacío = no se imprime.
     vuelos: list[RepartoVueloLinea] = Field(default_factory=list)
+    # Gastos por categoría (opcional, 2-sep-2026): vacío = no se imprime. La
+    # categoría se pinta con su `etiqueta` (o el código si no viene).
+    gastos_por_categoria: list[RepartoGastoCategoriaLinea] = Field(default_factory=list)
     # ADITIVOS (29-ago-2026): convertidos con el TC oficial de referencia del
     # día (ya dentro de los montos; solo nota). None/0 = nada que anotar.
     gastos_tc_oficial: RepartoTcOficialGastos | None = None

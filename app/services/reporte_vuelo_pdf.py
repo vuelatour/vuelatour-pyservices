@@ -303,7 +303,10 @@ def _build_html(r: ReporteVueloRequest) -> str:
             f"<th class='num'>Monto</th></tr></thead><tbody>{filas}</tbody></table>"
         )
         if r.combustible_total_usd:
-            comb += f"<p class='tot'>Total gasolina: <b>{_money(r.combustible_total_usd)}</b></p>"
+            comb += (
+                "<p class='tot'>Total gasavión / turbosina: "
+                f"<b>{_money(r.combustible_total_usd)}</b></p>"
+            )
         comb += (
             "<p class='muted'>El combustible se controla por AVIÓN y por MES "
             "(Balance por avión → hoja 'combustible'); aquí solo se muestran "
@@ -318,8 +321,10 @@ def _build_html(r: ReporteVueloRequest) -> str:
 
     # --- Gastos ---
     if r.gastos:
+        # Categoría: etiqueta amable si el API la manda; si no, el código.
         filas = "".join(
-            f"<tr><td>{_fecha(g.fecha)}</td><td>{escape(g.concepto or '—')}</td>"
+            f"<tr><td>{_fecha(g.fecha)}</td>"
+            f"<td>{escape(g.etiqueta or g.concepto or '—')}</td>"
             f"<td>{escape(g.detalle or '')}</td>"
             f"<td class='num'>{_money(g.monto, g.moneda or 'MXN')}</td></tr>"
             for g in r.gastos
@@ -370,7 +375,7 @@ def _build_html(r: ReporteVueloRequest) -> str:
         balance_rows = (
             _bal_row("Venta total (c/IVA)", r.total_usd, bold=True)
             + _bal_row("Venta sin IVA", venta_sin_iva)
-            + _bal_row("(−) Gasolina", r.combustible_total_usd or 0, signo=-1)
+            + _bal_row("(−) Gasavión / Turbosina", r.combustible_total_usd or 0, signo=-1)
             + _bal_row("(−) Gastos del vuelo", r.gastos_total_usd or 0, signo=-1)
             + _bal_row("REMANENTE (venta − costo)", r.remanente_usd, bold=True)
             + (
