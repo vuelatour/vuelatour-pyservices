@@ -26,6 +26,13 @@ Reglas de este microservicio (FastAPI, Python 3.12).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.
+- Cotización de GRUPO (`/reportes/cotizacion-grupo`, 4-sep-2026):
+  `cotizacion_grupo_pdf.py` IMPORTA los helpers de `cotizacion_pdf.py`
+  (estilos, mapa, itinerario, ficha de aeronave, regla de matrícula) — no
+  copiarlos. Solo pinta: el desglose consolidado, subtotal/IVA/total y el
+  precio por persona vienen del API; nunca pintar COMISION_VENDEDOR,
+  redondeo ni AJUSTE positivo. Toggles `mostrar_*` mandan. El recibo
+  (`/pdf/recibo`) etiqueta "Grupo" cuando viene `grupo_folio`.
 
 ## IA
 
