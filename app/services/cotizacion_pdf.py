@@ -8,6 +8,11 @@ exterior/interior del avión cotizado al final.
 Mantiene la identidad visual del admin: rojo de marca #dc2626, navy #102a43.
 El import de WeasyPrint es perezoso para que el servicio arranque aunque la
 librería (y sus libs de sistema: pango/cairo) no esté instalada.
+
+Fuente única compartida con el PDF de cotización de GRUPO
+(`cotizacion_grupo_pdf.py`, 4-sep-2026): `_estilos_base`, `_mapa_svg`,
+`_itinerario_html`, `_ficha_aeronave_html`, `_mostrar_matricula` y los
+helpers de formato. Un cambio de branding o de regla se hace aquí una vez.
 """
 
 import base64
@@ -18,7 +23,7 @@ from html import escape
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from app.schemas.reportes import CotizacionPdfRequest, MapaPuntoPdf
+from app.schemas.reportes import CotizacionPdfRequest, EscalaPdf, MapaPuntoPdf
 
 _BRAND = "#dc2626"
 _NAVY = "#102a43"
@@ -301,177 +306,89 @@ def _mapa_svg(puntos: list[MapaPuntoPdf]) -> str:
     )
 
 
-def _build_html(r: CotizacionPdfRequest) -> str:
-    # Matrículas OCULTAS en la cotización (regla 26-ago): el cliente no debe
-    # ver qué avión es — EXCEPTO el VGV, que sí se comercializa por matrícula.
-    mostrar_matricula = bool(r.matricula and "VGV" in r.matricula.upper())
-    # Título con la RUTA COMPLETA (26-ago): "CUN → CTM → CUN", no solo
-    # origen→destino. Fuente más chica si la ruta es larga (multiescala).
-    # Si el API ya mandó la ruta VISIBLE resuelta (tramos ocultos con los
-    # huecos unidos, 31-ago) se usa TAL CUAL; el walk local queda solo como
-    # fallback para payloads viejos (skew tolerante).
-    if r.ruta:
-        ruta_titulo = escape(r.ruta)
-    elif r.escalas:
-        ordenadas = sorted(r.escalas, key=lambda x: x.orden)
-        puntos = [ordenadas[0].origen] + [e.destino for e in ordenadas]
-        ruta_titulo = " → ".join(escape(pt) for pt in puntos)
-    else:
-        ruta_titulo = f"{escape(r.origen)} → {escape(r.destino)}"
-    n_puntos = ruta_titulo.count("→") + 1
-    ruta_font = "26px" if n_puntos <= 4 else ("20px" if n_puntos <= 6 else "16px")
+def _mostrar_matricula(matricula: str | None) -> bool:
+    """Regla VIGENTE de matrícula en documentos al cliente (26-ago): OCULTA
+    — el cliente no debe ver qué avión es — EXCEPTO el VGV, que sí se
+    comercializa por matrícula. Fuente única: la usan el PDF de un avión y
+    el de grupo."""
+    return bool(matricula and "VGV" in matricula.upper())
 
-    # Mapa JUNTO al itinerario en la hoja 1 (26-ago v3, pedido del cliente):
-    # tabla de tramos a la izquierda, mapa a la derecha (layout de tabla —
-    # WeasyPrint lo respeta siempre). Sin puntos de mapa, la tabla va sola.
-    mapa_html = _mapa_svg(r.mapa_puntos)
-    escalas_html = ""
-    if r.escalas:
-        # Columna "Fecha" (3-sep-2026) SOLO si algún tramo trae fecha: sin
-        # ninguna, la tabla queda IDÉNTICA a la de siempre. Los tramos
-        # ocultos no llegan (el API filtra pdf_oculto y renumera), así que
-        # su fecha jamás se imprime. Tramo sin fecha → '—'.
-        con_fecha = any(e.fecha for e in r.escalas)
-        th_fecha = "<th>Fecha</th>" if con_fecha else ""
-        filas = "".join(
-            f"<tr><td>{e.orden}</td><td>{escape(e.origen)} → {escape(e.destino)}</td>"
-            + (f'<td class="fecha">{_fecha_dia(e.fecha) or "—"}</td>' if con_fecha else "")
-            + "</tr>"
-            for e in sorted(r.escalas, key=lambda x: x.orden)
+
+def _itinerario_html(escalas: list[EscalaPdf], mapa_html: str, mostrar_itinerario: bool) -> str:
+    """Bloque "Itinerario" de la hoja 1: tabla de tramos (# / Tramo / Fecha
+    opcional) junto al mapa. Compartido por el PDF de un avión y el de grupo.
+
+    - Sin escalas → '' (ni tabla ni mapa).
+    - Columna "Fecha" (3-sep-2026) SOLO si algún tramo trae fecha: sin
+      ninguna, la tabla queda IDÉNTICA a la de siempre. Los tramos ocultos
+      no llegan (el API filtra pdf_oculto y renumera), así que su fecha
+      jamás se imprime. Tramo sin fecha → '—'.
+    - `mostrar_itinerario=False` (27-ago): queda solo el mapa, centrado.
+    """
+    if not escalas:
+        return ""
+    con_fecha = any(e.fecha for e in escalas)
+    th_fecha = "<th>Fecha</th>" if con_fecha else ""
+    filas = "".join(
+        f"<tr><td>{e.orden}</td><td>{escape(e.origen)} → {escape(e.destino)}</td>"
+        + (f'<td class="fecha">{_fecha_dia(e.fecha) or "—"}</td>' if con_fecha else "")
+        + "</tr>"
+        for e in sorted(escalas, key=lambda x: x.orden)
+    )
+    tabla_itin = (
+        f'<table class="grid"><thead><tr><th>#</th><th>Tramo</th>{th_fecha}</tr></thead>'
+        f"<tbody>{filas}</tbody></table>"
+    )
+    if not mostrar_itinerario:
+        return (
+            f'<h2>La ruta</h2><div class="mapa-solo">{mapa_html}</div>'
+            if mapa_html
+            else ""
         )
-        tabla_itin = (
-            f'<table class="grid"><thead><tr><th>#</th><th>Tramo</th>{th_fecha}</tr></thead>'
-            f"<tbody>{filas}</tbody></table>"
+    if mapa_html:
+        cuerpo_itin = (
+            '<table class="itin-row"><tr>'
+            f'<td class="itin-tabla">{tabla_itin}</td>'
+            f'<td class="itin-mapa">{mapa_html}</td>'
+            "</tr></table>"
         )
-        if not r.mostrar_itinerario:
-            # Itinerario OCULTO por configuración de la cotización (27-ago):
-            # queda solo el mapa de la ruta, centrado.
-            escalas_html = (
-                f'<h2>La ruta</h2><div class="mapa-solo">{mapa_html}</div>'
-                if mapa_html
-                else ""
-            )
-        elif mapa_html:
-            cuerpo_itin = (
-                '<table class="itin-row"><tr>'
-                f'<td class="itin-tabla">{tabla_itin}</td>'
-                f'<td class="itin-mapa">{mapa_html}</td>'
-                "</tr></table>"
-            )
-            escalas_html = f"""
+        return f"""
         <h2>Itinerario</h2>
         {cuerpo_itin}"""
-        else:
-            escalas_html = f"""
+    return f"""
         <h2>Itinerario</h2>
         {tabla_itin}"""
 
-    notas_html = (
-        f'<div class="notas"><strong>Notas:</strong> {escape(r.notas)}</div>' if r.notas else ""
-    )
 
-    # ----- Desglose SIN horas (26-ago, regla del cliente): ni tiempo
-    # cobrable ni tarifa por hora — el servicio se presenta como monto. -----
-    filas: list[str] = []
+def _vistazo_velocidad(kts: float) -> tuple[str, str]:
+    """Renglón "Velocidad crucero" de la tarjeta "De un vistazo"."""
+    kmh = round(kts * 1.852)
+    return ("Velocidad crucero", f"{kts:g} kt / {kmh} km/h")
 
-    def fila(lbl: str, val: str) -> None:
-        filas.append(f'<tr><td class="lbl">{escape(lbl)}</td><td class="val">{val}</td></tr>')
 
-    # Tarifa por hora VISIBLE solo si la cotización lo pide (27-ago).
-    if (
-        r.mostrar_tarifa_hora
-        and r.tiempo_cobrable_hr
-        and r.tarifa_hora_usd
-        and r.tiempo_cobrable_hr > 0
-        and r.tarifa_hora_usd > 0
-    ):
-        fila(
-            f"Servicio aéreo ({r.tiempo_cobrable_hr:g} h × "
-            f"{_money(r.tarifa_hora_usd)}/hr)",
-            _money(r.subtotal_usd),
+def _vistazo_motores(num_motores: int, motor_hp: int | None) -> tuple[str, str]:
+    """Renglón de motores de la tarjeta "De un vistazo"."""
+    if motor_hp:
+        return (
+            "Motor" if num_motores == 1 else "Motores",
+            f"{num_motores} × {motor_hp} HP",
         )
-    else:
-        fila("Servicio aéreo", _money(r.subtotal_usd))
-    if not r.tuas_detalle:
-        fila("TUAS", _money(r.tuas_usd))
-    elif len(r.tuas_detalle) == 1:
-        fila(r.tuas_detalle[0], _money(r.tuas_usd))
-    else:
-        for det in r.tuas_detalle:
-            fila(det, "")
-        fila("TUAS (total)", _money(r.tuas_usd))
-    for e in r.extras:
-        lbl = e.concepto or "Extra"
-        if e.moneda == "MXN" and e.monto_nativo is not None:
-            lbl += f" · ${e.monto_nativo:,.2f} MXN"
-        fila(lbl, _money(e.monto_usd))
-    if r.viaticos_pernocta_usd > 0:
-        fila("Viáticos por pernocta", _money(r.viaticos_pernocta_usd))
-    if r.descuento_usd > 0:
-        fila("Descuento", f"&minus;{_money(r.descuento_usd)}")
-    # Subtotal SIN IVA antes del IVA (27-ago, pedido del cliente). Se deriva
-    # del total canónico (total − IVA) para cuadrar exacto con el desglose.
-    filas.append(
-        '<tr class="sub-row"><td class="lbl">Subtotal (sin IVA)</td>'
-        f'<td class="val">{_money(r.total_usd - r.iva_usd)}</td></tr>'
-    )
-    fila(f"IVA ({r.iva_pct:.0f}%)", _money(r.iva_usd))
-    desglose_html = "".join(filas)
-    total_row_html = (
-        f'<tr class="total-row"><td>Total ({escape(r.moneda)})</td>'
-        f'<td class="val">{_money(r.total_usd)}</td></tr>'
-    )
-
-    total_mxn_html = ""
-    if r.total_mxn is not None:
-        tc_txt = f" (T.C. {r.tc_usd_mxn:g})" if r.tc_usd_mxn else ""
-        total_mxn_html = (
-            f'<tr class="total-mxn"><td>Total MXN{escape(tc_txt)}</td>'
-            f'<td class="val">{_money(r.total_mxn)} MXN</td></tr>'
-        )
-
-    # ----- Marca de agua + logo del membrete -----
-    logo_blanco = _logo_data_uri("logo-vuelatour-blanco.png")
-    logo_marca = _logo_data_uri("logo-vuelatour.png")
-    logo_header_html = (
-        f'<img class="logo" src="{logo_blanco}" alt=""/>' if logo_blanco else ""
-    )
-    marca_html = (
-        f'<div class="marca"><img src="{logo_marca}" alt=""/></div>' if logo_marca else ""
-    )
+    return ("Motor", "Monomotor" if num_motores == 1 else "Bimotor")
 
 
-    # ----- Página "La aeronave" (26-ago v2, mockup del cliente) -----
-    # Exterior ANCHO arriba; abajo interior + tarjeta "De un vistazo";
-    # tira de características comerciales al pie. SIN matrícula en esta hoja
-    # (regla del cliente — aplica también al VGV; la página 1 conserva su
-    # propia regla de matrícula).
-    vistazo: list[tuple[str, str]] = []
-    if r.avion_pasajeros:
-        vistazo.append(("Pasajeros", f"{r.avion_pasajeros} máx."))
-    if r.avion_velocidad_kts:
-        kmh = round(r.avion_velocidad_kts * 1.852)
-        vistazo.append(
-            ("Velocidad crucero", f"{r.avion_velocidad_kts:g} kt / {kmh} km/h")
-        )
-    if r.avion_tiempo_tramo_hr and r.avion_tiempo_tramo_hr > 0:
-        th = int(r.avion_tiempo_tramo_hr)
-        tm = int(round((r.avion_tiempo_tramo_hr - th) * 60))
-        if tm == 60:
-            th, tm = th + 1, 0
-        vistazo.append(("Tiempo de vuelo", f"{th}:{tm:02d} h por tramo"))
-    if r.avion_num_motores:
-        if r.avion_motor_hp:
-            vistazo.append(
-                (
-                    "Motor" if r.avion_num_motores == 1 else "Motores",
-                    f"{r.avion_num_motores} × {r.avion_motor_hp} HP",
-                )
-            )
-        else:
-            vistazo.append(
-                ("Motor", "Monomotor" if r.avion_num_motores == 1 else "Bimotor")
-            )
+def _ficha_aeronave_html(
+    modelo: str | None,
+    foto_exterior: str | None,
+    foto_interior: str | None,
+    vistazo: list[tuple[str, str]],
+    caracteristicas: list[str],
+) -> str:
+    """Hoja "La aeronave" (26-ago v2, mockup del cliente): título del modelo,
+    exterior ANCHO arriba; abajo interior + tarjeta "De un vistazo"; tira de
+    características al pie. SIN matrícula (regla del cliente — aplica
+    también al VGV). Compartida por el PDF de un avión y el de grupo (una
+    ficha por modelo). Devuelve '' si no hay nada que mostrar.
+    """
     vistazo_html = ""
     if vistazo:
         filas_vz = "".join(
@@ -485,13 +402,13 @@ def _build_html(r: CotizacionPdfRequest) -> str:
         )
 
     chips = " &nbsp;·&nbsp; ".join(
-        escape(c.strip()) for c in r.avion_caracteristicas if c and c.strip()
+        escape(c.strip()) for c in caracteristicas if c and c.strip()
     )
     caracts_html = f'<div class="caracts">{chips}</div>' if chips else ""
 
     # La foto ANCHA de arriba: exterior; si solo hay interior, sube esa.
-    foto_ancha = r.foto_exterior or r.foto_interior
-    foto_abajo = r.foto_interior if r.foto_exterior else None
+    foto_ancha = foto_exterior or foto_interior
+    foto_abajo = foto_interior if foto_exterior else None
     ancha_html = (
         f'<img class="foto-ancha" src="{foto_ancha}" alt=""/>' if foto_ancha else ""
     )
@@ -509,23 +426,25 @@ def _build_html(r: CotizacionPdfRequest) -> str:
     else:
         fila_html = vistazo_html
 
-    fotos_html = ""
-    if ancha_html or fila_html or caracts_html:
-        titulo_avion = escape(r.avion_modelo) if r.avion_modelo else "La aeronave"
-        fotos_html = f"""
+    if not (ancha_html or fila_html or caracts_html):
+        return ""
+    titulo_avion = escape(modelo) if modelo else "La aeronave"
+    return f"""
         <div class="av-titulo">{titulo_avion}</div>
         <div class="av-linea"></div>
         {ancha_html}
         {fila_html}
         {caracts_html}"""
 
-    detalles_html = (
-        f'<div class="detalles">{fotos_html}</div>' if fotos_html else ""
-    )
 
-    return f"""<!doctype html>
-<html><head><meta charset="utf-8"><style>
-  /* Pie en TODAS las hojas (26-ago v3): la web al centro y el paginado a
+def _estilos_base() -> str:
+    """CSS COMPARTIDO de los PDF de cotización (un avión y grupo, 4-sep):
+    @page con pie/paginado, membrete navy, marca de agua, tablas, mapa,
+    desglose/totales y la hoja "La aeronave". Vive aquí (fuente única) y
+    `cotizacion_grupo_pdf` lo importa: un cambio de branding se hace una
+    sola vez. Devuelve el contenido del <style> tal cual (sin la etiqueta).
+    """
+    return f"""  /* Pie en TODAS las hojas (26-ago v3): la web al centro y el paginado a
      la derecha; la hoja 1 además conserva su leyenda de horarios/gracias. */
   @page {{
     size: Letter;
@@ -616,7 +535,139 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   .vz-val {{ color: #ffffff; font-size: 16px; font-weight: 700; margin-top: 1px; }}
   .caracts {{ margin-top: 12px; background: #f3f4f6; border-radius: 10px;
               padding: 11px 14px; font-size: 12px; color: #374151;
-              text-align: center; }}
+              text-align: center; }}"""
+
+
+def _build_html(r: CotizacionPdfRequest) -> str:
+    # Matrículas OCULTAS en la cotización (regla 26-ago): el cliente no debe
+    # ver qué avión es — EXCEPTO el VGV, que sí se comercializa por matrícula.
+    mostrar_matricula = _mostrar_matricula(r.matricula)
+    # Título con la RUTA COMPLETA (26-ago): "CUN → CTM → CUN", no solo
+    # origen→destino. Fuente más chica si la ruta es larga (multiescala).
+    # Si el API ya mandó la ruta VISIBLE resuelta (tramos ocultos con los
+    # huecos unidos, 31-ago) se usa TAL CUAL; el walk local queda solo como
+    # fallback para payloads viejos (skew tolerante).
+    if r.ruta:
+        ruta_titulo = escape(r.ruta)
+    elif r.escalas:
+        ordenadas = sorted(r.escalas, key=lambda x: x.orden)
+        puntos = [ordenadas[0].origen] + [e.destino for e in ordenadas]
+        ruta_titulo = " → ".join(escape(pt) for pt in puntos)
+    else:
+        ruta_titulo = f"{escape(r.origen)} → {escape(r.destino)}"
+    n_puntos = ruta_titulo.count("→") + 1
+    ruta_font = "26px" if n_puntos <= 4 else ("20px" if n_puntos <= 6 else "16px")
+
+    # Mapa JUNTO al itinerario en la hoja 1 (26-ago v3, pedido del cliente):
+    # tabla de tramos a la izquierda, mapa a la derecha (layout de tabla —
+    # WeasyPrint lo respeta siempre). Sin puntos de mapa, la tabla va sola.
+    mapa_html = _mapa_svg(r.mapa_puntos)
+    escalas_html = _itinerario_html(r.escalas, mapa_html, r.mostrar_itinerario)
+
+    notas_html = (
+        f'<div class="notas"><strong>Notas:</strong> {escape(r.notas)}</div>' if r.notas else ""
+    )
+
+    # ----- Desglose SIN horas (26-ago, regla del cliente): ni tiempo
+    # cobrable ni tarifa por hora — el servicio se presenta como monto. -----
+    filas: list[str] = []
+
+    def fila(lbl: str, val: str) -> None:
+        filas.append(f'<tr><td class="lbl">{escape(lbl)}</td><td class="val">{val}</td></tr>')
+
+    # Tarifa por hora VISIBLE solo si la cotización lo pide (27-ago).
+    if (
+        r.mostrar_tarifa_hora
+        and r.tiempo_cobrable_hr
+        and r.tarifa_hora_usd
+        and r.tiempo_cobrable_hr > 0
+        and r.tarifa_hora_usd > 0
+    ):
+        fila(
+            f"Servicio aéreo ({r.tiempo_cobrable_hr:g} h × "
+            f"{_money(r.tarifa_hora_usd)}/hr)",
+            _money(r.subtotal_usd),
+        )
+    else:
+        fila("Servicio aéreo", _money(r.subtotal_usd))
+    if not r.tuas_detalle:
+        fila("TUAS", _money(r.tuas_usd))
+    elif len(r.tuas_detalle) == 1:
+        fila(r.tuas_detalle[0], _money(r.tuas_usd))
+    else:
+        for det in r.tuas_detalle:
+            fila(det, "")
+        fila("TUAS (total)", _money(r.tuas_usd))
+    for e in r.extras:
+        lbl = e.concepto or "Extra"
+        if e.moneda == "MXN" and e.monto_nativo is not None:
+            lbl += f" · ${e.monto_nativo:,.2f} MXN"
+        fila(lbl, _money(e.monto_usd))
+    if r.viaticos_pernocta_usd > 0:
+        fila("Viáticos por pernocta", _money(r.viaticos_pernocta_usd))
+    if r.descuento_usd > 0:
+        fila("Descuento", f"&minus;{_money(r.descuento_usd)}")
+    # Subtotal SIN IVA antes del IVA (27-ago, pedido del cliente). Se deriva
+    # del total canónico (total − IVA) para cuadrar exacto con el desglose.
+    filas.append(
+        '<tr class="sub-row"><td class="lbl">Subtotal (sin IVA)</td>'
+        f'<td class="val">{_money(r.total_usd - r.iva_usd)}</td></tr>'
+    )
+    fila(f"IVA ({r.iva_pct:.0f}%)", _money(r.iva_usd))
+    desglose_html = "".join(filas)
+    total_row_html = (
+        f'<tr class="total-row"><td>Total ({escape(r.moneda)})</td>'
+        f'<td class="val">{_money(r.total_usd)}</td></tr>'
+    )
+
+    total_mxn_html = ""
+    if r.total_mxn is not None:
+        tc_txt = f" (T.C. {r.tc_usd_mxn:g})" if r.tc_usd_mxn else ""
+        total_mxn_html = (
+            f'<tr class="total-mxn"><td>Total MXN{escape(tc_txt)}</td>'
+            f'<td class="val">{_money(r.total_mxn)} MXN</td></tr>'
+        )
+
+    # ----- Marca de agua + logo del membrete -----
+    logo_blanco = _logo_data_uri("logo-vuelatour-blanco.png")
+    logo_marca = _logo_data_uri("logo-vuelatour.png")
+    logo_header_html = (
+        f'<img class="logo" src="{logo_blanco}" alt=""/>' if logo_blanco else ""
+    )
+    marca_html = (
+        f'<div class="marca"><img src="{logo_marca}" alt=""/></div>' if logo_marca else ""
+    )
+
+
+    # ----- Página "La aeronave" (26-ago v2, mockup del cliente) -----
+    # Exterior ANCHO arriba; abajo interior + tarjeta "De un vistazo";
+    # tira de características comerciales al pie. SIN matrícula en esta hoja
+    # (regla del cliente — aplica también al VGV; la página 1 conserva su
+    # propia regla de matrícula).
+    vistazo: list[tuple[str, str]] = []
+    if r.avion_pasajeros:
+        vistazo.append(("Pasajeros", f"{r.avion_pasajeros} máx."))
+    if r.avion_velocidad_kts:
+        vistazo.append(_vistazo_velocidad(r.avion_velocidad_kts))
+    if r.avion_tiempo_tramo_hr and r.avion_tiempo_tramo_hr > 0:
+        th = int(r.avion_tiempo_tramo_hr)
+        tm = int(round((r.avion_tiempo_tramo_hr - th) * 60))
+        if tm == 60:
+            th, tm = th + 1, 0
+        vistazo.append(("Tiempo de vuelo", f"{th}:{tm:02d} h por tramo"))
+    if r.avion_num_motores:
+        vistazo.append(_vistazo_motores(r.avion_num_motores, r.avion_motor_hp))
+    fotos_html = _ficha_aeronave_html(
+        r.avion_modelo, r.foto_exterior, r.foto_interior, vistazo, r.avion_caracteristicas
+    )
+
+    detalles_html = (
+        f'<div class="detalles">{fotos_html}</div>' if fotos_html else ""
+    )
+
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><style>
+{_estilos_base()}
 </style></head><body>
   {marca_html}
   <div class="header">

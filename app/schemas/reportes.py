@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class EscalaPdf(BaseModel):
@@ -108,6 +108,121 @@ class CotizacionPdfRequest(BaseModel):
     avion_tiempo_tramo_hr: float | None = None
     mapa_puntos: list[MapaPuntoPdf] = Field(default_factory=list)
 
+
+
+# ===== Cotización de GRUPO (4-sep-2026): varios aviones para un mismo
+# cliente, UN documento y UN total. El API (`groups-pdf.service`) manda el
+# consolidado YA calculado (Σ de los desgloses canónicos de los hijos vivos,
+# comisión del vendedor y redondeo absorbidos en "Servicio aéreo"); aquí
+# SOLO se pinta. TODO con default y extra="ignore" (aditivo): tolera skew de
+# deploy en ambos sentidos. =====
+class CotizacionGrupoTramoPdf(EscalaPdf):
+    """Tramo de la plantilla comercial del grupo (solo visibles, renumerados
+    1..N por el API). Hereda orden/origen/destino/fecha de `EscalaPdf` para
+    reusar la tabla de itinerario del PDF de un avión."""
+
+    es_ferry: bool = False
+    requiere_pernocta: bool = False
+    tipo_parada: str = "NORMAL"
+    servicio_notas: str | None = None
+
+
+class CotizacionGrupoLineaPdf(BaseModel):
+    """Línea del desglose consolidado APTA para el cliente. `cantidad` ×
+    `unitario` viajan cuando la línea nació así (tour por persona: "44 ×
+    $85.00"); `moneda` es la nativa de la línea (MXN en extras en pesos)."""
+
+    clave: str = ""
+    concepto: str = ""
+    monto_usd: float = 0
+    cantidad: float | None = None
+    unitario: float | None = None
+    moneda: str | None = None
+
+
+class CotizacionGrupoExtraPdf(ExtraPdf):
+    """Extra del grupo (misma forma que `ExtraPdf` + cantidad × unitario)."""
+
+    cantidad: float | None = None
+    unitario: float | None = None
+
+
+class CotizacionGrupoAvionPdf(BaseModel):
+    """Un avión del grupo (hijo vivo). `matricula` SIEMPRE viaja: la plantilla
+    aplica la regla vigente de mostrarla o no (oculta salvo VGV).
+    `subtotal_usd` (total del hijo) se pinta SOLO con
+    `mostrar_subtotal_por_avion`; `tarifa_hora_usd` SOLO con `mostrar_tarifa`.
+    Fotos: data URI base64 (solo el PRIMER avión de cada modelo las trae) con
+    la URL pública como respaldo."""
+
+    posicion: int = 0
+    modelo: str | None = None
+    matricula: str | None = None
+    asientos: int | None = None
+    pasajeros: int = 0
+    rotaciones: int = 1
+    tiempo_hr: float | None = None
+    salida_estimada: str | None = None
+    subtotal_usd: float | None = None
+    tarifa_hora_usd: float | None = None
+    velocidad_kts: float | None = None
+    num_motores: int | None = None
+    motor_hp: int | None = None
+    caracteristicas: list[str] = Field(default_factory=list)
+    foto_exterior: str | None = None
+    foto_interior: str | None = None
+    foto_exterior_url: str | None = None
+    foto_interior_url: str | None = None
+
+
+class CotizacionGrupoPdfRequest(BaseModel):
+    """Payload de `POST /reportes/cotizacion-grupo` (contrato
+    `CotizacionGrupoPdfRequest` de pyservices.service.ts)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    folio_grupo: str = ""  # "G-12"
+    folio: int = 0
+    nombre: str = ""
+    empresa: str = "VuelaTour — Aero Charter Cancún"
+    cliente: str = "Cliente"
+    fecha: str | None = None  # ISO de la salida del grupo
+    pasajeros_total: int = 0
+    aviones_total: int = 0
+    # Ruta VISIBLE ya resuelta por el API ("CUN → CZA → CUN").
+    ruta: str | None = None
+    itinerario: list[CotizacionGrupoTramoPdf] = Field(default_factory=list)
+    mapa_puntos: list[MapaPuntoPdf] = Field(default_factory=list)
+    # Desglose consolidado apto para el cliente, en el orden del API. NUNCA
+    # trae COMISION_VENDEDOR ni redondeo; la plantilla los filtra igual.
+    desglose_consolidado: list[CotizacionGrupoLineaPdf] = Field(default_factory=list)
+    servicio_aereo_usd: float = 0
+    horas_total_hr: float = 0
+    tuas_usd: float = 0
+    tuas_detalle: list[str] = Field(default_factory=list)
+    extras: list[CotizacionGrupoExtraPdf] = Field(default_factory=list)
+    extras_total_usd: float = 0
+    viaticos_pernocta_usd: float = 0
+    descuento_usd: float = 0
+    # = total − IVA (lo manda el API); None (API viejo) → se deriva igual
+    # que en el PDF de un avión.
+    subtotal_usd: float | None = None
+    iva_pct: float = 0
+    iva_usd: float = 0
+    total_usd: float = 0
+    total_mxn: float | None = None
+    tc_usd_mxn: float | None = None
+    precio_por_persona_usd: float | None = None
+    moneda: str = "USD"
+    # Toggles de presentación (defaults = los de la cabecera vuelo_grupo).
+    mostrar_precio_por_persona: bool = True
+    mostrar_tarifa: bool = False
+    mostrar_anexo_aviones: bool = True
+    mostrar_subtotal_por_avion: bool = False
+    mostrar_itinerario: bool = True
+    aviones: list[CotizacionGrupoAvionPdf] = Field(default_factory=list)
+    notas: str | None = None
+    condiciones: str | None = None  # reservado (texto de condiciones)
 
 
 # ===== Recibo de pago por cobro (documento NO fiscal). El API manda TODO
