@@ -139,6 +139,27 @@ def _build_html(r: ReciboPdfRequest) -> str:
         f'<div class="aviso">AVISO: {escape(r.sin_tc_nota)}</div>' if r.sin_tc_nota else ""
     )
 
+    # Sobre de grupo: el folio ya viene como "G-12" (sin '#') y `ruta` trae
+
+    # el concepto del grupo; un vuelo normal sigue como "Vuelo: #n · ruta".
+
+    if r.grupo_folio:
+
+        referencia_html = (
+
+            f"<strong>Grupo:</strong> {escape(r.grupo_folio)} · {escape(r.ruta)}"
+
+        )
+
+    else:
+
+        referencia_html = (
+
+            f"<strong>Vuelo:</strong> #{escape(r.vuelo_folio)} · {escape(r.ruta)}"
+
+        )
+
+
     fecha_vuelo_html = (
         f"<br><strong>Fecha del vuelo:</strong> {_fecha_legible(r.fecha_vuelo, con_hora=False)}"
         if r.fecha_vuelo
@@ -215,7 +236,7 @@ def _build_html(r: ReciboPdfRequest) -> str:
   <div class="folio">Recibo {escape(r.folio_recibo) or "de pago"}</div>
   <div class="meta">
     <div><strong>Cliente:</strong> {escape(r.cliente) or "Cliente"}<br>
-      <strong>Vuelo:</strong> #{escape(r.vuelo_folio)} · {escape(r.ruta)}{fecha_vuelo_html}</div>
+      {referencia_html}{fecha_vuelo_html}</div>
     <div style="text-align:right"><strong>Fecha del cobro:</strong>
       {_fecha_legible(r.fecha_cobro)}</div>
   </div>

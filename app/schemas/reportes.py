@@ -258,6 +258,12 @@ class ReciboPdfRequest(BaseModel):
     metodo: str = ""
     cuenta_destino: str | None = None
     referencia: str | None = None
+    # Recibo de un SOBRE de grupo (4-sep-2026): el API manda vuelo_folio="G-12"
+    # y en `ruta` el concepto ("7 aeronaves · 44 pasajeros · CUN → CZA → CUN").
+    # Aditivo: con grupo_folio se etiqueta "Grupo" en vez de "Vuelo".
+    grupo_folio: str | None = None
+    aviones_n: int | None = None
+    pasajeros_total: int | None = None
     # Resumen del vuelo (fuente única cobrosEnUsd, neto de reembolsos).
     total_cotizacion_usd: float = 0
     cobrado_a_la_fecha_usd: float = 0
