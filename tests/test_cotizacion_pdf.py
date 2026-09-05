@@ -273,3 +273,92 @@ def test_fecha_dia_es_mx_sin_zona() -> None:
     # Texto no parseable: tal cual (escapado), nunca una excepción.
     assert _fecha_dia("basura") == "basura"
     assert _fecha_dia("<x>") == "&lt;x&gt;"
+
+
+# ===== Modelo del avión COTIZADO en la hoja 1 (feedback del cliente 4-sep-2026) =====
+# El cliente quiere ver el TIPO de avión con el que se cotizó (a veces la
+# ruta operativa va en otro), NUNCA la matrícula. Sin los campos (API viejo)
+# la hoja 1 queda igual que siempre.
+
+
+def _meta(html: str) -> str:
+    """Bloque `.meta` (folio/cliente/fecha/tipo) de la hoja 1."""
+    return html[html.index('class="meta"') : html.index('class="route"')]
+
+
+def test_hoja1_pinta_el_modelo_cotizado_y_nunca_la_matricula() -> None:
+    html = _build_html(_req(aeronave_cotizada_modelo="Piper Seneca V", matricula="XB-ABC"))
+    meta = _meta(html)
+    assert "<strong>Aeronave cotizada:</strong> Piper Seneca V" in meta
+    # Junto a fecha/tipo, en la columna derecha (después de "Tipo:").
+    assert meta.index("<strong>Tipo:</strong>") < meta.index("Aeronave cotizada:")
+    # La matrícula (no VGV) no sale en NINGÚN lado de la hoja.
+    assert "XB-ABC" not in html
+    assert "Aeronaves cotizadas" not in html
+
+
+def test_hoja1_varios_modelos_en_orden_de_tramo() -> None:
+    html = _build_html(
+        _req(
+            aeronave_cotizada_modelo="Kodiak 100",
+            modelos_cotizados=["Kodiak 100", "Cessna 206"],
+            matricula="XB-ABC",
+        )
+    )
+    assert "<strong>Aeronaves cotizadas:</strong> Kodiak 100 · Cessna 206" in _meta(html)
+    assert "Aeronave cotizada:" not in html
+    assert "XB-ABC" not in html
+
+
+def test_hoja1_modelos_cotizados_gana_sobre_el_modelo_unico_y_se_depura() -> None:
+    # Repetidos, espacios y (defensivo) una matrícula colada entre los modelos.
+    html = _build_html(
+        _req(
+            aeronave_cotizada_modelo="Otro",
+            modelos_cotizados=["Kodiak 100", " Kodiak 100 ", "", "XB-ABC"],
+            matricula="XB-ABC",
+        )
+    )
+    assert "<strong>Aeronave cotizada:</strong> Kodiak 100" in _meta(html)
+    assert "Otro" not in _meta(html)
+    assert "XB-ABC" not in html
+
+
+def test_hoja1_sin_modelo_no_pinta_la_linea() -> None:
+    # API viejo: sin ninguno de los campos nuevos. `avion_modelo` (ficha de la
+    # hoja 2) NO alimenta la línea: el modelo cotizado es otro contrato.
+    for req in (_req(), _req(avion_modelo="Piper Seneca V"), _req(modelos_cotizados=[])):
+        html = _build_html(req)
+        assert "Aeronave cotizada" not in html
+        assert "Aeronaves cotizadas" not in html
+    # Modelo en blanco tampoco.
+    assert "Aeronave cotizada" not in _build_html(_req(aeronave_cotizada_modelo="  "))
+
+
+def test_hoja1_vgv_conserva_su_regla_pero_la_linea_nueva_va_sin_matricula() -> None:
+    html = _build_html(_req(aeronave_cotizada_modelo="Kodiak 100", matricula="XA-VGV"))
+    meta = _meta(html)
+    assert "<strong>Aeronave cotizada:</strong> Kodiak 100" in meta
+    assert "VGV" not in meta
+    # La sublínea de la ruta sigue mostrando el VGV (regla 26-ago intacta).
+    assert "· XA-VGV" in html
+
+
+def test_hoja1_avion_externo_no_duplica_el_modelo() -> None:
+    # El externo ya se presenta bajo la ruta como "MODELO · MATRÍCULA" (§9.1):
+    # la línea de la cabecera no se repite.
+    html = _build_html(
+        _req(
+            aeronave_cotizada_modelo="HAWKER 400 A",
+            avion_externo="HAWKER 400 A · XA-REG",
+        )
+    )
+    assert "Aeronave cotizada" not in html
+    assert html.count("HAWKER 400 A") == 1
+    assert "HAWKER 400 A · XA-REG" in html
+
+
+def test_modelo_cotizado_se_escapa() -> None:
+    html = _build_html(_req(aeronave_cotizada_modelo="Cessna <206>"))
+    assert "Cessna &lt;206&gt;" in _meta(html)
+    assert "<206>" not in html

@@ -482,3 +482,67 @@ def test_router_error_de_render_es_500_con_detalle(monkeypatch) -> None:
     )
     assert res.status_code == 500
     assert "libgobject" in res.json()["detail"]
+
+
+# ===== TUAS con la operación visible (feedback del cliente 4-sep-2026) =====
+# Con cantidad (pax gravados) + unitario nativo la línea se lee
+# «TUA CZA · 44 pax × $20.85»; sin ellos, como siempre. El monto es del API.
+
+
+def test_tuas_con_unitario_pinta_pax_por_tarifa_sin_tocar_el_monto() -> None:
+    lineas = [
+        ln
+        for ln in _payload()["desglose_consolidado"]
+        if ln["clave"] != "TUAS"
+    ]
+    lineas[1:1] = [
+        # Contrato 5-sep: concepto "TUA CZA" + cantidad/unitario/moneda.
+        {
+            "clave": "TUAS",
+            "concepto": "TUA CZA",
+            "monto_usd": 917.4,
+            "cantidad": 44,
+            "unitario": 20.85,
+            "moneda": "USD",
+        },
+        # Unitario nativo en pesos: el monto sigue en USD, la operación en MXN.
+        {
+            "clave": "TUAS",
+            "concepto": "TUA PCE",
+            "monto_usd": 73.47,
+            "cantidad": 4,
+            "unitario": 330.6,
+            "moneda": "MXN",
+        },
+        # Legado "TUA CUN · 5 pax" + números: no se duplica el pax.
+        {
+            "clave": "TUAS",
+            "concepto": "TUA CUN · 5 pax",
+            "monto_usd": 125.0,
+            "cantidad": 5,
+            "unitario": 25,
+        },
+    ]
+    html = _html(desglose_consolidado=lineas)
+    assert '<td class="lbl">TUA CZA · 44 pax × $20.85</td><td class="val">$917.40</td>' in html
+    assert '<td class="lbl">TUA PCE · 4 pax × $330.60 MXN</td><td class="val">$73.47</td>' in html
+    assert '<td class="lbl">TUA CUN · 5 pax × $25.00</td><td class="val">$125.00</td>' in html
+    assert "5 pax · 5 pax" not in html
+    assert "TUA CZA · 44 × $20.85" not in html  # los pasajeros se leen como pax
+    # Los extras conservan su forma "n × $u" (sin "pax").
+    assert "Camionetas · 2 × $250.00" in html
+    assert "Tour Chichén Itzá · 44 × $85.00" in html
+
+
+def test_tuas_sin_unitario_queda_como_hoy() -> None:
+    html = _html()
+    assert '<td class="lbl">TUA CZA · 44 pax</td><td class="val">$792.00</td>' in html
+    assert '<td class="lbl">TUA CUN · 5 pax</td><td class="val">$125.00</td>' in html
+    assert "pax ×" not in html
+    # Solo cantidad (sin unitario) o solo unitario: tampoco se inventa la operación.
+    lineas = _payload()["desglose_consolidado"]
+    lineas[1] = {**lineas[1], "cantidad": 44}
+    lineas[2] = {**lineas[2], "unitario": 25}
+    html = _html(desglose_consolidado=lineas)
+    assert "TUA CZA · 44 pax</td>" in html and "TUA CUN · 5 pax</td>" in html
+    assert "pax ×" not in html

@@ -25,8 +25,13 @@ Reglas del cliente heredadas del PDF de un avión:
     (el API ya los absorbe en "Servicio aéreo"; aquí se filtra por clave
     por si acaso).
   - Sin horas de vuelo ni tarifa por hora salvo `mostrar_tarifa`.
+  - TUAS (5-sep-2026, «que se vea sutilmente la operación»): cuando la
+    línea trae cantidad (pax gravados) y unitario nativo se pinta
+    «TUA CZA · 44 pax × $20.85[ MXN]»; sin ellos, el concepto tal cual
+    («TUA CZA · 44 pax»). El monto nunca se toca.
 """
 
+import re
 from html import escape
 
 from app.schemas.reportes import (
@@ -70,16 +75,33 @@ def _monto(v: float) -> str:
     return f"&minus;{_money(-v)}" if v < 0 else _money(v)
 
 
+# Sufijo "· 44 pax" del concepto TUAS legado ("TUA CZA · 44 pax"): se quita
+# antes de agregar "44 pax × $20.85" para no repetir los pasajeros.
+_RE_PAX_SUFIJO = re.compile(r"\s*·\s*\d+\s*pax\s*$", re.IGNORECASE)
+
+
 def _etiqueta_linea(ln: CotizacionGrupoLineaPdf) -> str:
     """Concepto TAL CUAL viene. Agrega "cantidad × unitario" SOLO si la línea
     los trae y el concepto no los incluye ya (el API los escribe en el
     concepto — "Tour Chichén Itzá · 44 × $85.00" — pero se tolera un payload
-    que solo mande los números)."""
+    que solo mande los números).
+
+    TUAS (5-sep): la cantidad son PASAJEROS gravados, así que la operación
+    se lee «TUA CZA · 44 pax × $20.85» (+ " MXN" si el unitario es nativo en
+    pesos). El API manda el concepto "TUA CZA" cuando el unitario es
+    uniforme; si llegara el legado "TUA CZA · 44 pax" junto con los números
+    se quita ese sufijo para no duplicar el pax. Sin cantidad/unitario la
+    línea queda como hoy. El monto no se toca."""
     lbl = ln.concepto or ln.clave or "Concepto"
-    if ln.cantidad is not None and ln.unitario is not None and "×" not in lbl:
+    if ln.cantidad is None or ln.unitario is None or "×" in lbl:
+        return lbl
+    if (ln.clave or "").upper() == "TUAS":
+        lbl = _RE_PAX_SUFIJO.sub("", lbl) or lbl
+        lbl += f" · {ln.cantidad:g} pax × {_money(ln.unitario)}"
+    else:
         lbl += f" · {ln.cantidad:g} × {_money(ln.unitario)}"
-        if (ln.moneda or "USD").upper() == "MXN":
-            lbl += " MXN"
+    if (ln.moneda or "USD").upper() == "MXN":
+        lbl += " MXN"
     return lbl
 
 

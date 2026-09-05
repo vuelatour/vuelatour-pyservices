@@ -107,6 +107,15 @@ class CotizacionPdfRequest(BaseModel):
     # Duración estimada del tramo MÁS LARGO del viaje (horas decimales).
     avion_tiempo_tramo_hr: float | None = None
     mapa_puntos: list[MapaPuntoPdf] = Field(default_factory=list)
+    # ===== Avión COTIZADO en la hoja 1 (feedback del cliente 4-sep-2026):
+    # el MODELO con el que se pactó (snapshot) — a veces se cotiza en un
+    # avión y la ruta operativa va en otro. NUNCA matrícula. Con tramos en
+    # aviones distintos el API manda los modelos distintos en orden de
+    # tramo (`modelos_cotizados`); si viene vacío se usa
+    # `aeronave_cotizada_modelo`. ADITIVO: sin los campos (API viejo) la
+    # hoja 1 no pinta la línea.
+    aeronave_cotizada_modelo: str | None = None
+    modelos_cotizados: list[str] = Field(default_factory=list)
 
 
 

@@ -538,6 +538,44 @@ def _estilos_base() -> str:
               text-align: center; }}"""
 
 
+def _modelos_cotizados(r: CotizacionPdfRequest) -> list[str]:
+    """Modelos del avión COTIZADO para la hoja 1 (feedback del cliente
+    4-sep-2026): `modelos_cotizados` (tramos en aviones distintos, en orden
+    de tramo) o, si viene vacío, `aeronave_cotizada_modelo` (el del
+    snapshot). Limpia espacios y repetidos conservando el orden. JAMÁS una
+    matrícula: si el API mandara la del vuelo entre los modelos se descarta
+    aquí (cinturón; la sublínea de la ruta sigue con `_mostrar_matricula`).
+    Sin campos (API viejo) → [] y la hoja 1 no pinta nada."""
+    crudos: list[str | None] = list(r.modelos_cotizados) or [r.aeronave_cotizada_modelo]
+    matricula = (r.matricula or "").strip().upper()
+    vistos: set[str] = set()
+    modelos: list[str] = []
+    for m in crudos:
+        txt = (m or "").strip()
+        if not txt or (matricula and matricula in txt.upper()):
+            continue
+        if txt.casefold() in vistos:
+            continue
+        vistos.add(txt.casefold())
+        modelos.append(txt)
+    return modelos
+
+
+def _aeronave_cotizada_html(r: CotizacionPdfRequest) -> str:
+    """Línea «Aeronave cotizada: Piper Seneca V» (o «Aeronaves cotizadas:
+    Kodiak 100 · Cessna 206») para la columna derecha de `.meta`, mismo
+    estilo sutil que Fecha/Tipo (sin CSS nuevo). Vacía sin modelo. Con avión
+    EXTERNO no se repite: su ficha ("MODELO · MATRÍCULA", diseño §9.1) ya va
+    bajo la ruta."""
+    if r.avion_externo:
+        return ""
+    modelos = _modelos_cotizados(r)
+    if not modelos:
+        return ""
+    etiqueta = "Aeronave cotizada" if len(modelos) == 1 else "Aeronaves cotizadas"
+    return f"<br>\n      <strong>{etiqueta}:</strong> {escape(' · '.join(modelos))}"
+
+
 def _build_html(r: CotizacionPdfRequest) -> str:
     # Matrículas OCULTAS en la cotización (regla 26-ago): el cliente no debe
     # ver qué avión es — EXCEPTO el VGV, que sí se comercializa por matrícula.
@@ -665,6 +703,10 @@ def _build_html(r: CotizacionPdfRequest) -> str:
         f'<div class="detalles">{fotos_html}</div>' if fotos_html else ""
     )
 
+    # Modelo COTIZADO junto a fecha/tipo (4-sep, feedback del cliente):
+    # el tipo de avión pactado, nunca la matrícula. Vacío con API viejo.
+    aeronave_html = _aeronave_cotizada_html(r)
+
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
 {_estilos_base()}
@@ -681,7 +723,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   <div class="meta">
     <div><strong>Folio:</strong> #{escape(r.folio)}<br><strong>Cliente:</strong> {escape(r.cliente)}</div>
     <div style="text-align:right"><strong>Fecha de cotización:</strong> {_fecha_legible(r.fecha)}<br>
-      <strong>Tipo:</strong> {escape(r.tipo)}</div>
+      <strong>Tipo:</strong> {escape(r.tipo)}{aeronave_html}</div>
   </div>
 
   <div class="route" style="font-size:{ruta_font}">{ruta_titulo}</div>
