@@ -33,6 +33,17 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   precio por persona vienen del API; nunca pintar COMISION_VENDEDOR,
   redondeo ni AJUSTE positivo. Toggles `mostrar_*` mandan. El recibo
   (`/pdf/recibo`) etiqueta "Grupo" cuando viene `grupo_folio`.
+- Cotización INTERNA (`/reportes/cotizacion-interna`, 8-sep-2026):
+  `cotizacion_interna_pdf.py` es UNA hoja carta para la oficina y NUNCA va
+  al cliente (banda «Cotización interna · uso exclusivo de oficina», pie
+  «Documento interno · generado … · usuario»). Importa branding/formatos de
+  `cotizacion_pdf.py` pero NO `_estilos_base` ni `_mostrar_matricula`: aquí
+  la matrícula SIEMPRE se ve (cabecera y por tramo), sin fotos/ficha/mapa,
+  y SÍ se pintan comisión del vendedor, redondeo/ajuste, partición del
+  ingreso, tacómetros, cobros con comisión bancaria y gastos. Todo llega
+  calculado del API (desglose canónico, cobrosEnUsd, particionIngresoVuelo,
+  pagoVendedorUsd); las operaciones («1.60 h × $950.00/hr») solo se pintan.
+  Presupuesto: cabe en una hoja hasta ~8 tramos; las notas se truncan con «…».
 
 ## IA
 

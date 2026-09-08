@@ -5,9 +5,14 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from app.schemas.reportes import CotizacionGrupoPdfRequest, CotizacionPdfRequest
+from app.schemas.reportes import (
+    CotizacionGrupoPdfRequest,
+    CotizacionInternaPdfRequest,
+    CotizacionPdfRequest,
+)
 from app.security import require_internal_token
 from app.services.cotizacion_grupo_pdf import render_cotizacion_grupo_pdf
+from app.services.cotizacion_interna_pdf import render_cotizacion_interna_pdf
 from app.services.cotizacion_pdf import render_cotizacion_pdf
 
 logger = logging.getLogger("reportes")
@@ -56,4 +61,19 @@ def cotizacion_grupo_pdf(req: CotizacionGrupoPdfRequest) -> Response:
         content=pdf,
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="cotizacion-grupo-{folio}.pdf"'},
+    )
+
+
+@router.post("/cotizacion-interna")
+def cotizacion_interna_pdf(req: CotizacionInternaPdfRequest) -> Response:
+    """PDF de la COTIZACIÓN INTERNA (8-sep-2026): UNA hoja carta para la
+    oficina con matrícula, tacómetros, comisión del vendedor, partición del
+    ingreso, cobros con comisión bancaria y gastos. NUNCA va al cliente. El
+    API manda todo YA calculado; aquí SOLO se pinta."""
+    pdf = _render_o_http(render_cotizacion_interna_pdf, req, "cotización interna")
+    folio = re.sub(r"[^A-Za-z0-9_-]+", "", req.folio or "") or "sn"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="cotizacion-interna-{folio}.pdf"'},
     )
