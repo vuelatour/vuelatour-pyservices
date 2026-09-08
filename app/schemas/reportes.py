@@ -414,50 +414,67 @@ class ReporteVueloRequest(BaseModel):
     notas: str | None = None
 
 
-# ===== Cotización INTERNA (8-sep-2026): UNA hoja carta para la oficina con
-# TODO lo que el cliente nunca ve (matrícula, tacómetros, comisión del
-# vendedor, partición del ingreso, cobros con comisión bancaria, gastos).
-# El API (`quotes-pdf.service` → `PyservicesService.generateCotizacionInternaPdf`)
+# ===== Cotización INTERNA v2 (8-sep-2026): UNA hoja carta para la oficina
+# con SOLO lo de la COTIZACIÓN (feedback de administración con la foto de su
+# formato): fecha protagonista = día del vuelo, tabla de tramos desglosados
+# (RUTA con nombre de ciudad · FECHA · MILLAS · TIEMPO VUELO con calzos ·
+# COSTO POR HORA · TOTAL POR TRAMO), desglose canónico, TUAS solo las
+# COBRADAS, cobros compactos con comisión bancaria y notas internas. Nada de
+# operación (tacos, horas voladas, avión operativo, traslados) ni partición /
+# gastos / utilidad / CFDI: eso vive en el reporte del vuelo.
+# El API (`quotes-pdf-interno.util` → `PyservicesService.generateCotizacionInternaPdf`)
 # manda TODO ya calculado (desglose canónico v1.3 del snapshot, cobrosEnUsd,
-# particionIngresoVuelo, pagoVendedorUsd, horas derivadas): aquí SOLO se
-# pinta. TODO con default y extra="ignore" (aditivo, skew tolerante). =====
-class CotizacionInternaTramoPdf(BaseModel):
-    """Escala VIVA del vuelo (canceladas incluidas, sin filtro pdf_oculto):
-    plan, matrícula del tramo, tacómetros y horas cotizadas del snapshot."""
+# pagoVendedorUsd, `total_usd` por tramo y el ajuste contra la línea
+# TIEMPO_VUELO): aquí SOLO se pinta. TODO con default y extra="ignore"
+# (aditivo, skew tolerante): los campos de la v1 siguen aceptados y se ignoran. =====
+class CotizacionInternaTramoCotizadoPdf(BaseModel):
+    """Tramo COTIZADO (`snapshot.tramos[]`, ruta comercial congelada): una
+    fila de la tabla de administración. `tiempo_hr` es el tiempo COBRABLE del
+    tramo e INCLUYE el calzo (0.15 h por aterrizaje); `total_usd` =
+    round2(tiempo_hr × tarifa) lo calcula el API (único número nuevo)."""
 
     model_config = ConfigDict(extra="ignore")
 
-    orden: int = 0  # numeración visible 1..N
-    orden_real: int | None = None  # escala.orden (≥100 = operativo a mano)
-    origen: str = ""
-    destino: str = ""
-    pasajeros: int | None = None
-    fecha_plan: str | None = None  # ISO instante (se pinta en Cancún)
-    hora_salida: str | None = None
-    hora_llegada: str | None = None
-    matricula: str | None = None
-    piloto: str | None = None
-    taco_salida: float | None = None
-    taco_llegada: float | None = None
-    taco_salida_origen: str | None = None  # PILOTO|IA|DEDUCIDO|OFICINA
-    taco_llegada_origen: str | None = None
-    horas_taco: float | None = None
-    horas_cotizadas: float | None = None
+    orden: int = 0  # 1..N
+    ruta: str = ""  # "Cancun-Merida" (ciudad del catálogo → nombre → IATA)
+    origen_iata: str = ""
+    destino_iata: str = ""
+    origen_nombre: str = ""
+    destino_nombre: str = ""
+    fecha: str | None = None  # YYYY-MM-DD (pared Cancún)
+    millas: float | None = None  # millas náuticas del tramo
+    tiempo_hr: float = 0  # horas cobrables CON calzo (4 dec.)
+    tiempo_hhmm: str | None = None  # "01:18" (si falta se formatea de tiempo_hr)
+    tarifa_hora_usd: float | None = None  # única del vuelo salvo tarifa por tramo
+    total_usd: float = 0
+    pax: int | None = None  # 0 en ferry
     es_ferry: bool = False
-    solo_operativa: bool = False
-    es_sobrevuelo: bool = False
-    requiere_pernocta: bool = False
+    pernocta: bool = False
     pernocta_usd: float = 0
-    cancelado: bool = False
-    cancelada_motivo: str | None = None
-    revision_requerida: bool = False
+    tuas_usd: float = 0  # prorrateo del motor (informativo)
+    consolidado: bool = False  # fila ÚNICA de respaldo (snapshot sin tramos)
+
+
+class CotizacionInternaTuaCobradaPdf(BaseModel):
+    """TUA COBRADA (`snapshot.tuas.filas`: el motor ya excluye exentas/$0).
+    `total_usd` es igual a la línea TUAS del desglose canónico."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    iata: str = ""
+    pax: int = 0
+    unitario: float = 0  # por pax en moneda NATIVA
+    moneda: str = "USD"
+    total_nativo: float = 0
+    tc_aplicado: float | None = None  # None en USD
+    total_usd: float = 0
 
 
 class CotizacionInternaLineaPdf(CotizacionGrupoLineaPdf):
     """Línea del desglose canónico v1.3 TAL CUAL (Σ monto_usd == total_usd).
     Hereda clave/concepto/monto_usd/cantidad/unitario/moneda; agrega el
-    nativo MXN, el TC congelado y la bandera de TUA EXENTO (línea sintética
-    con monto 0 que el API inserta para que el exento se vea)."""
+    nativo MXN y el TC congelado. `exento` es LEGADO v1 (línea sintética de
+    TUA exento): la v2 no la pinta — solo viajan TUAS cobradas."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -496,37 +513,11 @@ class CotizacionInternaCobroPdf(BaseModel):
     registrado_por: str | None = None
 
 
-class CotizacionInternaGastoCategoriaPdf(BaseModel):
-    """Total de gastos del vuelo por categoría, YA en USD (el API convirtió
-    con tc_gasto / TC del vuelo; los MXN sin TC van aparte)."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    categoria: str = ""
-    etiqueta: str | None = None
-    total_usd: float = 0
-    n: int = 0
-
-
-class CotizacionInternaFacturaPdf(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    serie: str | None = None
-    folio: str | None = None
-    uuid_fiscal: str | None = None
-    estado: str | None = None
-    total: float | None = None
-    moneda: str | None = None
-    fecha_timbrado: str | None = None
-    facturado_a_nombre: str | None = None
-    cancelada: bool = False
-
-
 class CotizacionInternaPdfRequest(BaseModel):
     """Payload de `POST /reportes/cotizacion-interna` (contrato
-    `CotizacionInternaPdfRequest` de pyservices.service.ts). Nada se calcula
-    aquí: las operaciones («1.60 h × $950.00», «8.857 % = $3,236.36 → neto»)
-    solo se PINTAN con los números que manda el API."""
+    `CotizacionInternaPdfRequest` de pyservices.service.ts, v2 del 8-sep).
+    Nada se calcula aquí: las operaciones («2.60 h × $900.00», «8.857 % =
+    $3,236.36 → neto») solo se PINTAN con los números que manda el API."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -540,7 +531,9 @@ class CotizacionInternaPdfRequest(BaseModel):
     razon_social: str | None = None
     cliente_rfc: str | None = None
     es_broker: bool = False
-    fecha: str | None = None  # fecha de cotización (ISO)
+    fecha_vuelo: str | None = None  # YYYY-MM-DD (pared Cancún) — FECHA PROTAGONISTA
+    fecha_vuelo_fin: str | None = None  # YYYY-MM-DD solo si multi-día y difiere
+    fecha: str | None = None  # fecha de cotización (ISO) — se pinta en pequeño
     fecha_confirmacion: str | None = None
     tarifa_tipo: str | None = None  # PUBLICO | BROKER
     tarifa_tipo_label: str | None = None
@@ -555,14 +548,10 @@ class CotizacionInternaPdfRequest(BaseModel):
     cotizado_por: str | None = None
     aeronave_cotizada_modelo: str | None = None
     aeronave_cotizada_matricula: str | None = None  # SIEMPRE visible aquí
-    aeronave_operativa: str | None = None  # "Modelo · Matrícula" solo si difiere
     avion_externo: str | None = None
     operador_externo: str | None = None
     piloto: str | None = None
     copiloto: str | None = None
-    apoyos: list[str] = Field(default_factory=list)
-    fecha_traslado_inicial: str | None = None
-    fecha_traslado_final: str | None = None
     pasajeros: int = 0
     ruta: str | None = None
     itinerario_operativo: bool = False
@@ -573,20 +562,25 @@ class CotizacionInternaPdfRequest(BaseModel):
     grupo_posicion: int | None = None
     grupo_total_aviones: int | None = None
     combinado_con_folio: str | None = None
-    # (2) Itinerario y horas
-    tramos: list[CotizacionInternaTramoPdf] = Field(default_factory=list)
+    # (2) Tramos cotizados y horas (snapshot.tramos / snapshot.tiempos)
+    tramos_cotizados: list[CotizacionInternaTramoCotizadoPdf] = Field(default_factory=list)
+    tramos_tiempo_total_hr: float = 0  # Σ tiempo_hr
+    tramos_tiempo_total_hhmm: str | None = None  # "02:36"
+    tramos_total_usd: float = 0  # Σ total_usd (fila TOTAL)
+    # Línea TIEMPO_VUELO canónica − Σ tramos (0 si cuadra): Σ tramos + ajuste
+    # == «Servicio aéreo». Se pinta como fila aparte, nunca se reparte.
+    tramos_ajuste_usd: float = 0
+    tramos_ajuste_motivo: str | None = None  # "Hora mínima 1.0 h" · "Sobrevuelo 0.5 h" · …
     horas_cotizadas_hr: float | None = None
     vuelo_hr: float | None = None
     calzos_hr: float | None = None
     sobrevuelo_hr: float | None = None
-    horas_voladas_hr: float | None = None
-    delta_horas_hr: float | None = None  # voladas − cotizadas (lo calcula el API)
     tiempo_cobrable_hr: float | None = None
     hora_minima_aplicada: bool = False
     cobrable_override: bool = False
     # (3) Desglose interno (líneas canónicas + escalares espejo)
     lineas: list[CotizacionInternaLineaPdf] = Field(default_factory=list)
-    tuas_exentos: list[str] = Field(default_factory=list)
+    tuas_cobradas: list[CotizacionInternaTuaCobradaPdf] = Field(default_factory=list)
     subtotal_vuelo_usd: float = 0
     tuas_usd: float = 0
     extras_total_usd: float = 0
@@ -597,7 +591,6 @@ class CotizacionInternaPdfRequest(BaseModel):
     comision_vendedor_tarifa_hr: float | None = None
     iva_comision_vendedor_usd: float = 0
     pago_vendedor_usd: float | None = None
-    neto_vuelatour_usd: float | None = None
     ajuste_final_usd: float = 0
     descuento_usd: float | None = None
     redondeo_auto_usd: float | None = None
@@ -613,13 +606,6 @@ class CotizacionInternaPdfRequest(BaseModel):
     mxn_nativos: float | None = None
     version_motor: str | None = None
     calculado_at: str | None = None
-    venta_avion_usd: float | None = None
-    otros_ingresos_vuelatour_usd: float | None = None
-    iva_avion_usd: float | None = None
-    iva_vuelatour_usd: float | None = None
-    particion_fuente: str | None = None  # desglose | columnas | sin_precio
-    particion_inconsistente: bool = False
-    participacion_aviones: list[ReporteVueloParticipacion] = Field(default_factory=list)
     # (4) Cobros
     cobros: list[CotizacionInternaCobroPdf] = Field(default_factory=list)
     total_cobrado_usd: float = 0
@@ -632,25 +618,42 @@ class CotizacionInternaPdfRequest(BaseModel):
     semaforo_cobro: str | None = None  # verde | amarillo | rojo | gris
     semaforo_cobro_key: str | None = None
     semaforo_cobro_label: str | None = None
-    # (5) Gastos
-    gastos_por_categoria: list[CotizacionInternaGastoCategoriaPdf] = Field(default_factory=list)
+    # (5) Notas
+    notas_cliente: str | None = None  # no se pinta en la v2 (solo internas)
+    notas_internas: str | None = None
+    # (6) Pie
+    generado: str | None = None  # ISO instante
+    generado_cancun: str | None = None  # "YYYY-MM-DD HH:mm" ya en Cancún
+    generado_por: str | None = None
+    # ---- LEGADO v1 (API anterior al 8-sep): aceptados y NO pintados. Tipos
+    # laxos a propósito: solo sirven para que un payload viejo no truene. ----
+    tramos: list[dict[str, Any]] = Field(default_factory=list)
+    horas_voladas_hr: float | None = None
+    delta_horas_hr: float | None = None
+    aeronave_operativa: str | None = None
+    apoyos: list[str] = Field(default_factory=list)
+    fecha_traslado_inicial: str | None = None
+    fecha_traslado_final: str | None = None
+    tuas_exentos: list[str] = Field(default_factory=list)
+    neto_vuelatour_usd: float | None = None
+    venta_avion_usd: float | None = None
+    otros_ingresos_vuelatour_usd: float | None = None
+    iva_avion_usd: float | None = None
+    iva_vuelatour_usd: float | None = None
+    particion_fuente: str | None = None
+    particion_inconsistente: bool = False
+    participacion_aviones: list[dict[str, Any]] = Field(default_factory=list)
+    gastos_por_categoria: list[dict[str, Any]] = Field(default_factory=list)
     gastos_total_usd: float | None = None
     gastos_sin_tc_count: int = 0
     gastos_sin_tc_mxn: float = 0
     costo_externo_usd: float | None = None
     utilidad_bruta_usd: float | None = None
-    utilidad_base: str | None = None  # cobrado | total
-    # (6) Notas y CFDI
-    notas_cliente: str | None = None
-    notas_internas: str | None = None
+    utilidad_base: str | None = None
     facturado: bool = False
-    facturas: list[CotizacionInternaFacturaPdf] = Field(default_factory=list)
+    facturas: list[dict[str, Any]] = Field(default_factory=list)
     cfdi_estatus: str | None = None
     cfdi_folio: str | None = None
-    # (7) Pie
-    generado: str | None = None  # ISO instante
-    generado_cancun: str | None = None  # "YYYY-MM-DD HH:mm" ya en Cancún
-    generado_por: str | None = None
 
 
 # ===== Balance por avión (réplica sistematizada del Excel "Balance N990GG").

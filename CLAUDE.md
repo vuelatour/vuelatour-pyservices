@@ -33,17 +33,24 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   precio por persona vienen del API; nunca pintar COMISION_VENDEDOR,
   redondeo ni AJUSTE positivo. Toggles `mostrar_*` mandan. El recibo
   (`/pdf/recibo`) etiqueta "Grupo" cuando viene `grupo_folio`.
-- Cotización INTERNA (`/reportes/cotizacion-interna`, 8-sep-2026):
+- Cotización INTERNA v2 (`/reportes/cotizacion-interna`, 8-sep-2026):
   `cotizacion_interna_pdf.py` es UNA hoja carta para la oficina y NUNCA va
   al cliente (banda «Cotización interna · uso exclusivo de oficina», pie
   «Documento interno · generado … · usuario»). Importa branding/formatos de
   `cotizacion_pdf.py` pero NO `_estilos_base` ni `_mostrar_matricula`: aquí
-  la matrícula SIEMPRE se ve (cabecera y por tramo), sin fotos/ficha/mapa,
-  y SÍ se pintan comisión del vendedor, redondeo/ajuste, partición del
-  ingreso, tacómetros, cobros con comisión bancaria y gastos. Todo llega
-  calculado del API (desglose canónico, cobrosEnUsd, particionIngresoVuelo,
-  pagoVendedorUsd); las operaciones («1.60 h × $950.00/hr») solo se pintan.
-  Presupuesto: cabe en una hoja hasta ~8 tramos; las notas se truncan con «…».
+  la matrícula SIEMPRE se ve. Formato de administración: fecha protagonista
+  = DÍA DEL VUELO; tabla de tramos RUTA («Cancun-Merida») · FECHA («26-jun»)
+  · DISTANCIA MILLAS · TIEMPO VUELO («01:18», incluye calzos) · COSTO POR
+  HORA · TOTAL POR TRAMO + fila TOTAL; si `tramos_ajuste_usd` ≠ 0 una fila
+  más con su motivo para que Σ tramos + ajuste == «Servicio aéreo» del
+  desglose canónico; TUAS solo las COBRADAS (`tuas_cobradas`); comisión del
+  vendedor, redondeo/ajuste, IVA, cobros compactos con comisión bancaria y
+  notas internas. NO se pintan (aunque un API viejo los mande): tacómetros,
+  horas voladas, avión operativo, traslados, partición, gastos, utilidad ni
+  CFDI — eso vive en el reporte del vuelo. Todo llega calculado del API;
+  aquí solo se formatea («01:18», «26-jun») o se re-suma la columna
+  informativa de millas. Presupuesto: cabe en una hoja hasta ~10 tramos;
+  las notas se truncan con «…».
 
 ## IA
 

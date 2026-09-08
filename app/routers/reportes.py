@@ -66,10 +66,12 @@ def cotizacion_grupo_pdf(req: CotizacionGrupoPdfRequest) -> Response:
 
 @router.post("/cotizacion-interna")
 def cotizacion_interna_pdf(req: CotizacionInternaPdfRequest) -> Response:
-    """PDF de la COTIZACIÓN INTERNA (8-sep-2026): UNA hoja carta para la
-    oficina con matrícula, tacómetros, comisión del vendedor, partición del
-    ingreso, cobros con comisión bancaria y gastos. NUNCA va al cliente. El
-    API manda todo YA calculado; aquí SOLO se pinta."""
+    """PDF de la COTIZACIÓN INTERNA v2 (8-sep-2026): UNA hoja carta para la
+    oficina con SOLO lo de la cotización — fecha del vuelo, matrícula, tabla
+    de tramos (ruta · fecha · millas · tiempo con calzos · costo/hr · total),
+    desglose con comisión del vendedor, TUAS cobradas, cobros con comisión
+    bancaria y notas internas. NUNCA va al cliente. El API manda todo YA
+    calculado; aquí SOLO se pinta."""
     pdf = _render_o_http(render_cotizacion_interna_pdf, req, "cotización interna")
     folio = re.sub(r"[^A-Za-z0-9_-]+", "", req.folio or "") or "sn"
     return Response(
