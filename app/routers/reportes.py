@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import HTMLResponse
 
 from app.schemas.reportes import (
     CotizacionGrupoPdfRequest,
@@ -13,7 +14,7 @@ from app.schemas.reportes import (
 from app.security import require_internal_token
 from app.services.cotizacion_grupo_pdf import render_cotizacion_grupo_pdf
 from app.services.cotizacion_interna_pdf import render_cotizacion_interna_pdf
-from app.services.cotizacion_pdf import render_cotizacion_pdf
+from app.services.cotizacion_pdf import render_cotizacion_pdf, render_cotizacion_preview_html
 
 logger = logging.getLogger("reportes")
 
@@ -47,6 +48,26 @@ def _render_o_http(render: Callable[[Any], bytes], req: Any, que: str) -> bytes:
 def cotizacion_pdf(req: CotizacionPdfRequest) -> Response:
     pdf = _render_o_http(render_cotizacion_pdf, req, "cotización")
     return Response(content=pdf, media_type="application/pdf")
+
+
+@router.post("/cotizacion/preview-html", response_class=HTMLResponse)
+def cotizacion_preview_html(req: CotizacionPdfRequest) -> HTMLResponse:
+    """VISTA PREVIA de la hoja 1 de la cotización (rediseño del cotizador,
+    8-sep-2026): el MISMO payload que `/cotizacion` y el MISMO `_build_html`,
+    pero SOLO la hoja 1 con CSS de pantalla (sin `@page` ni hoja "La
+    aeronave"; logo y mapa van inline como siempre). Devuelve HTML, no PDF:
+    NO importa WeasyPrint. `Cache-Control: no-store` — es el borrador vivo
+    del operador, jamás se cachea. Un fallo del armado → 500 con detalle
+    (el API lo propaga al panel, que muestra "sin vista previa")."""
+    try:
+        html = render_cotizacion_preview_html(req)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Error generando la vista previa de cotización")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"No se pudo generar la vista previa: {e}",
+        ) from e
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/cotizacion-grupo")

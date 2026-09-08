@@ -13,6 +13,12 @@ Fuente única compartida con el PDF de cotización de GRUPO
 (`cotizacion_grupo_pdf.py`, 4-sep-2026): `_estilos_base`, `_mapa_svg`,
 `_itinerario_html`, `_ficha_aeronave_html`, `_mostrar_matricula` y los
 helpers de formato. Un cambio de branding o de regla se hace aquí una vez.
+
+Vista previa en pantalla (rediseño del cotizador, 8-sep-2026): el panel pide
+`POST /reportes/cotizacion/preview-html` con el MISMO payload del PDF y recibe
+`_build_html(req, solo_hoja_1=True)`: la misma hoja 1 (mismos bloques y
+reglas) sin la hoja "La aeronave" ni fotos, con CSS de pantalla en lugar de
+`@page`. El HTML del PDF (default) queda byte-idéntico al de siempre.
 """
 
 import base64
@@ -72,9 +78,13 @@ def _fecha_dia(s: str | None) -> str:
     return f"{dt.day} {_MESES_ES[dt.month - 1]} {dt.year}"
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=4)
 def _logo_data_uri(nombre: str = "logo-vuelatour-blanco.png") -> str | None:
-    """Logo como data-URI (el HTML del PDF no puede pedir archivos remotos)."""
+    """Logo como data-URI (el HTML del PDF no puede pedir archivos remotos).
+
+    Caché POR NOMBRE: cada render pide dos logos (membrete blanco y marca de
+    agua); con maxsize=1 se invalidaban entre sí y se releía el disco en cada
+    PDF — y la vista previa se pide en cada tecleo (8-sep-2026)."""
     try:
         raw = (_ASSETS / nombre).read_bytes()
         return "data:image/png;base64," + base64.b64encode(raw).decode()
@@ -437,13 +447,10 @@ def _ficha_aeronave_html(
         {caracts_html}"""
 
 
-def _estilos_base() -> str:
-    """CSS COMPARTIDO de los PDF de cotización (un avión y grupo, 4-sep):
-    @page con pie/paginado, membrete navy, marca de agua, tablas, mapa,
-    desglose/totales y la hoja "La aeronave". Vive aquí (fuente única) y
-    `cotizacion_grupo_pdf` lo importa: un cambio de branding se hace una
-    sola vez. Devuelve el contenido del <style> tal cual (sin la etiqueta).
-    """
+def _estilos_page() -> str:
+    """Reglas `@page` del PDF (Carta, márgenes, pie con la web y el paginado;
+    la hoja 1 además lleva la leyenda de horarios/gracias). SOLO tienen
+    sentido en WeasyPrint: la vista previa en pantalla no las incluye."""
     return f"""  /* Pie en TODAS las hojas (26-ago v3): la web al centro y el paginado a
      la derecha; la hoja 1 además conserva su leyenda de horarios/gracias. */
   @page {{
@@ -474,7 +481,14 @@ def _estilos_base() -> str:
       font-family: 'Helvetica Neue', Arial, sans-serif;
     }}
   }}
-  * {{ font-family: 'Helvetica Neue', Arial, sans-serif; color: #1d1d1d; }}
+"""
+
+
+def _estilos_cuerpo() -> str:
+    """CSS del CUERPO del documento (membrete navy, marca de agua, tablas,
+    mapa, desglose/totales y la hoja "La aeronave"): lo comparten el PDF y
+    la vista previa en pantalla (8-sep-2026) — misma hoja, mismo estilo."""
+    return f"""  * {{ font-family: 'Helvetica Neue', Arial, sans-serif; color: #1d1d1d; }}
   /* Marca de agua: fija = se repite en TODAS las páginas (WeasyPrint). */
   .marca {{ position: fixed; top: 34%; left: 0; right: 0; text-align: center;
             opacity: 0.05; z-index: -1; }}
@@ -538,6 +552,54 @@ def _estilos_base() -> str:
               text-align: center; }}"""
 
 
+def _estilos_base() -> str:
+    """CSS COMPARTIDO de los PDF de cotización (un avión y grupo, 4-sep):
+    `@page` con pie/paginado + el cuerpo (membrete navy, marca de agua,
+    tablas, mapa, desglose/totales y la hoja "La aeronave"). Vive aquí
+    (fuente única) y `cotizacion_grupo_pdf` lo importa: un cambio de
+    branding se hace una sola vez. Devuelve el contenido del <style> tal
+    cual (sin la etiqueta). Desde 8-sep-2026 es `_estilos_page` +
+    `_estilos_cuerpo` (byte-idéntico); la vista previa usa solo el cuerpo.
+    """
+    return _estilos_page() + _estilos_cuerpo()
+
+
+# Ancho de la hoja en la VISTA PREVIA del panel (8-sep-2026): el panel la
+# mete en un iframe (srcdoc) y la escala con ResizeObserver contra este
+# número. Los márgenes conservan la proporción de la hoja Carta del PDF:
+# 21.59 cm → 794 px ⇒ 1.8 / 2 / 2.6 cm ≈ 66 / 74 / 96 px; alto 27.94 cm ≈ 1027 px.
+PREVIEW_ANCHO_PX = 794
+
+
+def _estilos_pantalla() -> str:
+    """CSS SOLO de la vista previa en pantalla: sin `@page` (el navegador lo
+    ignora), hoja blanca de ancho FIJO con los márgenes de la Carta, marca
+    de agua anclada a la hoja (con `fixed` se pegaría al viewport del
+    iframe) y el pie de la hoja 1 como bloque (en el PDF vive en
+    `@page :first`). Va DESPUÉS de `_estilos_cuerpo` para ganar la cascada."""
+    return f"""  /* Vista previa en pantalla (8-sep-2026): misma hoja 1, sin reglas de
+     página; la marca de agua pasa de fixed a absolute (anclada a la hoja). */
+  html {{ margin: 0; padding: 0; overflow-x: hidden; }}
+  body {{ width: {PREVIEW_ANCHO_PX}px; min-height: 1027px; margin: 0;
+          padding: 66px 74px 96px; box-sizing: border-box; background: #fff;
+          position: relative; }}
+  .marca {{ position: absolute; }}
+  .pie-pantalla {{ position: absolute; left: 0; right: 0; bottom: 26px;
+                   text-align: center; font-size: 10px; color: #9ca3af;
+                   line-height: 1.5; }}"""
+
+
+def _pie_pantalla_html() -> str:
+    """Pie de la hoja 1 tal cual lo imprime `@page :first` (leyenda de
+    horarios, gracias y la web): el navegador no pinta márgenes de página,
+    así que la vista previa lo lleva como bloque al pie de la hoja."""
+    return (
+        f'<div class="pie-pantalla">{escape(TZ_NOTA)}<br>'
+        "Gracias por volar con VuelaTour, Aero Charter Cancún.<br>"
+        "www.vuelatour.com</div>"
+    )
+
+
 def _modelos_cotizados(r: CotizacionPdfRequest) -> list[str]:
     """Modelos del avión COTIZADO para la hoja 1 (feedback del cliente
     4-sep-2026): `modelos_cotizados` (tramos en aviones distintos, en orden
@@ -576,7 +638,38 @@ def _aeronave_cotizada_html(r: CotizacionPdfRequest) -> str:
     return f"<br>\n      <strong>{etiqueta}:</strong> {escape(' · '.join(modelos))}"
 
 
-def _build_html(r: CotizacionPdfRequest) -> str:
+def _hoja_aeronave_html(r: CotizacionPdfRequest) -> str:
+    """Hoja "La aeronave" (26-ago v2, mockup del cliente) ya envuelta en
+    `.detalles` (salto de página): exterior ANCHO arriba; abajo interior +
+    tarjeta "De un vistazo"; tira de características comerciales al pie.
+    SIN matrícula en esta hoja (regla del cliente — aplica también al VGV;
+    la hoja 1 conserva su propia regla). '' si no hay nada que mostrar."""
+    vistazo: list[tuple[str, str]] = []
+    if r.avion_pasajeros:
+        vistazo.append(("Pasajeros", f"{r.avion_pasajeros} máx."))
+    if r.avion_velocidad_kts:
+        vistazo.append(_vistazo_velocidad(r.avion_velocidad_kts))
+    if r.avion_tiempo_tramo_hr and r.avion_tiempo_tramo_hr > 0:
+        th = int(r.avion_tiempo_tramo_hr)
+        tm = int(round((r.avion_tiempo_tramo_hr - th) * 60))
+        if tm == 60:
+            th, tm = th + 1, 0
+        vistazo.append(("Tiempo de vuelo", f"{th}:{tm:02d} h por tramo"))
+    if r.avion_num_motores:
+        vistazo.append(_vistazo_motores(r.avion_num_motores, r.avion_motor_hp))
+    fotos_html = _ficha_aeronave_html(
+        r.avion_modelo, r.foto_exterior, r.foto_interior, vistazo, r.avion_caracteristicas
+    )
+    return f'<div class="detalles">{fotos_html}</div>' if fotos_html else ""
+
+
+def _build_html(r: CotizacionPdfRequest, *, solo_hoja_1: bool = False) -> str:
+    """HTML del documento. Por defecto el de SIEMPRE (el que WeasyPrint
+    convierte en PDF; byte-idéntico al previo a 8-sep-2026). Con
+    `solo_hoja_1=True` (vista previa del panel) devuelve la MISMA hoja 1 —
+    mismo payload, mismos bloques, mismas reglas de ocultos/VGV/absorción —
+    sin la hoja "La aeronave" ni fotos, y con CSS de pantalla en vez de
+    `@page`; el pie de `@page :first` se pinta como bloque."""
     # Matrículas OCULTAS en la cotización (regla 26-ago): el cliente no debe
     # ver qué avión es — EXCEPTO el VGV, que sí se comercializa por matrícula.
     mostrar_matricula = _mostrar_matricula(r.matricula)
@@ -676,32 +769,15 @@ def _build_html(r: CotizacionPdfRequest) -> str:
         f'<div class="marca"><img src="{logo_marca}" alt=""/></div>' if logo_marca else ""
     )
 
-
-    # ----- Página "La aeronave" (26-ago v2, mockup del cliente) -----
-    # Exterior ANCHO arriba; abajo interior + tarjeta "De un vistazo";
-    # tira de características comerciales al pie. SIN matrícula en esta hoja
-    # (regla del cliente — aplica también al VGV; la página 1 conserva su
-    # propia regla de matrícula).
-    vistazo: list[tuple[str, str]] = []
-    if r.avion_pasajeros:
-        vistazo.append(("Pasajeros", f"{r.avion_pasajeros} máx."))
-    if r.avion_velocidad_kts:
-        vistazo.append(_vistazo_velocidad(r.avion_velocidad_kts))
-    if r.avion_tiempo_tramo_hr and r.avion_tiempo_tramo_hr > 0:
-        th = int(r.avion_tiempo_tramo_hr)
-        tm = int(round((r.avion_tiempo_tramo_hr - th) * 60))
-        if tm == 60:
-            th, tm = th + 1, 0
-        vistazo.append(("Tiempo de vuelo", f"{th}:{tm:02d} h por tramo"))
-    if r.avion_num_motores:
-        vistazo.append(_vistazo_motores(r.avion_num_motores, r.avion_motor_hp))
-    fotos_html = _ficha_aeronave_html(
-        r.avion_modelo, r.foto_exterior, r.foto_interior, vistazo, r.avion_caracteristicas
-    )
-
-    detalles_html = (
-        f'<div class="detalles">{fotos_html}</div>' if fotos_html else ""
-    )
+    # ----- Cola del documento: en el PDF la hoja "La aeronave"; en la vista
+    # previa el pie de la hoja 1 (el navegador no pinta `@page` y la hoja 2
+    # no se muestra: la preview es SOLO lo que el operador está editando).
+    if solo_hoja_1:
+        estilos = _estilos_cuerpo() + "\n" + _estilos_pantalla()
+        cola_html = _pie_pantalla_html()
+    else:
+        estilos = _estilos_base()
+        cola_html = _hoja_aeronave_html(r)
 
     # Modelo COTIZADO junto a fecha/tipo (4-sep, feedback del cliente):
     # el tipo de avión pactado, nunca la matrícula. Vacío con API viejo.
@@ -709,7 +785,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
 
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
-{_estilos_base()}
+{estilos}
 </style></head><body>
   {marca_html}
   <div class="header">
@@ -746,7 +822,7 @@ def _build_html(r: CotizacionPdfRequest) -> str:
   </tbody></table>
   {notas_html}
 
-  {detalles_html}
+  {cola_html}
 
 </body></html>"""
 
@@ -755,3 +831,10 @@ def render_cotizacion_pdf(req: CotizacionPdfRequest) -> bytes:
     from weasyprint import HTML  # import perezoso
 
     return HTML(string=_build_html(req)).write_pdf()
+
+
+def render_cotizacion_preview_html(req: CotizacionPdfRequest) -> str:
+    """Vista previa en pantalla de la hoja 1 (panel, 8-sep-2026): el MISMO
+    `_build_html` del PDF con el MISMO payload — solo hoja 1 y CSS de
+    pantalla. NO importa WeasyPrint (es HTML, no PDF)."""
+    return _build_html(req, solo_hoja_1=True)

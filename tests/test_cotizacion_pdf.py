@@ -9,11 +9,23 @@ Fecha por tramo (3-sep-2026): `EscalaPdf.fecha` es un DÍA de pared
 (YYYY-MM-DD) SOLO para el PDF del cliente; sin hora, sin zona, sin fallback.
 """
 
+import hashlib
 import re
+import sys
 
+from fastapi.testclient import TestClient
+
+from app.config import get_settings
+from app.main import app
+from app.routers import reportes as reportes_router
 from app.schemas.reportes import CotizacionPdfRequest, MapaPuntoPdf
 from app.services.cotizacion_pdf import (
+    PREVIEW_ANCHO_PX,
+    TZ_NOTA,
     _build_html,
+    _estilos_base,
+    _estilos_cuerpo,
+    _estilos_page,
     _fecha_dia,
     _mapa_svg,
     _peninsula_paths,
@@ -362,3 +374,349 @@ def test_modelo_cotizado_se_escapa() -> None:
     html = _build_html(_req(aeronave_cotizada_modelo="Cessna <206>"))
     assert "Cessna &lt;206&gt;" in _meta(html)
     assert "<206>" not in html
+
+
+# ===== Vista previa de la hoja 1 en pantalla (rediseño del cotizador, 8-sep-2026) =====
+# La preview del panel es el MISMO `_build_html` con el MISMO payload del PDF:
+# solo hoja 1, sin fotos ni hoja "La aeronave", con CSS de pantalla. El HTML
+# del PDF (default) queda byte-idéntico al de siempre: si un cambio en la
+# hoja 1 no sale en ambos, la preview miente al operador.
+
+FOTO_EXT = "data:image/jpeg;base64,RVhU"
+FOTO_INT = "data:image/jpeg;base64,SU5U"
+
+
+def _req_completo(**extra) -> CotizacionPdfRequest:
+    """Payload con TODO lo que pinta el PDF: hoja 1 (VGV, modelo cotizado,
+    traslados, itinerario con mapa, TUAS, extras, pernocta, descuento, IVA,
+    MXN, notas) y hoja 2 (fotos + tarjeta "De un vistazo" + características)."""
+    base = dict(
+        ruta="CUN → AZP → BZE → CZM → CUN",
+        fecha="2026-09-08T14:00:00Z",
+        fecha_traslado_inicial="2026-09-12T13:00:00Z",
+        fecha_traslado_final="2026-09-12T23:00:00Z",
+        pasajeros=4,
+        tiempo_cobrable_hr=2.4,
+        tarifa_hora_usd=1650,
+        subtotal_usd=4110,
+        tuas_usd=100,
+        tuas_detalle=["TUA CUN · $25.00 USD × 4 pax = $100.00"],
+        extras=[{"concepto": "Catering", "monto_usd": 170}],
+        viaticos_pernocta_usd=150,
+        descuento_usd=20,
+        iva_pct=16,
+        iva_usd=734.4,
+        total_usd=5324.4,
+        total_mxn=96371.64,
+        tc_usd_mxn=18.1,
+        notas="Sujeto a slot en CUN",
+        mostrar_tarifa_hora=True,
+        matricula="XA-VGV",
+        aeronave_cotizada_modelo="Piper Seneca V",
+        avion_modelo="Piper Seneca V",
+        foto_exterior=FOTO_EXT,
+        foto_interior=FOTO_INT,
+        avion_velocidad_kts=180,
+        avion_pasajeros=6,
+        avion_num_motores=2,
+        avion_motor_hp=220,
+        avion_caracteristicas=["Aire acondicionado"],
+        avion_tiempo_tramo_hr=1.3,
+        mapa_puntos=[
+            _tramo(1, "CUN", _CUN, "AZP", (19.71, -90.50)),
+            _tramo(2, "BZE", (17.53, -88.30), "CZM", _CZM),
+            _tramo(3, "CZM", _CZM, "CUN", _CUN),
+        ],
+    )
+    base.update(extra)
+    return _req(**base)
+
+
+def test_preview_es_solo_la_hoja_1_sin_fotos_ni_ficha() -> None:
+    req = _req_completo()
+    html = _build_html(req, solo_hoja_1=True)
+    # La hoja 1 COMPLETA, con las mismas reglas del PDF (VGV visible, modelo
+    # cotizado, tarifa/hr por toggle, TUAS por aeropuerto, MXN, notas).
+    for esperado in (
+        "#COT-1042",
+        "Cliente Demo S.A.",
+        "CUN → AZP → BZE → CZM → CUN",
+        "· XA-VGV",
+        "<strong>Aeronave cotizada:</strong> Piper Seneca V",
+        "<h2>Traslados</h2>",
+        "<h2>Itinerario</h2>",
+        '<div class="mapa">',
+        "<h2>Desglose</h2>",
+        "Servicio aéreo (2.4 h × $1,650.00/hr)",
+        "TUA CUN · $25.00 USD × 4 pax = $100.00",
+        "Catering",
+        "Viáticos por pernocta",
+        "&minus;$20.00",
+        "IVA (16%)",
+        "$5,324.40",
+        "Total MXN (T.C. 18.1)",
+        "Sujeto a slot en CUN",
+    ):
+        assert esperado in html, esperado
+    # SIN hoja 2 en el MARCADO: ni contenedor, ni ficha, ni tarjeta, ni fotos,
+    # ni características. (El CSS del cuerpo es el compartido y conserva sus
+    # selectores `.av-*`/`.foto-ancha` sin usar: fuente única con el PDF.)
+    cuerpo = html[html.index("<body>") :]
+    for prohibido in (
+        'class="detalles"',
+        "av-titulo",
+        "De un vistazo",
+        "foto-ancha",
+        "km/h",
+        "Aire acondicionado",
+        FOTO_EXT,
+        FOTO_INT,
+        "data:image/jpeg",
+    ):
+        assert prohibido not in cuerpo, prohibido
+    # Las únicas imágenes son los logos (membrete + marca de agua), en PNG.
+    srcs = re.findall(r'<img[^>]+src="([^"]+)"', html)
+    assert srcs and all(src.startswith("data:image/png;base64,") for src in srcs)
+
+
+def test_preview_css_de_pantalla_sin_reglas_de_pagina() -> None:
+    html = _build_html(_req_completo(), solo_hoja_1=True)
+    assert "@page" not in html
+    assert _estilos_page() not in html
+    # Hoja blanca de ancho FIJO que el panel escala (contrato con el panel).
+    assert PREVIEW_ANCHO_PX == 794
+    assert f"width: {PREVIEW_ANCHO_PX}px" in html
+    assert "background: #fff" in html
+    # Marca de agua sutil IDÉNTICA (misma opacidad) pero anclada a la hoja:
+    # la regla de pantalla va después de la del cuerpo y gana la cascada.
+    assert 'class="marca"' in html and "opacity: 0.05" in html
+    assert html.rindex(".marca { position: absolute; }") > html.index(".marca { position: fixed")
+    # El pie que en el PDF vive en `@page :first` se ve como bloque, DESPUÉS
+    # de las notas (cierra la hoja) y con la misma leyenda.
+    pie = (
+        f'<div class="pie-pantalla">{TZ_NOTA}<br>'
+        "Gracias por volar con VuelaTour, Aero Charter Cancún.<br>www.vuelatour.com</div>"
+    )
+    assert pie in html
+    assert html.index("Sujeto a slot en CUN") < html.index('class="pie-pantalla"')
+
+
+def test_preview_hoja_1_es_byte_identica_a_la_del_pdf() -> None:
+    # Mismo payload → el <body> de la hoja 1 (membrete, meta, ruta, traslados,
+    # itinerario+mapa, desglose, notas) es el MISMO texto; solo cambia la cola
+    # (hoja 2 vs pie de pantalla) y el CSS de página.
+    req = _req_completo()
+    pdf = _build_html(req)
+    prev = _build_html(req, solo_hoja_1=True)
+    hoja1_pdf = pdf[pdf.index("<body>") : pdf.index('<div class="detalles">')]
+    hoja1_prev = prev[prev.index("<body>") : prev.index('<div class="pie-pantalla">')]
+    assert hoja1_pdf == hoja1_prev
+    assert _estilos_cuerpo() in pdf and _estilos_cuerpo() in prev
+
+
+def test_pdf_html_no_cambia_con_la_vista_previa() -> None:
+    # El default sigue siendo el documento de SIEMPRE (2 hojas, @page, fotos).
+    req = _req_completo()
+    pdf = _build_html(req)
+    assert pdf == _build_html(req, solo_hoja_1=False)
+    assert _estilos_base() in pdf
+    assert _estilos_base() == _estilos_page() + _estilos_cuerpo()
+    assert "@page :first" in pdf and "position: fixed" in pdf
+    assert '<div class="detalles">' in pdf and FOTO_EXT in pdf and FOTO_INT in pdf
+    assert "De un vistazo" in pdf and "Aire acondicionado" in pdf
+    assert "pie-pantalla" not in pdf and f"{PREVIEW_ANCHO_PX}px" not in pdf
+
+
+# Cinturón del refactor (8-sep-2026): sha256 del HTML del PDF para 3 payloads,
+# calculado ANTES de partir `_estilos_base` y de extraer la hoja 2 (los logos
+# data-URI se normalizan a "data:LOGO" para no depender del PNG). Si un cambio
+# INTENCIONAL de la hoja del cliente mueve estos hashes, se refrescan con el
+# valor que imprime el assert — pero antes hay que preguntarse si la vista
+# previa del panel sigue mostrando lo mismo (`_build_html` es la fuente única).
+_SNAPSHOTS: dict[str, tuple[dict, str]] = {
+    "completo": (
+        dict(
+            folio="COT-1042",
+            fecha="2026-09-08T14:00:00Z",
+            cliente="Punta Pájaros S.A.",
+            origen="CUN",
+            destino="CUN",
+            tipo="MULTIESCALA",
+            pasajeros=4,
+            fecha_traslado_inicial="2026-09-12T13:00:00Z",
+            fecha_traslado_final="2026-09-12T23:00:00Z",
+            escalas=[
+                {"orden": 1, "origen": "CUN", "destino": "HOL", "fecha": "2026-09-12"},
+                {"orden": 2, "origen": "HOL", "destino": "CUN"},
+            ],
+            ruta="CUN → HOL → CUN",
+            tiempo_cobrable_hr=2.4,
+            tarifa_hora_usd=1650,
+            subtotal_usd=4110,
+            tuas_usd=100,
+            tuas_detalle=["TUA CUN · $25.00 USD × 4 pax = $100.00"],
+            extras=[
+                {"concepto": "Catering", "monto_usd": 170, "moneda": "USD"},
+                {"concepto": "Handler", "monto_usd": 80, "moneda": "MXN", "monto_nativo": 1450},
+            ],
+            extras_total_usd=250,
+            viaticos_pernocta_usd=150,
+            descuento_usd=20,
+            iva_pct=16,
+            iva_usd=734.4,
+            total_usd=5324.4,
+            total_mxn=96371.64,
+            tc_usd_mxn=18.1,
+            notas="Sujeto a slot en CUN <ojo>",
+            mostrar_tarifa_hora=True,
+            mostrar_itinerario=True,
+            matricula="XA-VGV",
+            foto_exterior=FOTO_EXT,
+            foto_interior=FOTO_INT,
+            avion_modelo="Piper Seneca V",
+            avion_velocidad_kts=180,
+            avion_pasajeros=6,
+            avion_num_motores=2,
+            avion_motor_hp=220,
+            avion_caracteristicas=["Aire acondicionado", "Baño"],
+            avion_tiempo_tramo_hr=1.3,
+            mapa_puntos=[
+                {
+                    "orden": 1,
+                    "origen_iata": "CUN",
+                    "destino_iata": "HOL",
+                    "o_lat": 21.0365,
+                    "o_lon": -86.8771,
+                    "d_lat": 21.1,
+                    "d_lon": -86.9,
+                },
+                {
+                    "orden": 2,
+                    "origen_iata": "HOL",
+                    "destino_iata": "CUN",
+                    "o_lat": 21.1,
+                    "o_lon": -86.9,
+                    "d_lat": 21.0365,
+                    "d_lon": -86.8771,
+                    "es_ferry": True,
+                },
+            ],
+            aeronave_cotizada_modelo="Piper Seneca V",
+            modelos_cotizados=["Piper Seneca V", "Cessna 206"],
+        ),
+        "b1806d1b7fe4c676b76c708b4fb3fdb970b6f3d0fa2450c4230aab9ac7f42201",
+    ),
+    "minimo": (
+        dict(folio="COT-1", cliente="Cliente", origen="CUN", destino="MID"),
+        "5276324167e0f4fdfd2464bf00a1667c70b57406cb9b536c3bbc007e5ed8da19",
+    ),
+    "externo_sin_itinerario": (
+        dict(
+            folio="COT-77",
+            cliente="Broker X",
+            origen="CUN",
+            destino="BJX",
+            pasajeros=1,
+            escalas=[
+                {"orden": 1, "origen": "CUN", "destino": "BJX"},
+                {"orden": 2, "origen": "BJX", "destino": "CUN"},
+            ],
+            ruta="CUN → BJX → CUN",
+            subtotal_usd=9000,
+            tuas_usd=0,
+            iva_pct=0.16,
+            iva_usd=1440,
+            total_usd=10440,
+            mostrar_itinerario=False,
+            avion_externo="HAWKER 400 A · XA-REG",
+            aeronave_cotizada_modelo="HAWKER 400 A",
+            mapa_puntos=[
+                {
+                    "orden": 1,
+                    "origen_iata": "CUN",
+                    "destino_iata": "BJX",
+                    "o_lat": 21.0365,
+                    "o_lon": -86.8771,
+                    "d_lat": 20.9935,
+                    "d_lon": -101.4808,
+                },
+                {
+                    "orden": 2,
+                    "origen_iata": "BJX",
+                    "destino_iata": "CUN",
+                    "o_lat": 20.9935,
+                    "o_lon": -101.4808,
+                    "d_lat": 21.0365,
+                    "d_lon": -86.8771,
+                },
+            ],
+            avion_modelo=None,
+            foto_exterior=None,
+        ),
+        "ffc4c4b71e266a3119255940bd297a6bf84abc0d5c15048b4456929667bc8c81",
+    ),
+}
+
+
+def _sha_normalizado(html: str) -> str:
+    sin_logo = re.sub(r"data:image/png;base64,[A-Za-z0-9+/=]+", "data:LOGO", html)
+    return hashlib.sha256(sin_logo.encode("utf-8")).hexdigest()
+
+
+def test_pdf_html_snapshot_previo_al_refactor_de_vista_previa() -> None:
+    for nombre, (payload, esperado) in _SNAPSHOTS.items():
+        actual = _sha_normalizado(_build_html(CotizacionPdfRequest(**payload)))
+        assert actual == esperado, f"HTML del PDF cambió para '{nombre}': sha256={actual}"
+
+
+# ===== Router: POST /reportes/cotizacion/preview-html =====
+
+TOKEN = "secreto-de-prueba"
+client = TestClient(app)
+
+
+def _payload_preview() -> dict:
+    return _req_completo().model_dump(mode="json")
+
+
+def test_preview_router_sin_token_rechazado(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    res = client.post("/reportes/cotizacion/preview-html", json=_payload_preview())
+    assert res.status_code == 401
+
+
+def test_preview_router_devuelve_html_sin_weasyprint(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    # Cinturón: si algo intentara `from weasyprint import HTML` reventaría
+    # con ImportError → la vista previa NO depende de WeasyPrint.
+    monkeypatch.setitem(sys.modules, "weasyprint", None)
+    res = client.post(
+        "/reportes/cotizacion/preview-html",
+        json=_payload_preview(),
+        headers={"X-Internal-Token": TOKEN},
+    )
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "text/html; charset=utf-8"
+    assert res.headers["cache-control"] == "no-store"
+    assert "#COT-1042" in res.text and "Total MXN (T.C. 18.1)" in res.text
+    assert 'class="detalles"' not in res.text and "@page" not in res.text
+    assert FOTO_EXT not in res.text
+
+
+def test_preview_router_error_es_500_con_detalle(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+
+    def _roto(req: CotizacionPdfRequest) -> str:
+        raise ValueError("boom en la plantilla")
+
+    monkeypatch.setattr(reportes_router, "render_cotizacion_preview_html", _roto)
+    res = client.post(
+        "/reportes/cotizacion/preview-html",
+        json=_payload_preview(),
+        headers={"X-Internal-Token": TOKEN},
+    )
+    assert res.status_code == 500
+    assert "boom en la plantilla" in res.json()["detail"]

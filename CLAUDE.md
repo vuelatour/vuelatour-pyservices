@@ -51,6 +51,17 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   aquí solo se formatea («01:18», «26-jun») o se re-suma la columna
   informativa de millas. Presupuesto: cabe en una hoja hasta ~10 tramos;
   las notas se truncan con «…».
+- Vista previa de cotización (`POST /reportes/cotizacion/preview-html`,
+  8-sep-2026): MISMO payload `CotizacionPdfRequest` y MISMO
+  `cotizacion_pdf._build_html(req, solo_hoja_1=True)` → `text/html` de SOLO
+  la hoja 1 (sin hoja «La aeronave» ni fotos) con CSS de pantalla
+  (`_estilos_cuerpo` + `_estilos_pantalla`, ancho fijo `PREVIEW_ANCHO_PX`=794,
+  sin `@page`; el pie de `@page :first` va como `.pie-pantalla`),
+  `Cache-Control: no-store`, sin WeasyPrint. Regla: el HTML del PDF (default)
+  debe seguir byte-idéntico — jamás una réplica aparte de la hoja 1; un
+  cambio en la hoja 1 se hace UNA vez en `_build_html` y sale en ambos.
+  `_estilos_base` = `_estilos_page` + `_estilos_cuerpo` (grupo lo importa tal
+  cual). Tests: `tests/test_cotizacion_pdf.py` (sección «Vista previa»).
 
 ## IA
 
