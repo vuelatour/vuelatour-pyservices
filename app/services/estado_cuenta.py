@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import re
+import unicodedata
 from functools import lru_cache
 
 from app.config import get_settings
@@ -10,13 +11,19 @@ from app.schemas.conciliacion import (
     ConciliacionParseResponse,
     ConciliacionSugerirRequest,
     ConciliacionSugerirResponse,
+    MapeoColumnasPaywise,
     MovimientoParseado,
 )
 from app.services.ia_usage import uso_ia_de
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", s.lower())
+    """Encabezado normalizado: sin acentos (ó→o), minúsculas, solo [a-z0-9].
+
+    Transliterar (y no solo borrar) los acentos importa: "Comisión" debe
+    dar "comision" para que las agujas de Paywise/banco lo reconozcan."""
+    sin_acentos = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]", "", sin_acentos.lower())
 
 
 def _find_col(cols: list[str], *needles: str) -> str | None:
@@ -39,17 +46,277 @@ def _to_float(v) -> float | None:
         return None
 
 
-def _parse_tabular(req: ConciliacionParseRequest, formato: str) -> ConciliacionParseResponse:
+def _leer_tabla(req: ConciliacionParseRequest, formato: str):
+    """DataFrame de texto del CSV/XLSX (celdas vacías = "")."""
     import pandas as pd  # lazy
 
     raw = base64.b64decode(req.file_base64)
     buf = io.BytesIO(raw)
     if formato == "csv":
-        df = pd.read_csv(buf, dtype=str, keep_default_na=False)
-    else:
-        df = pd.read_excel(buf, dtype=str)
+        return pd.read_csv(buf, dtype=str, keep_default_na=False)
+    df = pd.read_excel(buf, dtype=str)
+    return df.fillna("")
 
+
+def _fecha_de(v) -> str | None:
+    import pandas as pd  # lazy
+
+    txt = str(v).strip()
+    if not txt or txt.lower() in ("nan", "nat", "none"):
+        return None
+    try:
+        # Paywise exporta "dd/mm/yyyy HH:MM" (dayfirst, formato mexicano) o
+        # ISO "yyyy-mm-dd" (pandas 3 con dayfirst=True invierte mes/día en
+        # ISO: se parsea aparte).
+        es_iso = re.match(r"^\d{4}-\d{2}-\d{2}", txt) is not None
+        ts = pd.to_datetime(txt, dayfirst=not es_iso, errors="coerce")
+    except (ValueError, TypeError):
+        return None
+    if ts is None or pd.isna(ts):
+        return None
+    return ts.strftime("%Y-%m-%d")
+
+
+# ---------------------------------------------------------------------------
+# PAYWISE (9-sep-2026): estado de cuenta de la PASARELA de cobro. Cada fila es
+# una operación con BRUTO (lo que pagó el cliente), COMISIÓN retenida y NETO
+# depositado. Se normaliza a movimientos bancarios: `monto` = NETO, tipo ABONO
+# (pagos) o CARGO (reembolsos/contracargos), con bruto/comisión ADITIVOS y la
+# referencia (ID de operación) poblada para el cotejo del API.
+# ---------------------------------------------------------------------------
+
+# Encabezados que identifican cada columna (sub-cadenas normalizadas, sin
+# acentos ni signos). Orden = prioridad. Tolerantes a variantes de nombre.
+_PW_FECHA = (
+    "fechadeoperacion", "fechaoperacion", "fechadepago", "fechapago",
+    "fechadetransaccion", "fechatransaccion", "fecha", "date",
+)
+_PW_BRUTO = (
+    "montobruto", "importebruto", "bruto", "montototal", "importetotal",
+    "totalcobrado", "montocobrado", "montodelpago", "montopagado",
+    "gross", "amount", "total", "monto", "importe",
+)
+_PW_COMISION = (
+    "comisiontotal", "comision", "commission", "fee", "cargoporservicio", "costodelservicio",
+)
+_PW_NETO = (
+    "montoneto", "importeneto", "neto", "netodepositado", "depositado",
+    "deposito", "net", "aliquidar", "liquidado", "montoliquidado",
+)
+_PW_REF = (
+    "idoperacion", "iddeoperacion", "idtransaccion", "iddetransaccion",
+    "idpago", "numerodeautorizacion", "noautorizacion", "autorizacion",
+    "referencia", "folio", "orderid", "transactionid",
+)
+# "id" solo por coincidencia EXACTA: por contención ganaría "Cantidad" o
+# "Validación" cuando el archivo no trae columna de referencia.
+_PW_REF_EXACTO = ("id",)
+# Forma de BANCO (cargo + abono en columnas separadas): jamás es Paywise
+# aunque traiga una columna "Comisión" — la detección automática se abstiene
+# (el mapeo manual sigue disponible).
+_PW_BANCO_CARGO = ("cargo", "retiro", "debito", "debit")
+_PW_BANCO_ABONO = ("abono", "deposito", "credito", "credit")
+_PW_ESTATUS = ("estatus", "estado", "status")
+_PW_DESC = ("concepto", "descripcion", "detalle", "cliente", "nombre", "producto")
+_PW_TARJETA = ("ultimos4", "ultimos4digitos", "terminacion", "tarjeta", "card", "last4")
+_PW_TIPO = ("tipodeoperacion", "tipooperacion", "tipodemovimiento", "tipo", "operacion")
+
+# Estatus que NO son dinero depositado (se omiten y se cuentan en notas).
+_PW_ESTATUS_OMITIR = ("rechaz", "declin", "cancel", "pendiente", "fallid", "error", "expir")
+# Estatus / tipo que indican salida de dinero (reembolso o contracargo).
+_PW_SALIDA = ("reembols", "devol", "contracargo", "chargeback", "refund", "reverso")
+
+
+def _find_col_exact_first(cols: list[str], needles: tuple[str, ...]) -> str | None:
+    """Columna cuyo nombre normalizado ES una aguja (exacto) o la CONTIENE.
+
+    Prioridad: coincidencia exacta con la primera aguja que la tenga; luego
+    contención en el orden de las agujas. Evita que "montoneto" gane la
+    búsqueda de "monto" cuando existe la columna "monto" a secas.
+    """
+    normed = [(c, _norm(c)) for c in cols]
+    for needle in needles:
+        for c, n in normed:
+            if n == needle:
+                return c
+    for needle in needles:
+        for c, n in normed:
+            if needle in n:
+                return c
+    return None
+
+
+def _detectar_columnas_paywise(cols: list[str]) -> dict[str, str | None] | None:
+    """Mapa {fecha, bruto, comision, neto, referencia, estatus, descripcion,
+    tarjeta, tipo} si los encabezados parecen de Paywise; None si no.
+
+    Criterio: hay fecha Y comisión Y (bruto O neto). Sin comisión no es un
+    estado de cuenta de pasarela (un banco no la desglosa por fila)."""
+    if _find_col(cols, *_PW_BANCO_CARGO) and _find_col(cols, *_PW_BANCO_ABONO):
+        return None
+    fecha = _find_col_exact_first(cols, _PW_FECHA)
+    comision = _find_col_exact_first(cols, _PW_COMISION)
+    neto = _find_col_exact_first(cols, _PW_NETO)
+    # El bruto no debe ser la misma columna que neto/comisión: se excluyen.
+    restantes = [c for c in cols if c not in (neto, comision)]
+    bruto = _find_col_exact_first(restantes, _PW_BRUTO)
+    if not fecha or not comision or not (bruto or neto):
+        return None
+    otros = [c for c in cols if c not in (fecha, comision, neto, bruto)]
+    return {
+        "fecha": fecha,
+        "bruto": bruto,
+        "comision": comision,
+        "neto": neto,
+        "referencia": _find_col_exact_first(otros, _PW_REF)
+        or next((c for c in otros if _norm(c) in _PW_REF_EXACTO), None),
+        "estatus": _find_col_exact_first(otros, _PW_ESTATUS),
+        "descripcion": _find_col_exact_first(otros, _PW_DESC),
+        "tarjeta": _find_col_exact_first(otros, _PW_TARJETA),
+        "tipo": _find_col_exact_first(otros, _PW_TIPO),
+    }
+
+
+def _mapeo_a_columnas(mapeo: MapeoColumnasPaywise, cols: list[str]) -> dict[str, str | None]:
+    """Mapeo manual → columnas reales (tolerante a mayúsculas/espacios)."""
+    por_norm = {_norm(c): c for c in cols}
+
+    def col(nombre: str | None) -> str | None:
+        if not nombre:
+            return None
+        if nombre in cols:
+            return nombre
+        return por_norm.get(_norm(nombre))
+
+    pedidas = {
+        "fecha": mapeo.fecha,
+        "bruto": mapeo.bruto,
+        "comision": mapeo.comision,
+        "neto": mapeo.neto,
+        "referencia": mapeo.referencia,
+        "estatus": mapeo.estatus,
+        "descripcion": mapeo.descripcion,
+    }
+    out: dict[str, str | None] = {k: col(v) for k, v in pedidas.items()}
+    faltan = [v for k, v in pedidas.items() if v and not out[k]]
+    if faltan:
+        raise ValueError(
+            "Columnas del mapeo que no existen en el archivo: " + ", ".join(faltan)
+        )
+    if not out["bruto"] and not out["neto"]:
+        raise ValueError("El mapeo necesita al menos la columna de bruto o la de neto.")
+    out["tarjeta"] = None
+    out["tipo"] = None
+    return out
+
+
+def _celda(row, cols_map: dict[str, str | None], k: str) -> str:
+    c = cols_map.get(k)
+    if not c:
+        return ""
+    v = row[c]
+    txt = "" if v is None else str(v).strip()
+    return "" if txt.lower() in ("nan", "none") else txt
+
+
+def _parse_paywise(df, cols_map: dict[str, str | None]) -> ConciliacionParseResponse:
+    movimientos: list[MovimientoParseado] = []
+    omitidos = 0
+    sin_fecha = 0
+    derivados = 0
+    for _, row in df.iterrows():
+
+        def get(k: str, _row=row) -> str:
+            return _celda(_row, cols_map, k)
+
+        estatus = get("estatus") or None
+        tipo_txt = get("tipo")
+        est_n = _norm(estatus or "")
+        tipo_n = _norm(tipo_txt)
+        if est_n and any(x in est_n for x in _PW_ESTATUS_OMITIR):
+            omitidos += 1
+            continue
+        bruto = _to_float(get("bruto")) if cols_map.get("bruto") else None
+        comision = _to_float(get("comision")) if cols_map.get("comision") else None
+        neto = _to_float(get("neto")) if cols_map.get("neto") else None
+        # Completar por diferencia: neto = bruto − comisión (y viceversa).
+        if neto is None and bruto is not None:
+            neto = bruto - (comision or 0.0)
+            derivados += 1
+        if bruto is None and neto is not None:
+            bruto = neto + (comision or 0.0)
+        if comision is None and bruto is not None and neto is not None:
+            comision = bruto - neto
+        if neto is None or bruto is None:
+            continue
+        fecha = _fecha_de(row[cols_map["fecha"]])
+        if fecha is None:
+            sin_fecha += 1
+        salida = (
+            neto < 0
+            or any(x in est_n for x in _PW_SALIDA)
+            or any(x in tipo_n for x in _PW_SALIDA)
+        )
+        neto_abs = round(abs(neto), 2)
+        if neto_abs == 0:
+            continue
+        ref = get("referencia") or None
+        tarjeta = get("tarjeta")
+        partes = [p for p in (get("descripcion"), tipo_txt or None) if p]
+        # Solo si de verdad son dígitos ("**** 4242"): una columna "Tipo de
+        # tarjeta" (Crédito) no debe colarse como "tarjeta dito".
+        if tarjeta and tarjeta[-4:].isdigit():
+            partes.append(f"tarjeta {tarjeta[-4:]}")
+        if ref:
+            partes.append(f"ref {ref}")
+        desc = " · ".join(partes) if partes else ("Paywise reembolso" if salida else "Paywise")
+        movimientos.append(
+            MovimientoParseado(
+                fecha=fecha,
+                descripcion=desc,
+                monto=neto_abs,
+                tipo="CARGO" if salida else "ABONO",
+                referencia=ref[:120] if ref else None,
+                monto_bruto=round(abs(bruto), 2),
+                comision=round(abs(comision or 0.0), 2),
+                estatus=estatus,
+            )
+        )
+    notas: list[str] = []
+    if not movimientos:
+        notas.append("No se encontraron operaciones con monto en el archivo de Paywise.")
+    if omitidos:
+        notas.append(
+            f"{omitidos} operación(es) omitida(s) por estatus (rechazada/cancelada/pendiente)."
+        )
+    if sin_fecha:
+        notas.append(f"{sin_fecha} operación(es) sin fecha legible (no se importan).")
+    if derivados:
+        notas.append(
+            f"{derivados} neto(s) calculado(s) como bruto − comisión (el archivo no trae neto)."
+        )
+    return ConciliacionParseResponse(
+        movimientos=movimientos,
+        total=len(movimientos),
+        formato="paywise",
+        notas=" ".join(notas),
+        columnas=[str(c) for c in df.columns],
+    )
+
+
+def _parse_tabular(req: ConciliacionParseRequest, formato: str) -> ConciliacionParseResponse:
+    import pandas as pd  # lazy
+
+    df = _leer_tabla(req, formato)
     cols = [str(c) for c in df.columns]
+
+    # PAYWISE: mapeo manual del panel manda; si no, detección por encabezados.
+    if req.mapeo is not None:
+        return _parse_paywise(df, _mapeo_a_columnas(req.mapeo, cols))
+    detectadas = _detectar_columnas_paywise(cols)
+    if detectadas is not None:
+        return _parse_paywise(df, detectadas)
+
     col_fecha = _find_col(cols, "fecha", "date")
     col_desc = _find_col(cols, "concepto", "descrip", "detalle", "referencia", "movimiento")
     col_cargo = _find_col(cols, "cargo", "retiro", "debito", "debit")
@@ -94,8 +361,15 @@ def _parse_tabular(req: ConciliacionParseRequest, formato: str) -> ConciliacionP
                 )
 
     notas = "" if movimientos else "No se reconocieron columnas de monto. Revisa el formato del archivo."
+    if movimientos and "paywise" in req.filename.lower():
+        notas = (
+            "El archivo parece de Paywise pero no se reconocieron sus columnas "
+            "(bruto/comisión/neto): se importó como banco genérico. Usa el mapeo "
+            "manual de columnas para leerlo como Paywise."
+        )
     return ConciliacionParseResponse(
-        movimientos=movimientos, total=len(movimientos), formato=formato, notas=notas
+        movimientos=movimientos, total=len(movimientos), formato=formato, notas=notas,
+        columnas=cols,
     )
 
 

@@ -64,3 +64,45 @@ def test_tabla_con_resaltes_pinta_naranja() -> None:
     libre = ws.cell(row=6, column=2)
     assert not libre.font.bold
     assert libre.fill.patternType is None
+
+
+def test_tabla_varias_hojas() -> None:
+    """`hojas` (ADITIVO): un libro con una pestaña por hoja, cada una con su tabla."""
+    req = TablaXlsxRequest(
+        titulo="Auditoría Paywise",
+        columnas=[{"label": "x"}],
+        hojas=[
+            {
+                "titulo": "Cotejo",
+                "subtitulo": "3 cruces",
+                "columnas": [{"label": "Ref", "tipo": "texto"}, {"label": "Dif", "tipo": "money"}],
+                "filas": [["PW-1", 0], ["PW-2", -58.57]],
+                "resaltes": [{"fila": 1, "col": 1}],
+                "totales": ["Totales", -58.57],
+            },
+            {
+                "titulo": "Paywise sin cobro",
+                "columnas": [{"label": "Ref", "tipo": "texto"}],
+                "filas": [["PW-9"]],
+            },
+            {
+                # Nombre con caracteres ilegales para Excel → se limpia.
+                "titulo": "Cobros / sin: Paywise",
+                "columnas": [{"label": "Vuelo", "tipo": "texto"}],
+                "filas": [],
+            },
+        ],
+    )
+    wb = load_workbook(BytesIO(render_tabla_xlsx(req)))
+    assert wb.sheetnames == ["Cotejo", "Paywise sin cobro", "Cobros - sin- Paywise"]
+    ws = wb["Cotejo"]
+    # Título fila 1, subtítulo fila 2, blanco fila 3, encabezado fila 4.
+    assert ws.cell(row=1, column=1).value == "Cotejo"
+    assert ws.cell(row=4, column=1).value == "Ref"
+    assert ws.cell(row=6, column=2).value == -58.57
+    assert ws.cell(row=6, column=2).font.bold
+    assert ws.cell(row=7, column=1).value == "Totales"
+    ws2 = wb["Paywise sin cobro"]
+    # Sin subtítulo: encabezado en fila 3, primera fila en 4.
+    assert ws2.cell(row=3, column=1).value == "Ref"
+    assert ws2.cell(row=4, column=1).value == "PW-9"

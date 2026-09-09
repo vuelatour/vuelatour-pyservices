@@ -12,7 +12,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from app.schemas.tabla import TablaXlsxRequest
+from app.schemas.tabla import TablaHoja, TablaXlsxRequest
 
 # Excel prohíbe estos caracteres en el NOMBRE de la hoja (no en las celdas):
 # un titulo como "Gastos por avión / categoría" tronaba el export completo.
@@ -47,8 +47,32 @@ def _fmt_for(tipo: str) -> str | None:
 def render_tabla_xlsx(req: TablaXlsxRequest) -> bytes:
     wb = Workbook()
     ws = wb.active
-    ws.title = sheet_title(req.titulo)
+    if req.hojas:
+        # Varias hojas (ADITIVO): la primera reutiliza la hoja activa, el
+        # resto se crean. Nombres de pestaña únicos (Excel los exige).
+        vistos: set[str] = set()
+        for i, hoja in enumerate(req.hojas):
+            nombre = sheet_title(hoja.titulo, f"Hoja {i + 1}")
+            base = nombre
+            n = 2
+            while nombre in vistos:
+                sufijo = f" ({n})"
+                nombre = base[: 31 - len(sufijo)] + sufijo
+                n += 1
+            vistos.add(nombre)
+            target = ws if i == 0 else wb.create_sheet()
+            target.title = nombre
+            _render_hoja(target, hoja)
+    else:
+        ws.title = sheet_title(req.titulo)
+        _render_hoja(ws, req)
 
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _render_hoja(ws, req: TablaHoja | TablaXlsxRequest) -> None:
     ncols = max(len(req.columnas), 1)
 
     # Título.
@@ -131,7 +155,3 @@ def render_tabla_xlsx(req: TablaXlsxRequest) -> bytes:
                 cell.number_format = fmt
 
     ws.freeze_panes = ws.cell(row=hrow + 1, column=1)
-
-    buf = BytesIO()
-    wb.save(buf)
-    return buf.getvalue()

@@ -18,6 +18,22 @@ class CeldaResalte(BaseModel):
     color: str = "ED7D31"
 
 
+class TablaHoja(BaseModel):
+    """Una hoja del libro (ADITIVO, 9-sep-2026: auditoría Paywise en 3 hojas).
+
+    Mismos campos que la tabla raíz; `titulo` es el NOMBRE de la pestaña.
+    """
+
+    titulo: str
+    subtitulo: str | None = None
+    columnas: list[TablaColumna]
+    filas: list[list] = Field(default_factory=list)
+    totales: list | None = None
+    resumen_titulo: str | None = None
+    resumen: list[list] | None = None
+    resaltes: list[CeldaResalte] | None = None
+
+
 class TablaXlsxRequest(BaseModel):
     titulo: str
     subtitulo: str | None = None
@@ -34,3 +50,6 @@ class TablaXlsxRequest(BaseModel):
     # naranja). None/[] = render idéntico al de siempre para el resto de
     # callers de tabla-xlsx.
     resaltes: list[CeldaResalte] | None = None
+    # ADITIVO: varias hojas en el mismo libro. Con `hojas`, la tabla raíz NO
+    # se pinta (solo nombra el libro); sin ellas, render idéntico al de siempre.
+    hojas: list[TablaHoja] | None = None

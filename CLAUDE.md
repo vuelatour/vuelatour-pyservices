@@ -75,6 +75,24 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   en el .css UNA vez y sale en PDF, preview y panel; jamás copiar CSS al
   panel ni renombrar las clases del marcado.
 
+## Conciliación
+
+- Estado de cuenta de PAYWISE (9-sep-2026): `estado_cuenta._parse_paywise`
+  se elige por ENCABEZADOS (`_detectar_columnas_paywise`: fecha + comisión
+  + (bruto o neto); `_norm` translitera acentos) o por `mapeo` manual del
+  panel (`MapeoColumnasPaywise`, nombres de columna del archivo; la
+  respuesta siempre trae `columnas`). Normaliza a `MovimientoParseado` con
+  `monto` = NETO depositado, `tipo` ABONO (CARGO en reembolsos/contracargos
+  o neto negativo), `referencia` = ID de operación y los ADITIVOS
+  `monto_bruto`/`comision`/`estatus`; rechazadas/canceladas/pendientes se
+  omiten (conteo en `notas`); neto ausente = bruto − comisión. `formato` =
+  `paywise`. El banco genérico (`_parse_tabular`) no cambia; fechas ISO se
+  parsean sin `dayfirst` (pandas 3 invertía mes/día). Tests:
+  `tests/test_estado_cuenta_paywise.py`.
+- `tabla-xlsx` acepta `hojas` (ADITIVO): una pestaña por hoja con su propia
+  tabla (auditoría Paywise: Cotejo / Paywise sin cobro / Cobros sin
+  Paywise); sin `hojas` el render es idéntico.
+
 ## IA
 
 - Visión (tacómetro/tickets) usa el modelo de `ANTHROPIC_MODEL`. La lectura
