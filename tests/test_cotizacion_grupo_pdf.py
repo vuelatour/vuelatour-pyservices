@@ -212,6 +212,9 @@ def test_reusa_estilos_mapa_y_branding_del_pdf_de_un_avion() -> None:
     assert cotizacion_grupo_pdf._ficha_aeronave_html is cotizacion_pdf._ficha_aeronave_html
     html = _html()
     assert cotizacion_pdf._estilos_base() in html
+    # El CSS del cuerpo cuelga de `.cot-hoja` (8-sep-2026): el <body> del
+    # grupo la lleva, si no la hoja saldría sin estilo.
+    assert f'<body class="{cotizacion_pdf.CLASE_RAIZ}">' in html
     assert "#dc2626" in html and "#102a43" in html
     assert 'viewBox="' in html  # mapa SVG presente
     assert ">CZA</text>" in html

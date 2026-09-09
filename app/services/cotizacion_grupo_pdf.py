@@ -41,6 +41,7 @@ from app.schemas.reportes import (
 )
 from app.services.cotizacion_pdf import (
     _NAVY,
+    CLASE_RAIZ,
     _estilos_base,
     _fecha_legible,
     _ficha_aeronave_html,
@@ -398,7 +399,7 @@ def _build_html(r: CotizacionGrupoPdfRequest) -> str:
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
 {_estilos_base()}{_estilos_grupo()}
-</style></head><body>
+</style></head><body class="{CLASE_RAIZ}">
   {marca_html}
   <div class="header">
     {logo_header_html}

@@ -9,6 +9,7 @@ Fecha por tramo (3-sep-2026): `EscalaPdf.fecha` es un DÍA de pared
 (YYYY-MM-DD) SOLO para el PDF del cliente; sin hora, sin zona, sin fallback.
 """
 
+import base64
 import hashlib
 import re
 import sys
@@ -20,14 +21,19 @@ from app.main import app
 from app.routers import reportes as reportes_router
 from app.schemas.reportes import CotizacionPdfRequest, MapaPuntoPdf
 from app.services.cotizacion_pdf import (
+    _STATIC,
+    CLASE_RAIZ,
     PREVIEW_ANCHO_PX,
     TZ_NOTA,
     _build_html,
     _estilos_base,
     _estilos_cuerpo,
+    _estilos_fuente,
+    _estilos_hoja,
     _estilos_page,
     _fecha_dia,
     _mapa_svg,
+    _mapa_svg_elemento,
     _peninsula_paths,
     _xy,
 )
@@ -461,7 +467,7 @@ def test_preview_es_solo_la_hoja_1_sin_fotos_ni_ficha() -> None:
     # SIN hoja 2 en el MARCADO: ni contenedor, ni ficha, ni tarjeta, ni fotos,
     # ni características. (El CSS del cuerpo es el compartido y conserva sus
     # selectores `.av-*`/`.foto-ancha` sin usar: fuente única con el PDF.)
-    cuerpo = html[html.index("<body>") :]
+    cuerpo = html[html.index(f'<body class="{CLASE_RAIZ}">') :]
     for prohibido in (
         'class="detalles"',
         "av-titulo",
@@ -508,8 +514,9 @@ def test_preview_hoja_1_es_byte_identica_a_la_del_pdf() -> None:
     req = _req_completo()
     pdf = _build_html(req)
     prev = _build_html(req, solo_hoja_1=True)
-    hoja1_pdf = pdf[pdf.index("<body>") : pdf.index('<div class="detalles">')]
-    hoja1_prev = prev[prev.index("<body>") : prev.index('<div class="pie-pantalla">')]
+    body = f'<body class="{CLASE_RAIZ}">'
+    hoja1_pdf = pdf[pdf.index(body) : pdf.index('<div class="detalles">')]
+    hoja1_prev = prev[prev.index(body) : prev.index('<div class="pie-pantalla">')]
     assert hoja1_pdf == hoja1_prev
     assert _estilos_cuerpo() in pdf and _estilos_cuerpo() in prev
 
@@ -520,19 +527,28 @@ def test_pdf_html_no_cambia_con_la_vista_previa() -> None:
     pdf = _build_html(req)
     assert pdf == _build_html(req, solo_hoja_1=False)
     assert _estilos_base() in pdf
-    assert _estilos_base() == _estilos_page() + _estilos_cuerpo()
+    assert _estilos_base() == _estilos_page() + _estilos_hoja()
     assert "@page :first" in pdf and "position: fixed" in pdf
     assert '<div class="detalles">' in pdf and FOTO_EXT in pdf and FOTO_INT in pdf
     assert "De un vistazo" in pdf and "Aire acondicionado" in pdf
     assert "pie-pantalla" not in pdf and f"{PREVIEW_ANCHO_PX}px" not in pdf
 
 
-# Cinturón del refactor (8-sep-2026): sha256 del HTML del PDF para 3 payloads,
-# calculado ANTES de partir `_estilos_base` y de extraer la hoja 2 (los logos
-# data-URI se normalizan a "data:LOGO" para no depender del PNG). Si un cambio
-# INTENCIONAL de la hoja del cliente mueve estos hashes, se refrescan con el
-# valor que imprime el assert — pero antes hay que preguntarse si la vista
-# previa del panel sigue mostrando lo mismo (`_build_html` es la fuente única).
+# Cinturón del refactor (8-sep-2026): sha256 del HTML del PDF para 3 payloads
+# (los logos data-URI se normalizan a "data:LOGO" y las fuentes woff2 a
+# "data:FUENTE" para no depender de los binarios). Refrescados el 8-sep-2026
+# al mover el CSS del cuerpo a `app/static/cotizacion-hoja.css` (selectores
+# acotados a `.cot-hoja`, <body class="cot-hoja">) e incrustar Arimo — cambio
+# INTENCIONAL y verificado con `test_preview_hoja_1_es_byte_identica_a_la_del_pdf`.
+# Refrescados otra vez el 8-sep-2026 (revisión de fidelidad de la hoja
+# editable): `cotizacion-hoja.css` neutraliza dos reglas más del preflight de
+# Tailwind — `h2 { font-weight: 700 }` (el preflight pone `inherit`; en
+# WeasyPrint h2 ya es bold) y `td, th { padding: 1px }` (el preflight pone 0;
+# es el valor del agente de usuario) — sin efecto en el PDF.
+# Si un cambio INTENCIONAL de la hoja del cliente mueve estos hashes, se
+# refrescan con el valor que imprime el assert — pero antes hay que
+# preguntarse si la vista previa del panel y la hoja del panel (mismo CSS)
+# siguen mostrando lo mismo (`_build_html` + el .css son la fuente única).
 _SNAPSHOTS: dict[str, tuple[dict, str]] = {
     "completo": (
         dict(
@@ -604,11 +620,11 @@ _SNAPSHOTS: dict[str, tuple[dict, str]] = {
             aeronave_cotizada_modelo="Piper Seneca V",
             modelos_cotizados=["Piper Seneca V", "Cessna 206"],
         ),
-        "b1806d1b7fe4c676b76c708b4fb3fdb970b6f3d0fa2450c4230aab9ac7f42201",
+        "190d3002fd0833f0792d073aa9cf54c73ca5c083f03619fb0e4769a659a318eb",
     ),
     "minimo": (
         dict(folio="COT-1", cliente="Cliente", origen="CUN", destino="MID"),
-        "5276324167e0f4fdfd2464bf00a1667c70b57406cb9b536c3bbc007e5ed8da19",
+        "780afab7bfdc9f9c76fb5c085c73381073eaa49ae1325ce3ffd95e2d81ce81d4",
     ),
     "externo_sin_itinerario": (
         dict(
@@ -653,14 +669,15 @@ _SNAPSHOTS: dict[str, tuple[dict, str]] = {
             avion_modelo=None,
             foto_exterior=None,
         ),
-        "ffc4c4b71e266a3119255940bd297a6bf84abc0d5c15048b4456929667bc8c81",
+        "c0052706556f72e3793ce973de2348468ffd9b4bc2eaa7ab14ab9c4d048ce526",
     ),
 }
 
 
 def _sha_normalizado(html: str) -> str:
     sin_logo = re.sub(r"data:image/png;base64,[A-Za-z0-9+/=]+", "data:LOGO", html)
-    return hashlib.sha256(sin_logo.encode("utf-8")).hexdigest()
+    sin_fuente = re.sub(r"data:font/woff2;base64,[A-Za-z0-9+/=]+", "data:FUENTE", sin_logo)
+    return hashlib.sha256(sin_fuente.encode("utf-8")).hexdigest()
 
 
 def test_pdf_html_snapshot_previo_al_refactor_de_vista_previa() -> None:
@@ -720,3 +737,184 @@ def test_preview_router_error_es_500_con_detalle(monkeypatch) -> None:
     )
     assert res.status_code == 500
     assert "boom en la plantilla" in res.json()["detail"]
+
+
+# ===== CSS de la hoja en archivo estático + fuente incrustada (form-as-document, 8-sep-2026) =====
+# La hoja que edita el operador en el panel y el PDF comparten ARCHIVO
+# (`app/static/cotizacion-hoja.css`), FUENTE (`cotizacion-fuente.css`, Arimo
+# woff2 base64) y MAPA (`_mapa_svg_elemento`). Python solo lee los archivos.
+
+# Clases del marcado de la hoja 1 y de la hoja "La aeronave" que el CSS DEBE
+# cubrir (contrato con el panel: si una desaparece del .css, la hoja del
+# panel deja de parecerse al PDF).
+_CLASES_MARCADO = (
+    "marca", "header", "logo", "titulos", "meta", "route", "grid", "fecha",
+    "itin-row", "itin-tabla", "itin-mapa", "mapa-solo", "mapa", "totales",
+    "lbl", "val", "sub-row", "total-row", "total-mxn", "notas", "detalles",
+    "av-titulo", "av-linea", "foto-ancha", "av-row", "av-foto", "vistazo",
+    "vz-titulo", "vz-lbl", "vz-val", "caracts",
+)
+
+
+def _selectores(css: str) -> list[str]:
+    sin_comentarios = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    return [
+        s.strip()
+        for bloque in re.findall(r"([^{}]+)\{", sin_comentarios)
+        for s in bloque.split(",")
+        if s.strip()
+    ]
+
+
+def test_css_del_cuerpo_y_la_fuente_son_los_archivos_estaticos() -> None:
+    assert _estilos_cuerpo() == (_STATIC / "cotizacion-hoja.css").read_text(encoding="utf-8")
+    assert _estilos_fuente() == (_STATIC / "cotizacion-fuente.css").read_text(encoding="utf-8")
+    # Lo que recibe el panel = fuente + cuerpo, contiguo.
+    assert _estilos_hoja() == _estilos_fuente() + _estilos_cuerpo()
+    assert (_STATIC / "Arimo-OFL.txt").read_text(encoding="utf-8").startswith("Copyright")
+
+
+def test_todo_selector_del_cuerpo_cuelga_de_la_raiz_cot_hoja() -> None:
+    # Ningún selector suelto (body, table, h2, *): en el panel el CSS convive
+    # con Tailwind y solo puede tocar lo que está dentro de `.cot-hoja`.
+    assert CLASE_RAIZ == "cot-hoja"
+    selectores = _selectores(_estilos_cuerpo())
+    assert selectores
+    sueltos = [s for s in selectores if not s.startswith(f".{CLASE_RAIZ}")]
+    assert sueltos == [], sueltos
+    # Todas las clases del marcado tienen regla.
+    css = _estilos_cuerpo()
+    faltan = [c for c in _CLASES_MARCADO if f".{c}" not in css]
+    assert faltan == [], faltan
+    # La tipografía de la hoja es la fuente incrustada, con fallback.
+    assert (
+        f".{CLASE_RAIZ}, .{CLASE_RAIZ} * {{ font-family: 'Arimo', 'Liberation Sans', "
+        "'Helvetica Neue', Arial, sans-serif; color: #1d1d1d; }"
+    ) in css
+    # El pie de página del PDF (@page) usa la misma fuente.
+    assert _estilos_page().count("font-family: 'Arimo'") == 3
+
+
+def test_fuente_incrustada_regular_y_bold_con_los_glifos_de_la_hoja() -> None:
+    from io import BytesIO
+
+    from fontTools.ttLib import TTFont  # dependencia de WeasyPrint
+
+    f = _estilos_fuente()
+    assert f.count("@font-face") == 2
+    assert f.count("font-family: 'Arimo';") == 2
+    assert "font-weight: 400;" in f and "font-weight: 700;" in f
+    blobs = re.findall(r"data:font/woff2;base64,([A-Za-z0-9+/=]+)\) format\('woff2'\)", f)
+    assert len(blobs) == 2
+    pesos = []
+    for b in blobs:
+        fuente = TTFont(BytesIO(base64.b64decode(b)))
+        cmap = fuente.getBestCmap()
+        # Lo que imprime la hoja: flecha de la ruta, menos del descuento,
+        # × de las TUAS, · separador, acentos/ñ del español.
+        for ch in "→−×·áéíóúñÁÉÍÓÚÑ¿¡$…–—“”":
+            assert ord(ch) in cmap, ch
+        pesos.append(fuente["OS/2"].usWeightClass)
+    assert sorted(pesos) == [400, 700]
+
+
+def test_pdf_preview_y_grupo_llevan_la_hoja_css_completa_y_la_raiz() -> None:
+    from app.schemas.reportes import CotizacionGrupoPdfRequest
+    from app.services.cotizacion_grupo_pdf import _build_html as build_grupo
+    from tests.test_cotizacion_grupo_pdf import _payload as payload_grupo
+
+    req = _req_completo()
+    documentos = (
+        _build_html(req),
+        _build_html(req, solo_hoja_1=True),
+        build_grupo(CotizacionGrupoPdfRequest(**payload_grupo())),
+    )
+    for html in documentos:
+        assert _estilos_hoja() in html
+        assert html.count("@font-face") == 2
+        assert html.count("<body") == 1 and f'<body class="{CLASE_RAIZ}">' in html
+
+
+def test_mapa_svg_elemento_es_exactamente_lo_que_embebe_la_hoja() -> None:
+    local = [_tramo(1, "CUN", _CUN, "MID", _MID), _tramo(2, "MID", _MID, "CUN", _CUN)]
+    amplio = [_tramo(1, "CUN", _CUN, "BJX", _BJX), _tramo(2, "BJX", _BJX, "CUN", _CUN)]
+    for puntos in (local, amplio):
+        svg = _mapa_svg_elemento(puntos)
+        assert svg.startswith("<svg viewBox=") and svg.endswith("</svg>")
+        assert _mapa_svg(puntos) == f'<div class="mapa">{svg}</div>'
+        assert f'<div class="mapa">{svg}</div>' in _build_html(_req_completo(mapa_puntos=puntos))
+    assert _mapa_svg_elemento([]) == "" and _mapa_svg([]) == ""
+
+
+# ===== Router: GET /reportes/cotizacion/hoja.css y POST /reportes/cotizacion/mapa-svg =====
+
+
+def test_hoja_css_router_sin_token_rechazado(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    assert client.get("/reportes/cotizacion/hoja.css").status_code == 401
+    res = client.get("/reportes/cotizacion/hoja.css", headers={"X-Internal-Token": "malo"})
+    assert res.status_code == 401
+
+
+def test_hoja_css_router_devuelve_fuente_y_cuerpo_cacheables(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    monkeypatch.setitem(sys.modules, "weasyprint", None)
+    res = client.get("/reportes/cotizacion/hoja.css", headers={"X-Internal-Token": TOKEN})
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "text/css; charset=utf-8"
+    assert res.headers["cache-control"] == "public, max-age=3600"
+    # EXACTAMENTE lo que llevan el PDF y la vista previa.
+    assert res.text == _estilos_hoja()
+    assert res.text in _build_html(_req_completo())
+    assert res.text in _build_html(_req_completo(), solo_hoja_1=True)
+
+
+def test_mapa_svg_router_sin_token_rechazado(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    body = {"mapa_puntos": [_tramo(1, "CUN", _CUN, "MID", _MID).model_dump()]}
+    assert client.post("/reportes/cotizacion/mapa-svg", json=body).status_code == 401
+
+
+def test_mapa_svg_router_devuelve_el_mismo_mapa_del_pdf(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    monkeypatch.setitem(sys.modules, "weasyprint", None)
+    casos = {
+        "local": [_tramo(1, "CUN", _CUN, "MID", _MID), _tramo(2, "MID", _MID, "CUN", _CUN)],
+        "amplio": [
+            _tramo(1, "CUN", _CUN, "BJX", _BJX),
+            _tramo(2, "BJX", _BJX, "AZP", _AZP),
+            _tramo(3, "AZP", _AZP, "CUN", _CUN),
+        ],
+    }
+    for nombre, puntos in casos.items():
+        res = client.post(
+            "/reportes/cotizacion/mapa-svg",
+            json={"mapa_puntos": [p.model_dump() for p in puntos]},
+            headers={"X-Internal-Token": TOKEN},
+        )
+        assert res.status_code == 200, nombre
+        assert res.headers["content-type"] == "image/svg+xml"
+        assert res.headers["cache-control"] == "no-store"
+        assert res.text == _mapa_svg_elemento(puntos)
+        hoja = _build_html(_req_completo(mapa_puntos=puntos))
+        assert f'<div class="mapa">{res.text}</div>' in hoja
+    # Mismo modo local/amplio que el PDF: el amplio abre la vista más allá del
+    # lienzo peninsular y pinta el contorno de México de fondo.
+    _, _, bw_local, _ = _viewbox(_mapa_svg_elemento(casos["local"]))
+    _, _, bw_amplio, _ = _viewbox(_mapa_svg_elemento(casos["amplio"]))
+    assert bw_local <= 600 < bw_amplio
+
+
+def test_mapa_svg_router_sin_puntos_es_204(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    for body in ({"mapa_puntos": []}, {}):
+        res = client.post(
+            "/reportes/cotizacion/mapa-svg", json=body, headers={"X-Internal-Token": TOKEN}
+        )
+        assert res.status_code == 204
+        assert res.content == b""

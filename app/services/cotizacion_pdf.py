@@ -19,6 +19,17 @@ Vista previa en pantalla (rediseño del cotizador, 8-sep-2026): el panel pide
 `_build_html(req, solo_hoja_1=True)`: la misma hoja 1 (mismos bloques y
 reglas) sin la hoja "La aeronave" ni fotos, con CSS de pantalla en lugar de
 `@page`. El HTML del PDF (default) queda byte-idéntico al de siempre.
+
+CSS de la hoja como archivo ESTÁTICO (form-as-document, 8-sep-2026): el
+cuerpo de la hoja vive en `app/static/cotizacion-hoja.css` y la fuente
+incrustada (Arimo, OFL) en `app/static/cotizacion-fuente.css`; Python solo
+los lee (`_estilos_cuerpo`, `_estilos_fuente`, `_estilos_hoja`) y conserva
+`_estilos_page` (@page) y `_estilos_pantalla` (vista previa). Todo selector
+del cuerpo va acotado a la clase raíz `CLASE_RAIZ` ("cot-hoja"), que llevan
+el <body> del PDF, de la vista previa y del PDF de grupo. El panel pide el
+MISMO CSS por `GET /reportes/cotizacion/hoja.css` y el mismo mapa por
+`POST /reportes/cotizacion/mapa-svg`: la hoja que edita el operador y el
+PDF comparten archivo, fuente y mapa — nunca una imitación.
 """
 
 import base64
@@ -38,6 +49,10 @@ _CANCUN = ZoneInfo("America/Cancun")
 TZ_NOTA = "Horarios en hora de Cancún (UTC−5)."
 
 _ASSETS = Path(__file__).resolve().parent.parent / "assets"
+_STATIC = Path(__file__).resolve().parent.parent / "static"
+# Clase RAÍZ de la hoja: la lleva el <body> del PDF/preview y el contenedor
+# de la hoja en el panel; TODO selector de cotizacion-hoja.css cuelga de ella.
+CLASE_RAIZ = "cot-hoja"
 
 
 def _money(v: float) -> str:
@@ -208,8 +223,11 @@ _TOL_CABE = 12.0
 _SPAN_DEGENERADO = 24.0
 
 
-def _mapa_svg(puntos: list[MapaPuntoPdf]) -> str:
-    """SVG del itinerario: fondo geográfico + arcos numerados (ferry punteado).
+def _mapa_svg_elemento(puntos: list[MapaPuntoPdf]) -> str:
+    """El elemento <svg> del itinerario SIN el envoltorio `.mapa` (8-sep-2026:
+    es lo que devuelve `POST /reportes/cotizacion/mapa-svg` al panel, que lo
+    inyecta inline dentro de su propio `<div class="mapa">`). '' sin puntos.
+    Fondo geográfico + arcos numerados (ferry punteado).
 
     DOS MODOS elegidos solos (1-sep, caso real del cliente — una escala
     lejana tipo BJX/AZP se salía del cuadro fijo y la ruta se cortaba):
@@ -309,11 +327,17 @@ def _mapa_svg(puntos: list[MapaPuntoPdf]) -> str:
             f'font-weight="700" fill="{_NAVY}">{escape(iata)}</text>'
         )
     return (
-        '<div class="mapa">'
         f'<svg viewBox="{bx0:.1f} {by0:.1f} {bw:.1f} {bh:.1f}" '
         'xmlns="http://www.w3.org/2000/svg">'
-        f"{fondo}{''.join(arcos)}{''.join(marcadores)}</svg></div>"
+        f"{fondo}{''.join(arcos)}{''.join(marcadores)}</svg>"
     )
+
+
+def _mapa_svg(puntos: list[MapaPuntoPdf]) -> str:
+    """Mapa del itinerario tal cual lo embebe la hoja: `<div class="mapa">` +
+    `_mapa_svg_elemento`. '' sin puntos (ni contenedor)."""
+    svg = _mapa_svg_elemento(puntos)
+    return f'<div class="mapa">{svg}</div>' if svg else ""
 
 
 def _mostrar_matricula(matricula: str | None) -> bool:
@@ -460,13 +484,13 @@ def _estilos_page() -> str:
       content: "www.vuelatour.com";
       font-size: 10px;
       color: #9ca3af;
-      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-family: 'Arimo', 'Helvetica Neue', Arial, sans-serif;
     }}
     @bottom-right {{
       content: "Página " counter(page) " de " counter(pages);
       font-size: 9px;
       color: #9ca3af;
-      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-family: 'Arimo', 'Helvetica Neue', Arial, sans-serif;
     }}
   }}
   @page :first {{
@@ -478,78 +502,38 @@ def _estilos_page() -> str:
       font-size: 10px;
       color: #9ca3af;
       text-align: center;
-      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-family: 'Arimo', 'Helvetica Neue', Arial, sans-serif;
     }}
   }}
 """
 
 
+@lru_cache(maxsize=1)
+def _estilos_fuente() -> str:
+    """`@font-face` de la hoja (8-sep-2026): Arimo regular y bold (OFL,
+    métrica de Arial) incrustadas en woff2 base64 desde
+    `app/static/cotizacion-fuente.css`. Va en el PDF, en la vista previa y
+    en `GET /reportes/cotizacion/hoja.css` para que la hoja del panel y el
+    PDF pinten con la MISMA fuente (antes: el sans del contenedor — DejaVu
+    en el Docker de Railway, Helvetica/Arial en el navegador)."""
+    return (_STATIC / "cotizacion-fuente.css").read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=1)
 def _estilos_cuerpo() -> str:
     """CSS del CUERPO del documento (membrete navy, marca de agua, tablas,
-    mapa, desglose/totales y la hoja "La aeronave"): lo comparten el PDF y
-    la vista previa en pantalla (8-sep-2026) — misma hoja, mismo estilo."""
-    return f"""  * {{ font-family: 'Helvetica Neue', Arial, sans-serif; color: #1d1d1d; }}
-  /* Marca de agua: fija = se repite en TODAS las páginas (WeasyPrint). */
-  .marca {{ position: fixed; top: 34%; left: 0; right: 0; text-align: center;
-            opacity: 0.05; z-index: -1; }}
-  .marca img {{ width: 78%; transform: rotate(-18deg); }}
-  .header {{ background: {_NAVY}; color: #fff; padding: 16px 24px; border-radius: 10px;
-             display: flex; align-items: center; justify-content: space-between; }}
-  .header .logo {{ height: 30px; }}
-  .header .titulos p {{ margin: 2px 0 0; color: #9fb3c8; font-size: 11px;
-                        text-align: right; }}
-  .header .titulos h1 {{ margin: 0; font-size: 17px; color: #fff; text-align: right; }}
-  .meta {{ display: flex; justify-content: space-between; margin: 18px 0 14px; font-size: 13px; }}
-  .route {{ font-size: 26px; font-weight: 800; color: {_NAVY}; margin: 6px 0 2px; }}
-  h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; color: #6b7280;
-        margin: 20px 0 8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }}
-  table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-  .grid th, .grid td {{ border: 1px solid #e5e5e5; padding: 6px 10px; text-align: left; }}
-  .grid th {{ background: #f7f7f8; }}
-  .grid td.fecha {{ white-space: nowrap; }}
-  /* Mapa junto al itinerario (26-ago v3): dos columnas en la hoja 1. */
-  .itin-row {{ width: 100%; border-collapse: separate; border-spacing: 0; }}
-  .itin-row td {{ vertical-align: top; }}
-  .itin-tabla {{ width: 55%; padding-right: 12px; }}
-  .itin-mapa {{ width: 45%; }}
-  .mapa-solo {{ width: 60%; margin: 0 auto; }}
-  .mapa {{ width: 100%; border: 1px solid #e5e7eb;
-           border-radius: 10px; overflow: hidden; background: #f8fafc; }}
-  .mapa svg {{ width: 100%; display: block; }}
-  .totales td {{ padding: 7px 0; }}
-  .totales .lbl {{ color: #6b7280; }}
-  .totales .val {{ text-align: right; font-weight: 600; }}
-  .sub-row td {{ border-top: 1px solid #d1d5db; padding-top: 8px; font-weight: 700;
-                 color: {_NAVY}; }}
-  .total-row td {{ border-top: 2px solid {_NAVY}; padding-top: 12px; font-size: 18px;
-                   font-weight: 800; color: {_BRAND}; }}
-  .total-mxn td {{ font-size: 13px; font-weight: 700; color: {_NAVY}; }}
-  .notas {{ margin-top: 20px; font-size: 12px; color: #374151; }}
-  /* Página 2 (26-ago): SOLO imágenes (mapa de la ruta + fotos del avión);
-     la página 1 lleva cotización + traslados + itinerario. */
-  .detalles {{ page-break-before: always; }}
-  /* Página "La aeronave" (26-ago v2, mockup del cliente). */
-  .av-titulo {{ font-size: 24px; font-weight: 800; color: #111827; margin: 0; }}
-  .av-linea {{ width: 3.2cm; height: 4px; background: {_BRAND}; margin: 6px 0 14px; }}
-  .foto-ancha {{ width: 100%; height: 8.6cm; object-fit: cover; border-radius: 12px;
-                 border: 1px solid #e5e7eb; margin-bottom: 12px; }}
-  .av-row {{ width: 100%; border-collapse: separate; border-spacing: 0; }}
-  .av-row td {{ vertical-align: top; }}
-  .av-foto {{ width: 62%; padding-right: 12px; }}
-  .av-foto img {{ width: 100%; height: 8.2cm; object-fit: cover; border-radius: 12px;
-                  border: 1px solid #e5e7eb; }}
-  .vistazo {{ background: {_NAVY}; border-top: 6px solid {_BRAND};
-              border-radius: 12px; padding: 16px 18px; height: 8.2cm;
-              box-sizing: border-box; }}
-  .vz-titulo {{ color: #d6bf8e; font-size: 11px; font-weight: 700;
-               letter-spacing: 3px; text-transform: uppercase;
-               margin-bottom: 12px; }}
-  .vz-lbl {{ color: #94a3b8; font-size: 10px; text-transform: uppercase;
-             letter-spacing: 1px; margin-top: 9px; }}
-  .vz-val {{ color: #ffffff; font-size: 16px; font-weight: 700; margin-top: 1px; }}
-  .caracts {{ margin-top: 12px; background: #f3f4f6; border-radius: 10px;
-              padding: 11px 14px; font-size: 12px; color: #374151;
-              text-align: center; }}"""
+    mapa, desglose/totales y la hoja "La aeronave"): lo comparten el PDF, la
+    vista previa en pantalla y el panel (form-as-document). Desde 8-sep-2026
+    vive en `app/static/cotizacion-hoja.css` (fuente única; aquí solo se lee)
+    con TODO selector acotado a `.cot-hoja` (`CLASE_RAIZ`)."""
+    return (_STATIC / "cotizacion-hoja.css").read_text(encoding="utf-8")
+
+
+def _estilos_hoja() -> str:
+    """Fuente incrustada + cuerpo: EXACTAMENTE lo que el panel recibe en
+    `GET /reportes/cotizacion/hoja.css` y lo que llevan el PDF y la vista
+    previa (contiguo, para que un test lo verifique como substring)."""
+    return _estilos_fuente() + _estilos_cuerpo()
 
 
 def _estilos_base() -> str:
@@ -559,9 +543,10 @@ def _estilos_base() -> str:
     (fuente única) y `cotizacion_grupo_pdf` lo importa: un cambio de
     branding se hace una sola vez. Devuelve el contenido del <style> tal
     cual (sin la etiqueta). Desde 8-sep-2026 es `_estilos_page` +
-    `_estilos_cuerpo` (byte-idéntico); la vista previa usa solo el cuerpo.
+    `_estilos_hoja` (fuente incrustada + cuerpo leídos de los archivos
+    estáticos); la vista previa usa `_estilos_hoja` + `_estilos_pantalla`.
     """
-    return _estilos_page() + _estilos_cuerpo()
+    return _estilos_page() + _estilos_hoja()
 
 
 # Ancho de la hoja en la VISTA PREVIA del panel (8-sep-2026): el panel la
@@ -773,7 +758,7 @@ def _build_html(r: CotizacionPdfRequest, *, solo_hoja_1: bool = False) -> str:
     # previa el pie de la hoja 1 (el navegador no pinta `@page` y la hoja 2
     # no se muestra: la preview es SOLO lo que el operador está editando).
     if solo_hoja_1:
-        estilos = _estilos_cuerpo() + "\n" + _estilos_pantalla()
+        estilos = _estilos_hoja() + "\n" + _estilos_pantalla()
         cola_html = _pie_pantalla_html()
     else:
         estilos = _estilos_base()
@@ -786,7 +771,7 @@ def _build_html(r: CotizacionPdfRequest, *, solo_hoja_1: bool = False) -> str:
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
 {estilos}
-</style></head><body>
+</style></head><body class="{CLASE_RAIZ}">
   {marca_html}
   <div class="header">
     {logo_header_html}

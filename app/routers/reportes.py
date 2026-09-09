@@ -10,11 +10,17 @@ from app.schemas.reportes import (
     CotizacionGrupoPdfRequest,
     CotizacionInternaPdfRequest,
     CotizacionPdfRequest,
+    MapaSvgRequest,
 )
 from app.security import require_internal_token
 from app.services.cotizacion_grupo_pdf import render_cotizacion_grupo_pdf
 from app.services.cotizacion_interna_pdf import render_cotizacion_interna_pdf
-from app.services.cotizacion_pdf import render_cotizacion_pdf, render_cotizacion_preview_html
+from app.services.cotizacion_pdf import (
+    _estilos_hoja,
+    _mapa_svg_elemento,
+    render_cotizacion_pdf,
+    render_cotizacion_preview_html,
+)
 
 logger = logging.getLogger("reportes")
 
@@ -68,6 +74,36 @@ def cotizacion_preview_html(req: CotizacionPdfRequest) -> HTMLResponse:
             detail=f"No se pudo generar la vista previa: {e}",
         ) from e
     return HTMLResponse(content=html, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/cotizacion/hoja.css")
+def cotizacion_hoja_css() -> Response:
+    """CSS de la HOJA de cotización para el panel (form-as-document,
+    8-sep-2026): `@font-face` incrustado (Arimo) + el cuerpo de la hoja, el
+    MISMO texto que llevan el PDF y la vista previa (`_estilos_hoja`). Todo
+    selector cuelga de `.cot-hoja`. Es estático por deploy: cacheable 1 h."""
+    return Response(
+        content=_estilos_hoja(),
+        media_type="text/css; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.post("/cotizacion/mapa-svg")
+def cotizacion_mapa_svg(req: MapaSvgRequest) -> Response:
+    """Mapa del itinerario como `image/svg+xml` para la hoja del panel
+    (8-sep-2026): el MISMO `_mapa_svg` del PDF (modo local/amplio, badges
+    numerados por `orden`, ferry punteado) sin el envoltorio `.mapa` — el
+    panel lo inyecta inline dentro de su `<div class="mapa">`. Sin puntos →
+    204 (la hoja no lleva mapa)."""
+    svg = _mapa_svg_elemento(req.mapa_puntos)
+    if not svg:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.post("/cotizacion-grupo")

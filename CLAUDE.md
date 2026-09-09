@@ -55,13 +55,25 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   8-sep-2026): MISMO payload `CotizacionPdfRequest` y MISMO
   `cotizacion_pdf._build_html(req, solo_hoja_1=True)` → `text/html` de SOLO
   la hoja 1 (sin hoja «La aeronave» ni fotos) con CSS de pantalla
-  (`_estilos_cuerpo` + `_estilos_pantalla`, ancho fijo `PREVIEW_ANCHO_PX`=794,
+  (`_estilos_hoja` + `_estilos_pantalla`, ancho fijo `PREVIEW_ANCHO_PX`=794,
   sin `@page`; el pie de `@page :first` va como `.pie-pantalla`),
   `Cache-Control: no-store`, sin WeasyPrint. Regla: el HTML del PDF (default)
   debe seguir byte-idéntico — jamás una réplica aparte de la hoja 1; un
   cambio en la hoja 1 se hace UNA vez en `_build_html` y sale en ambos.
-  `_estilos_base` = `_estilos_page` + `_estilos_cuerpo` (grupo lo importa tal
+  `_estilos_base` = `_estilos_page` + `_estilos_hoja` (grupo lo importa tal
   cual). Tests: `tests/test_cotizacion_pdf.py` (sección «Vista previa»).
+- CSS de la hoja como ARCHIVO ESTÁTICO (form-as-document, 8-sep-2026):
+  `app/static/cotizacion-hoja.css` (cuerpo; TODO selector acotado a la
+  raíz `.cot-hoja`, que llevan el <body> del PDF, de la preview y del PDF
+  de grupo) y `app/static/cotizacion-fuente.css` (`@font-face` Arimo
+  regular/bold woff2 base64, OFL en `Arimo-OFL.txt`; archivo GENERADO, la
+  receta está en su cabecera). Python solo los lee: `_estilos_hoja()` =
+  fuente + cuerpo y es EXACTAMENTE lo que devuelve
+  `GET /reportes/cotizacion/hoja.css` (text/css, max-age 3600) al panel;
+  `POST /reportes/cotizacion/mapa-svg` {mapa_puntos} devuelve el <svg> del
+  mismo `_mapa_svg` (204 sin puntos). Regla: un estilo de la hoja se cambia
+  en el .css UNA vez y sale en PDF, preview y panel; jamás copiar CSS al
+  panel ni renombrar las clases del marcado.
 
 ## IA
 

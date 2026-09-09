@@ -1,0 +1,89 @@
+/* CSS del CUERPO de la hoja de cotización (fuente única, 8-sep-2026).
+   Lo leen `cotizacion_pdf._estilos_cuerpo()` (PDF con WeasyPrint, vista
+   previa y PDF de grupo) y el panel vía GET /reportes/cotizacion/hoja.css:
+   la hoja que edita el operador y el PDF que baja el cliente comparten
+   ESTE archivo — nunca una réplica.
+   Reglas del archivo:
+   - TODO selector va acotado a la raíz `.cot-hoja` (la lleva el body del
+     PDF y de la vista previa; en el panel es el contenedor de la hoja).
+     Así ningún selector suelto (h2, table, *) se cuela fuera de la hoja ni
+     colisiona con Tailwind (p. ej. `.grid` de Tailwind = display:grid).
+   - Las clases son las del marcado de siempre (.header, .meta, .route,
+     .grid, .itin-*, .mapa, .totales, .notas, .av-*…): renombrarlas cambia
+     el HTML del PDF y el contrato con el panel.
+   - Tipografía: 'Arimo' (incrustada en cotizacion-fuente.css) con fallback
+     a la misma familia métrica. */
+/* Neutraliza el "preflight" de Tailwind en el panel. Son los valores por
+   defecto del agente de usuario (sin efecto en WeasyPrint): sin ellos la
+   hoja del panel heredaría line-height 1.5, border-box, h1/h2 sin negrita,
+   celdas sin su padding de 1px e img/table en block/grid y dejaría de ser
+   idéntica al PDF. */
+.cot-hoja { line-height: normal; font-size: 16px; }
+.cot-hoja, .cot-hoja * { box-sizing: content-box; }
+.cot-hoja h1, .cot-hoja h2 { font-weight: 700; }
+.cot-hoja img { display: inline; max-width: none; height: auto; vertical-align: baseline; }
+.cot-hoja table { display: table; text-indent: 0; }
+.cot-hoja td, .cot-hoja th { padding: 1px; }
+.cot-hoja p { margin: 1em 0; }
+  .cot-hoja, .cot-hoja * { font-family: 'Arimo', 'Liberation Sans', 'Helvetica Neue', Arial, sans-serif; color: #1d1d1d; }
+  /* Marca de agua: fija = se repite en TODAS las páginas (WeasyPrint). */
+  .cot-hoja .marca { position: fixed; top: 34%; left: 0; right: 0; text-align: center;
+            opacity: 0.05; z-index: -1; }
+  .cot-hoja .marca img { width: 78%; transform: rotate(-18deg); }
+  .cot-hoja .header { background: #102a43; color: #fff; padding: 16px 24px; border-radius: 10px;
+             display: flex; align-items: center; justify-content: space-between; }
+  .cot-hoja .header .logo { height: 30px; }
+  .cot-hoja .header .titulos p { margin: 2px 0 0; color: #9fb3c8; font-size: 11px;
+                        text-align: right; }
+  .cot-hoja .header .titulos h1 { margin: 0; font-size: 17px; color: #fff; text-align: right; }
+  .cot-hoja .meta { display: flex; justify-content: space-between; margin: 18px 0 14px; font-size: 13px; }
+  .cot-hoja .route { font-size: 26px; font-weight: 800; color: #102a43; margin: 6px 0 2px; }
+  .cot-hoja h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; color: #6b7280;
+        margin: 20px 0 8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+  .cot-hoja table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .cot-hoja .grid th, .cot-hoja .grid td { border: 1px solid #e5e5e5; padding: 6px 10px; text-align: left; }
+  .cot-hoja .grid th { background: #f7f7f8; }
+  .cot-hoja .grid td.fecha { white-space: nowrap; }
+  /* Mapa junto al itinerario (26-ago v3): dos columnas en la hoja 1. */
+  .cot-hoja .itin-row { width: 100%; border-collapse: separate; border-spacing: 0; }
+  .cot-hoja .itin-row td { vertical-align: top; }
+  .cot-hoja .itin-tabla { width: 55%; padding-right: 12px; }
+  .cot-hoja .itin-mapa { width: 45%; }
+  .cot-hoja .mapa-solo { width: 60%; margin: 0 auto; }
+  .cot-hoja .mapa { width: 100%; border: 1px solid #e5e7eb;
+           border-radius: 10px; overflow: hidden; background: #f8fafc; }
+  .cot-hoja .mapa svg { width: 100%; display: block; }
+  .cot-hoja .totales td { padding: 7px 0; }
+  .cot-hoja .totales .lbl { color: #6b7280; }
+  .cot-hoja .totales .val { text-align: right; font-weight: 600; }
+  .cot-hoja .sub-row td { border-top: 1px solid #d1d5db; padding-top: 8px; font-weight: 700;
+                 color: #102a43; }
+  .cot-hoja .total-row td { border-top: 2px solid #102a43; padding-top: 12px; font-size: 18px;
+                   font-weight: 800; color: #dc2626; }
+  .cot-hoja .total-mxn td { font-size: 13px; font-weight: 700; color: #102a43; }
+  .cot-hoja .notas { margin-top: 20px; font-size: 12px; color: #374151; }
+  /* Página 2 (26-ago): SOLO imágenes (mapa de la ruta + fotos del avión);
+     la página 1 lleva cotización + traslados + itinerario. */
+  .cot-hoja .detalles { page-break-before: always; }
+  /* Página "La aeronave" (26-ago v2, mockup del cliente). */
+  .cot-hoja .av-titulo { font-size: 24px; font-weight: 800; color: #111827; margin: 0; }
+  .cot-hoja .av-linea { width: 3.2cm; height: 4px; background: #dc2626; margin: 6px 0 14px; }
+  .cot-hoja .foto-ancha { width: 100%; height: 8.6cm; object-fit: cover; border-radius: 12px;
+                 border: 1px solid #e5e7eb; margin-bottom: 12px; }
+  .cot-hoja .av-row { width: 100%; border-collapse: separate; border-spacing: 0; }
+  .cot-hoja .av-row td { vertical-align: top; }
+  .cot-hoja .av-foto { width: 62%; padding-right: 12px; }
+  .cot-hoja .av-foto img { width: 100%; height: 8.2cm; object-fit: cover; border-radius: 12px;
+                  border: 1px solid #e5e7eb; }
+  .cot-hoja .vistazo { background: #102a43; border-top: 6px solid #dc2626;
+              border-radius: 12px; padding: 16px 18px; height: 8.2cm;
+              box-sizing: border-box; }
+  .cot-hoja .vz-titulo { color: #d6bf8e; font-size: 11px; font-weight: 700;
+               letter-spacing: 3px; text-transform: uppercase;
+               margin-bottom: 12px; }
+  .cot-hoja .vz-lbl { color: #94a3b8; font-size: 10px; text-transform: uppercase;
+             letter-spacing: 1px; margin-top: 9px; }
+  .cot-hoja .vz-val { color: #ffffff; font-size: 16px; font-weight: 700; margin-top: 1px; }
+  .cot-hoja .caracts { margin-top: 12px; background: #f3f4f6; border-radius: 10px;
+              padding: 11px 14px; font-size: 12px; color: #374151;
+              text-align: center; }

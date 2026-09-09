@@ -41,6 +41,14 @@ class MapaPuntoPdf(BaseModel):
     es_ferry: bool = False
 
 
+class MapaSvgRequest(BaseModel):
+    """Body de `POST /reportes/cotizacion/mapa-svg` (8-sep-2026): los mismos
+    `mapa_puntos` que viajan en `CotizacionPdfRequest` — el panel pide el
+    mapa suelto para pintarlo inline en la hoja que edita."""
+
+    mapa_puntos: list[MapaPuntoPdf] = []
+
+
 class CotizacionPdfRequest(BaseModel):
     folio: str
     fecha: str | None = None  # fecha de la cotización (texto ya formateado o ISO)
