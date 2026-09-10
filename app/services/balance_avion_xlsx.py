@@ -923,10 +923,13 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
 
 
 def _hoja_combustible(ws: Worksheet, hoja: BalanceAvionHojaCombustible,
-                      req: BalanceAvionRequest) -> None:
+                      req: BalanceAvionRequest, *,
+                      titulo: str | None = None) -> None:
     """Pestaña 'combustible' (26-ago-2026): el gas del avión POR MES —
-    ya no va por vuelo. Ledger con litros + resumen con $/L promedio."""
-    _title(ws, f"Combustible — {req.matricula}".strip(" —"), 1, 6)
+    ya no va por vuelo. Ledger con litros + resumen con $/L promedio.
+    En el balance GENERAL (10-sep-2026) `req` es el consolidado de flota y
+    las filas traen matrícula: se pintan por secciones con subtotal."""
+    _title(ws, titulo or f"Combustible — {req.matricula}".strip(" —"), 1, 6)
     periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'}"
     ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
 
@@ -1684,10 +1687,18 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
                 wb.create_sheet("otros movimientos"), cons.otros_movimientos
             )
         _hoja_cobranza(wb.create_sheet("cobranza"), cons)
-        # (29-ago) 'combustible', 'Gastos Indirectos' y 'permisos' ya NO se
-        # crean en el GENERAL: el detalle por avión vive en su libro
-        # individual. SOLO se quita el render — el API sigue mandando esas
-        # hojas y sus totales restan igual en los bloques de 'balance'.
+        # Hoja 'combustible' de la FLOTA (10-sep-2026, pedido del cliente:
+        # «ya no me sale el apartado de combustibles»): se había quitado del
+        # general el 29-ago junto con 'Gastos Indirectos' y 'permisos'. Vuelve
+        # SOLO combustible: mismas filas por avión que su libro (secciones
+        # por matrícula con subtotal, litros y $/L) + total de flota. El API
+        # ya la mandaba (`consolidado.combustible`); sigue restando UNA vez en
+        # los bloques de 'balance'. 'Gastos Indirectos' y 'permisos' siguen
+        # solo en el libro individual.
+        _hoja_combustible(
+            wb.create_sheet("combustible"), cons.combustible, cons,
+            titulo="Combustible — flota (por avión y por mes)",
+        )
         # Hoja 'otros gastos' (payload `gastos_empresa`, 29-ago): gastos de
         # EMPRESA sin avión ni vuelo — egresos de VuelaTour, fuera de toda
         # cascada por avión (1-sep-2026: antes 'gastos VuelaTour'; solo
