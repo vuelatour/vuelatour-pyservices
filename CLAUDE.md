@@ -22,7 +22,13 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   (⚠ se renderiza como caja) — usar texto ("AVISO:").
 - Excel: openpyxl. Si agregas una columna a una tabla, revisa los índices de
   `money_cols`, la fila de totales, `widths` y los `merge_cells` de títulos
-  (están por índice de columna).
+  (están por índice de columna). Ejemplo vivo: la hoja «combustible» de los
+  DOS balances (individual y general la comparten) creció a 7 columnas el
+  11-sep-2026 con «PAGO» (`BalanceAvionGastoFila.pago`, medio de pago YA
+  legible que arma el API; sin dato = celda VACÍA — aquí no se inventa un
+  default) y hubo que mover encabezado, bordes/relleno de los subtotales,
+  los cuatro `merge_cells` y los `widths`. Test:
+  `tests/test_balance_combustible_pago.py`.
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.
@@ -49,8 +55,19 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   horas voladas, avión operativo, traslados, partición, gastos, utilidad ni
   CFDI — eso vive en el reporte del vuelo. Todo llega calculado del API;
   aquí solo se formatea («01:18», «26-jun») o se re-suma la columna
-  informativa de millas. Presupuesto: cabe en una hoja hasta ~10 tramos;
-  las notas se truncan con «…».
+  informativa de millas. Aire (11-sep-2026, «todo muy junto»):
+  cuerpo y tablas a 9.5 pt (encabezados/aclaraciones 8–8.5 pt, pie 7.5 pt;
+  nada baja de ahí), celdas 3 px × 6 px, `@page` 9/12/10 mm. Presupuesto
+  MEDIDO: una hoja mientras tramos + cobros + fila de ajuste ≲ 6 (base
+  ≈ 730 px + ≈ 40 px por fila sobre ≈ 984 px útiles); con más, segunda hoja
+  ORDENADA (`thead` repetido, `page-break-inside: avoid` por fila). Las
+  notas se truncan con «…». Cabecera: «Avión cotizado» (siempre) y, si el
+  API manda `aeronave_utilizada` (texto u objeto `{matricula, modelo}`), la
+  segunda línea «Avión utilizado: …»; con
+  `aeronave_cotizada_vs_utilizada_difiere=true` (lo decide el API por ID, no
+  por texto: dos aviones comparten modelo) esa línea va en ÁMBAR con la
+  marca «Distinto al cotizado». El legado `aeronave_operativa` de la v1 se
+  acepta y NO se pinta.
 - Vista previa de cotización (`POST /reportes/cotizacion/preview-html`,
   8-sep-2026): MISMO payload `CotizacionPdfRequest` y MISMO
   `cotizacion_pdf._build_html(req, solo_hoja_1=True)` → `text/html` de SOLO

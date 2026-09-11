@@ -8,8 +8,12 @@ TIEMPO VUELO («01:18», incluye calzos) · COSTO POR HORA VUELO · TOTAL POR
 TRAMO, con fila TOTAL en USD —; TUAS solo las que SE COBRARON; desglose
 canónico con comisión del vendedor, ajuste/redondeo, IVA y total USD/MXN;
 cobros compactos con su comisión bancaria; notas internas. NADA de operación
-(tacómetros, horas voladas, avión operativo, piloto del tramo, traslados) ni
-partición / gastos / utilidad / CFDI: eso vive en el reporte del vuelo.
+(tacómetros, horas voladas, piloto del tramo, traslados) ni partición /
+gastos / utilidad / CFDI: eso vive en el reporte del vuelo. ÚNICA excepción
+(11-sep-2026, pedido de la oficina): debajo del «Avión cotizado» se pinta
+«Avión utilizado: …» cuando el API manda el campo NUEVO `aeronave_utilizada`
+— saber si salió el avión que se cotizó es dato de la cotización, no de la
+operación. El legado `aeronave_operativa` de la v1 sigue sin pintarse.
 
 NUNCA se manda al cliente: lleva banda «COTIZACIÓN INTERNA · uso exclusivo
 de oficina» y pie «Documento interno · generado … · <usuario>».
@@ -18,9 +22,15 @@ Hermano de `cotizacion_pdf.py`: REUTILIZA (importa, no copia) el branding
 (#dc2626 / #102a43), el logo, `_money`/`_monto` y los formatos de fecha. NO
 importa `_estilos_base` a propósito: esa hoja es la del cliente (13 px,
 márgenes de 2 cm, marca de agua y «Gracias por volar con VuelaTour» en el
-pie) — aquí el CSS es propio, denso (8–9.5 pt) y con @page de 10–12 mm para
-que todo quepa en una hoja. Tampoco aplica `_mostrar_matricula`: en el
-documento interno la matrícula SIEMPRE se ve.
+pie) — aquí el CSS es propio y con @page de 9–12 mm. Tampoco aplica
+`_mostrar_matricula`: en el documento interno la matrícula SIEMPRE se ve.
+
+AIRE (11-sep-2026, captura de la oficina: «todo muy junto»): la v2 salió a
+8.5 pt con interlineado 1.2 y celdas de 1 px, y la hoja se leía apretada
+arriba con el tercio de abajo vacío. Ahora el cuerpo va a 9.5 pt / 1.3, las
+tablas NUNCA bajan de 9.5 pt (encabezados y aclaraciones en gris, 8–8.5 pt:
+son apoyo), las celdas tienen 3–4 px y cada bloque se separa del anterior
+con el margen superior de su `h2`. Misma información, mismos números.
 
 Aquí SOLO se pinta. El API arma el payload desde el desglose canónico v1.3
 del snapshot: cada tramo trae su `tiempo_hr` (con calzo), su tarifa y su
@@ -31,10 +41,15 @@ del snapshot: cada tramo trae su `tiempo_hr` (con calzo), su tarifa y su
 («01:18», «26-jun», «8.8570 % = $3,236.36») o se re-suma una columna
 informativa (millas).
 
-Presupuesto de UNA hoja (≈ 733 pt útiles): cabecera + resumen + ficha ≈ 150,
-tramos ≈ 16 + 13 pt/tramo, desglose | horas ≈ 150, cobros ≈ 16 + 22/cobro,
-notas ≈ 50. Con más de ~10 tramos la tabla puede pasar a una segunda hoja
-(el `thead` se repite); los demás bloques evitan partirse (`page-break-inside`).
+Presupuesto de UNA hoja tras el aire (≈ 738 pt / 984 px útiles, medido con
+una render de prueba): base fija (cabecera + banda + resumen + ficha +
+desglose|horas + cobros con su thead + notas) ≈ 730 px, y cada FILA de más
+≈ 40 px — cuenta cada tramo, cada cobro y las dos filas de la fila de
+ajuste. O sea: UNA hoja mientras `filas ≲ 6` (el caso real de la oficina
+—2 tramos, 1 cobro— usa el 86 %). Antes cabían ~8 tramos porque la tabla
+iba a 8 pt: ese es el precio de que se lea. Con más filas la tabla pasa a
+una segunda hoja —el `thead` se repite y ninguna fila se parte a la
+mitad—; los bloques llevan `page-break-inside: avoid`.
 """
 
 from datetime import UTC, datetime
@@ -276,19 +291,56 @@ def _avion_html(r: CotizacionInternaPdfRequest) -> str:
     return escape(" · ".join(partes)) if partes else "—"
 
 
+def _avion_utilizado_txt(r: CotizacionInternaPdfRequest) -> str:
+    """«N4142R · Piper Seneca V» del avión REALMENTE utilizado (campo nuevo
+    `aeronave_utilizada`, 11-sep-2026). TOLERANTE a propósito: acepta el
+    texto ya armado por el API o un objeto {matricula, modelo}; sin dato —o
+    con otra forma— devuelve "" y la segunda línea no se pinta."""
+    v = r.aeronave_utilizada
+    if isinstance(v, str):
+        return v.strip()
+    if isinstance(v, dict):
+        partes = [
+            str(v.get(k)).strip()
+            for k in ("matricula", "modelo")
+            if v.get(k) not in (None, "")
+        ]
+        return " · ".join(p for p in partes if p)
+    return ""
+
+
 def _resumen_html(r: CotizacionInternaPdfRequest) -> str:
     """Franja de resumen: FECHA DEL VUELO (protagonista, grande), avión
-    cotizado y ruta cotizada con pasajeros."""
+    COTIZADO (con la matrícula, siempre) y ruta cotizada con pasajeros. Si
+    el API manda `aeronave_utilizada`, debajo del cotizado va la segunda
+    línea «Avión utilizado: …» — la oficina necesita ver los dos cuando no
+    salió el avión que se cotizó; si el API avisa que DIFIEREN, esa línea va
+    en ámbar con la marca «Distinto al cotizado»."""
     fecha = _dia_largo(r.fecha_vuelo) or "Por definir"
     fin = _dia_largo(r.fecha_vuelo_fin)
     fin_html = f'<div class="sub">al {escape(fin)}</div>' if fin else ""
+    utilizada = _avion_utilizado_txt(r)
+    # ⚠ Se cotizó con un avión y vuela OTRO: lo decide el API comparando por
+    # ID (`aeronave_cotizada_vs_utilizada_difiere`) — el texto no basta,
+    # dos aviones pueden compartir modelo. La oficina tiene que verlo de un
+    # vistazo, no deducirlo comparando dos matrículas en gris.
+    difiere = r.aeronave_cotizada_vs_utilizada_difiere is True
+    utilizada_html = (
+        f'<div class="sub{" ambar" if difiere else ""}">Avión utilizado: '
+        f"{escape(utilizada)}"
+        + (_tag("Distinto al cotizado", "ambar") if difiere else "")
+        + "</div>"
+        if utilizada
+        else ""
+    )
     ruta = escape(r.ruta) if r.ruta else "—"
     ruta += _op(f"· {_plural(r.pasajeros, 'pasajero', 'pasajeros')}")
     return f"""
   <table class="resumen"><tr>
     <td class="fecha"><div class="lbl">Fecha del vuelo</div>
       <div class="big">{escape(fecha)}</div>{fin_html}</td>
-    <td><div class="lbl">Avión cotizado</div><div class="med">{_avion_html(r)}</div></td>
+    <td><div class="lbl">Avión cotizado</div><div class="med">{_avion_html(r)}</div>
+      {utilizada_html}</td>
     <td><div class="lbl">Ruta cotizada</div><div class="med">{ruta}</div></td>
   </tr></table>"""
 
@@ -771,81 +823,105 @@ def _notas_html(r: CotizacionInternaPdfRequest) -> str:
 
 
 def _estilos_interno(pie: str) -> str:
-    """CSS propio del documento interno (denso, una hoja carta). Branding
-    compartido con el PDF del cliente vía `_BRAND`/`_NAVY`."""
+    """CSS propio del documento interno (UNA hoja carta). Branding compartido
+    con el PDF del cliente vía `_BRAND`/`_NAVY`.
+
+    Aire (11-sep-2026, captura de la oficina: «todo muy junto»): la v2 salió
+    a 8.5 pt con interlineado 1.2 y celdas de 1 px — ilegible de un vistazo.
+    Reglas de esta hoja, en orden de prioridad:
+      1. NINGÚN texto de tabla baja de 9.5 pt (las aclaraciones en gris y los
+         encabezados van a 8.5 pt: son apoyo, no el dato).
+      2. Interlineado 1.3 y celdas de 3 px verticales / 6 px horizontales
+         (antes 1 px × 4 px): las filas respiran.
+      3. Cada bloque se separa del anterior con el margen SUPERIOR de su
+         `h2` (9 px, antes 5) — por eso «Desglose de la cotización» y «Horas
+         cotizadas», que van lado a lado, nunca se tocan: además del margen
+         llevan 16 px de canal y una línea divisoria.
+      4. `@page` de 9 mm arriba / 12 mm a los lados / 10 mm abajo.
+    La MISMA información sigue cabiendo en UNA hoja (ver el presupuesto del
+    encabezado del módulo): lo que se encogió es el número de tramos/cobros
+    que caben, no el contenido.
+    """
     fuente = "'Helvetica Neue', Arial, sans-serif"
     return f"""
   @page {{
     size: Letter;
-    margin: 10mm 12mm 11mm;
-    @bottom-left {{ content: "{_css_str(pie)}"; font-size: 7pt; color: #9ca3af;
+    margin: 9mm 12mm 10mm;
+    @bottom-left {{ content: "{_css_str(pie)}"; font-size: 7.5pt; color: #9ca3af;
                     font-family: {fuente}; }}
     @bottom-right {{ content: "Página " counter(page) " de " counter(pages);
-                     font-size: 7pt; color: #9ca3af; font-family: {fuente}; }}
+                     font-size: 7.5pt; color: #9ca3af; font-family: {fuente}; }}
   }}
   * {{ font-family: {fuente}; color: #1d1d1d; box-sizing: border-box; }}
-  body {{ margin: 0; font-size: 8.5pt; line-height: 1.2; }}
-  .header {{ background: {_NAVY}; color: #fff; padding: 5px 9px; border-radius: 5px;
+  body {{ margin: 0; font-size: 9.5pt; line-height: 1.3; }}
+  .header {{ background: {_NAVY}; color: #fff; padding: 7px 10px; border-radius: 5px;
              display: flex; align-items: center; justify-content: space-between; }}
   .header .izq {{ display: flex; align-items: center; }}
-  .header .logo {{ height: 16px; margin-right: 9px; }}
-  .header .titulo {{ font-size: 10.5pt; font-weight: 800; color: #fff; line-height: 1.1; }}
-  .header .sub {{ font-size: 7pt; color: #9fb3c8; display: block; }}
-  .header .folio {{ text-align: right; color: #fff; font-size: 9pt; font-weight: 700; }}
-  .banda {{ margin: 3px 0 4px; padding: 1px 8px; border-left: 3px solid {_BRAND};
-            background: #fef2f2; color: {_BRAND}; font-size: 7.5pt; font-weight: 800;
+  .header .logo {{ height: 18px; margin-right: 10px; }}
+  .header .titulo {{ font-size: 11.5pt; font-weight: 800; color: #fff; line-height: 1.2; }}
+  .header .sub {{ font-size: 8pt; color: #9fb3c8; display: block; }}
+  .header .folio {{ text-align: right; color: #fff; font-size: 9.5pt; font-weight: 700; }}
+  .banda {{ margin: 5px 0 7px; padding: 3px 9px; border-left: 3px solid {_BRAND};
+            background: #fef2f2; color: {_BRAND}; font-size: 8pt; font-weight: 800;
             letter-spacing: 1px; text-transform: uppercase; }}
-  h2 {{ font-size: 8pt; text-transform: uppercase; letter-spacing: .8px; color: {_BRAND};
-        border-bottom: 1px solid #e5e7eb; margin: 5px 0 1px; padding-bottom: 1px; }}
-  table {{ width: 100%; border-collapse: collapse; font-size: 8.5pt; }}
-  table.resumen {{ margin: 2px 0 3px; border-collapse: separate; border-spacing: 4px 0; }}
-  table.resumen td {{ width: 33.3%; vertical-align: top; padding: 3px 7px;
+  h2 {{ font-size: 9pt; text-transform: uppercase; letter-spacing: .8px; color: {_BRAND};
+        border-bottom: 1px solid #e5e7eb; margin: 9px 0 4px; padding-bottom: 2px; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 9.5pt; }}
+  table.resumen {{ margin: 0 0 4px; border-collapse: separate; border-spacing: 6px 0; }}
+  table.resumen td {{ width: 33.3%; vertical-align: top; padding: 5px 8px;
                       border: 1px solid #e5e7eb; border-radius: 4px; background: #f9fafb; }}
   table.resumen td.fecha {{ background: #fef2f2; border-color: #fecaca; }}
-  table.resumen .lbl {{ font-size: 6.5pt; text-transform: uppercase; letter-spacing: .6px;
+  table.resumen .lbl {{ font-size: 7.5pt; text-transform: uppercase; letter-spacing: .6px;
                         color: #6b7280; }}
-  table.resumen .big {{ font-size: 15pt; font-weight: 800; color: {_BRAND}; line-height: 1.1; }}
-  table.resumen .med {{ font-size: 10pt; font-weight: 700; color: {_NAVY}; line-height: 1.15; }}
-  table.resumen .sub {{ font-size: 7.5pt; color: #6b7280; }}
-  table.kv td {{ padding: 1px 3px; vertical-align: top; }}
+  table.resumen .big {{ font-size: 14pt; font-weight: 800; color: {_BRAND}; line-height: 1.2; }}
+  table.resumen .med {{ font-size: 10.5pt; font-weight: 700; color: {_NAVY}; line-height: 1.3; }}
+  table.resumen .sub {{ font-size: 8.5pt; color: #6b7280; line-height: 1.35; }}
+  /* Segunda línea del avión cuando DIFIERE del cotizado: gana al gris de
+     .sub (misma especificidad + .ambar) para que la marca se vea. */
+  table.resumen .sub.ambar {{ color: #b45309; font-weight: 700; }}
+  table.kv td {{ padding: 2px 4px; vertical-align: top; }}
   table.kv td.k {{ color: #6b7280; width: 32%; white-space: nowrap; }}
-  table.kv tr.small td {{ font-size: 7.5pt; color: #6b7280; }}
-  table.grid {{ font-size: 8pt; }}
-  table.grid th, table.grid td {{ border: 1px solid #e5e7eb; padding: 1px 4px;
+  table.kv tr.small td {{ font-size: 8.5pt; color: #6b7280; }}
+  table.grid {{ font-size: 9.5pt; }}
+  table.grid th, table.grid td {{ border: 1px solid #e5e7eb; padding: 3px 6px;
                                   text-align: left; vertical-align: top; }}
-  table.grid th {{ background: #f3f4f6; font-size: 7pt; text-transform: uppercase;
+  table.grid th {{ background: #f3f4f6; font-size: 8.5pt; text-transform: uppercase;
                    color: #374151; letter-spacing: .3px; }}
   table.grid tfoot td {{ font-weight: 700; background: #f7f7f8; color: {_NAVY}; }}
   table.grid tfoot td.aviso {{ font-weight: 400; background: #fff; }}
   table.grid.tramos td.ruta {{ font-weight: 600; }}
   table.grid.tramos tfoot tr.ajuste td {{ font-weight: 400; background: #fffbeb; color: #92400e; }}
   thead {{ display: table-header-group; }}
+  /* Si la tabla pasa a otra hoja: el encabezado se repite (arriba) y ninguna
+     fila se parte a la mitad. */
+  table.grid tr {{ page-break-inside: avoid; }}
   .num {{ text-align: right !important; white-space: nowrap; }}
-  .muted {{ color: #6b7280; font-size: 7.5pt; font-weight: 400; }}
-  .op {{ color: #6b7280; font-size: 7.5pt; font-weight: 400; }}
-  .nota {{ font-size: 7pt; color: #6b7280; margin: 1px 0 2px; }}
+  .muted {{ color: #6b7280; font-size: 8pt; font-weight: 400; }}
+  .op {{ color: #6b7280; font-size: 8pt; font-weight: 400; }}
+  .nota {{ font-size: 8pt; color: #6b7280; margin: 3px 0 2px; }}
   .ambar {{ color: #b45309; }}  .rojo {{ color: {_BRAND}; }}  .verde {{ color: #15803d; }}
-  .tag {{ display: inline-block; border: 1px solid #d1d5db; border-radius: 3px; padding: 0 3px;
-          font-size: 7pt; color: #374151; margin-left: 3px; font-weight: 400; }}
+  .tag {{ display: inline-block; border: 1px solid #d1d5db; border-radius: 3px; padding: 0 4px;
+          font-size: 8pt; color: #374151; margin-left: 4px; font-weight: 400; }}
   .tag.ambar {{ border-color: #f59e0b; }}
-  .totales td {{ padding: 1px 3px; vertical-align: top; }}
+  .totales td {{ padding: 2px 4px; vertical-align: top; }}
   .totales .val {{ text-align: right; font-weight: 600; white-space: nowrap; }}
-  .sub-row td {{ border-top: 1px solid #d1d5db; font-weight: 700; color: {_NAVY}; }}
-  .total-row td {{ border-top: 2px solid {_NAVY}; font-size: 10pt; font-weight: 800;
-                   color: {_BRAND}; padding-top: 3px; }}
+  .sub-row td {{ border-top: 1px solid #d1d5db; font-weight: 700; color: {_NAVY};
+                 padding-top: 4px; }}
+  .total-row td {{ border-top: 2px solid {_NAVY}; font-size: 10.5pt; font-weight: 800;
+                   color: {_BRAND}; padding-top: 4px; }}
   .mxn-row td {{ font-weight: 700; color: {_NAVY}; }}
   .cols {{ width: 100%; border-collapse: separate; border-spacing: 0; }}
   .cols td.col {{ vertical-align: top; width: 50%; padding: 0; }}
-  .cols td.col:first-child {{ padding-right: 9px; }}
-  .cols td.col:last-child {{ padding-left: 9px; }}
+  .cols td.col:first-child {{ padding-right: 16px; }}
+  .cols td.col:last-child {{ padding-left: 16px; }}
   .cols.desglose td.col:first-child {{ width: 58%; }}
-  .cols.desglose td.col:last-child {{ width: 42%; }}
-  .sem {{ display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-          vertical-align: middle; margin-right: 3px; }}
+  .cols.desglose td.col:last-child {{ width: 42%; border-left: 1px solid #eef0f3; }}
+  .sem {{ display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+          vertical-align: middle; margin-right: 4px; }}
   .sem-verde {{ background: #16a34a; }}  .sem-amarillo {{ background: #f59e0b; }}
   .sem-rojo {{ background: {_BRAND}; }}  .sem-gris {{ background: #9ca3af; }}
   .bloque {{ page-break-inside: avoid; }}
-  .notas-txt {{ font-size: 8pt; color: #374151; white-space: pre-wrap; }}"""
+  .notas-txt {{ font-size: 9pt; color: #374151; white-space: pre-wrap; line-height: 1.4; }}"""
 
 
 def _build_html(r: CotizacionInternaPdfRequest) -> str:

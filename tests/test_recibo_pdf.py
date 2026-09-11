@@ -2,6 +2,8 @@ from fastapi.testclient import TestClient
 
 from app.config import get_settings
 from app.main import app
+from app.schemas.reportes import ReciboPdfRequest
+from app.services.recibo_pdf import _build_html
 
 client = TestClient(app)
 
@@ -69,3 +71,35 @@ def test_recibo_liquidado_payload_minimo(monkeypatch) -> None:
     )
     assert res.status_code == 200
     assert res.content[:4] == b"%PDF"
+
+
+# ===== «Método de pago» = el del COBRO (11-sep-2026) =====
+
+
+def test_metodo_de_pago_sale_del_cobro_no_del_vuelo() -> None:
+    """El recibo pinta el método de ESTE cobro (`metodo`, que el API arma
+    desde cobro_vuelo.metodo_cobro). El método pactado en la cotización/vuelo
+    NO es de este documento: aunque un payload lo traiga (campo extra), se
+    ignora — un anticipo por transferencia y el resto en efectivo salen
+    distintos en sus recibos."""
+    datos = _payload()
+    datos["metodo"] = "Efectivo"
+    # Ruido del vuelo/cotización: método pactado y el del snapshot.
+    datos["metodo_cobro"] = "Transferencia"
+    datos["metodo_cobro_label"] = "Transferencia"
+    html = _build_html(ReciboPdfRequest(**datos))
+
+    assert "Método de pago" in html
+    assert "Efectivo" in html
+    assert "Transferencia" not in html
+
+
+def test_recibo_sin_metodo_no_pinta_la_linea() -> None:
+    """Skew/tolerancia: sin `metodo` el bloque de pago simplemente no trae
+    esa línea (nunca se inventa un método)."""
+    datos = _payload()
+    datos.pop("metodo")
+    html = _build_html(ReciboPdfRequest(**datos))
+    assert "Método de pago" not in html
+    # El resto del detalle del cobro sigue en su lugar.
+    assert "Cuenta destino" in html and "REF-778899" in html

@@ -82,6 +82,10 @@ def _build_html(r: ReciboPdfRequest) -> str:
         tc_html = f'<div class="pago-tc">{escape(" · ".join(partes))}</div>'
 
     detalle_pago: list[tuple[str, str]] = []
+    # «Método de pago» = el método de ESTE cobro (`metodo`, que el API arma
+    # desde cobro_vuelo.metodo_cobro), jamás el método pactado en la
+    # cotización/vuelo: un anticipo por transferencia y el resto en efectivo
+    # tienen que salir distintos en sus recibos.
     if r.metodo:
         detalle_pago.append(("Método de pago", r.metodo))
     if r.cuenta_destino:

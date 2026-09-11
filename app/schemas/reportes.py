@@ -271,7 +271,11 @@ class ReciboPdfRequest(BaseModel):
     # TC usado y equivalente en USD (solo cobros MXN); None = no se pinta.
     tc_usd_mxn: float | None = None
     equivalente_usd: float | None = None
-    # Método YA legible ("Transferencia", "BillPocket"…), armado por el API.
+    # Método del COBRO, ya legible ("Transferencia", "BillPocket", "Paywise"…),
+    # armado por el API desde `cobro_vuelo.metodo_cobro` de ESTE cobro —
+    # NUNCA el método de cobro de la cotización/vuelo (`quote.metodo_cobro`),
+    # que es solo la intención pactada y puede diferir del pago real. Aquí
+    # solo se pinta lo que llega en este campo.
     metodo: str = ""
     cuenta_destino: str | None = None
     referencia: str | None = None
@@ -556,6 +560,18 @@ class CotizacionInternaPdfRequest(BaseModel):
     cotizado_por: str | None = None
     aeronave_cotizada_modelo: str | None = None
     aeronave_cotizada_matricula: str | None = None  # SIEMPRE visible aquí
+    # Avión REALMENTE utilizado (11-sep-2026; contrato nuevo del API, en
+    # paralelo): segunda línea «Avión utilizado: MATRÍCULA · MODELO» de la
+    # cabecera, solo cuando viene. Tipo laxo A PROPÓSITO: acepta el texto ya
+    # armado ("N4142R · Piper Seneca V") o {"matricula": …, "modelo": …}; con
+    # cualquier otra forma —o sin dato— la línea no se pinta y el PDF sale
+    # igual (skew tolerante en ambos sentidos).
+    aeronave_utilizada: Any = None
+    # ⚠ La cotización se pactó con un avión y hoy vuela OTRO. Lo decide el
+    # API comparando por ID (dos aviones pueden compartir modelo, así que el
+    # texto no basta) y aquí solo se pinta como marca ámbar junto a la línea
+    # «Avión utilizado». ADITIVO: sin el campo la línea sale sin marca.
+    aeronave_cotizada_vs_utilizada_difiere: bool = False
     avion_externo: str | None = None
     operador_externo: str | None = None
     piloto: str | None = None
@@ -857,6 +873,11 @@ class BalanceAvionGastoFila(BaseModel):
     monto_original: float | None = None
     # Litros de la carga (solo hoja "combustible").
     litros: float | None = None
+    # Medio de pago YA legible que arma el API ("Efectivo", "Tarjeta BBVA
+    # ···4321", "Transferencia HSBC"…) — columna PAGO al final de la hoja
+    # "combustible" (11-sep-2026, pedido del cliente: saber CON QUÉ se pagó
+    # cada carga). Aquí solo se pinta. None / API viejo = celda vacía.
+    pago: str | None = None
     # Balance GENERAL: fila teñida con el color del avión.
     avion_color: str | None = None
     # Matrícula de la fila (hoja "combustible" del GENERAL, 28-ago): la hoja

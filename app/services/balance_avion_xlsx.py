@@ -651,6 +651,11 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
         for f in hoja.filas:
             ws.cell(row=row, column=1, value=_fecha(f.fecha)).border = _border
             ws.cell(row=row, column=2, value=f.categoria).border = _border
+            # DETALLE ÍNTEGRO: se pinta tal cual llega del API — jamás se
+            # recorta ni se re-arma. En la hoja 'otros gastos' del GENERAL el
+            # API puede mandar el vuelo dentro del detalle («… · vuelo #123»,
+            # 11-sep-2026): esa referencia tiene que llegar completa a la
+            # celda (el ancho/alto de abajo solo la ENVUELVEN).
             dc = ws.cell(row=row, column=3, value=f.detalle)
             dc.border = _border
             dc.alignment = Alignment(wrap_text=True, vertical="top")
@@ -928,8 +933,11 @@ def _hoja_combustible(ws: Worksheet, hoja: BalanceAvionHojaCombustible,
     """Pestaña 'combustible' (26-ago-2026): el gas del avión POR MES —
     ya no va por vuelo. Ledger con litros + resumen con $/L promedio.
     En el balance GENERAL (10-sep-2026) `req` es el consolidado de flota y
-    las filas traen matrícula: se pintan por secciones con subtotal."""
-    _title(ws, titulo or f"Combustible — {req.matricula}".strip(" —"), 1, 6)
+    las filas traen matrícula: se pintan por secciones con subtotal.
+    Columna PAGO al final (11-sep-2026, pedido del cliente: con qué se pagó
+    cada carga) — 7 columnas en encabezados, subtotales, merges y anchos; el
+    API viejo (sin `pago`) deja la celda vacía."""
+    _title(ws, titulo or f"Combustible — {req.matricula}".strip(" —"), 1, 7)
     periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'}"
     ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
 
@@ -945,7 +953,7 @@ def _hoja_combustible(ws: Worksheet, hoja: BalanceAvionHojaCombustible,
         ws.cell(row=5, column=c).border = _border
 
     _header_row(ws, 7, ["FECHA", "DETALLE", "LITROS", "MONTO MXN",
-                        "MONEDA ORIGINAL", "MONTO ORIGINAL"])
+                        "MONEDA ORIGINAL", "MONTO ORIGINAL", "PAGO"])
     row = 8
     if hoja.filas:
         # SECCIONES por matrícula (pedido del cliente 28-ago, igual que la
@@ -975,7 +983,7 @@ def _hoja_combustible(ws: Worksheet, hoja: BalanceAvionHojaCombustible,
             c.font = Font(bold=True, size=9)
             _num(ws, row, 3, round(litros, 1), HORAS, bold=True)
             _num(ws, row, 4, round(mxn, 2), MONEY, bold=True)
-            for col in range(1, 7):
+            for col in range(1, 8):
                 cell = ws.cell(row=row, column=col)
                 cell.border = _border
                 cell.fill = PatternFill("solid", fgColor=fill)
@@ -988,7 +996,7 @@ def _hoja_combustible(ws: Worksheet, hoja: BalanceAvionHojaCombustible,
                 sw = _hex(filas[0].avion_color)
                 if sw:
                     h.fill = PatternFill("solid", fgColor=sw)
-                ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+                ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
                 row += 1
             for f in filas:
                 ws.cell(row=row, column=1, value=_fecha(f.fecha)).border = _border
@@ -996,13 +1004,17 @@ def _hoja_combustible(ws: Worksheet, hoja: BalanceAvionHojaCombustible,
                 dc.border = _border
                 # Mismo WRAP del DETALLE que las hojas de gastos (29-ago):
                 # el texto envuelve y el alto de fila se estima con el ancho
-                # de la columna (patrón de la hoja cobranza). SIN columnas
-                # nuevas aquí — el _subtotal de abajo va por índice.
+                # de la columna (patrón de la hoja cobranza).
                 dc.alignment = Alignment(wrap_text=True, vertical="top")
                 _num(ws, row, 3, f.litros, HORAS).border = _border
                 _num(ws, row, 4, f.monto_mxn).border = _border
                 ws.cell(row=row, column=5, value=f.moneda_original).border = _border
                 _num(ws, row, 6, f.monto_original).border = _border
+                # PAGO (medio de pago ya legible del API): última columna,
+                # con borde y wrap como el DETALLE. Sin dato = celda vacía.
+                pc = ws.cell(row=row, column=7, value=f.pago)
+                pc.border = _border
+                pc.alignment = Alignment(wrap_text=True, vertical="top")
                 # Balance GENERAL: el DETALLE (lleva la matrícula al frente)
                 # se tiñe con el color del avión — como su libro.
                 avion_fill = _hex(f.avion_color)
@@ -1013,6 +1025,10 @@ def _hoja_combustible(ws: Worksheet, hoja: BalanceAvionHojaCombustible,
                     max(1, math.ceil(len(linea) / 52))
                     for linea in detalle_txt.split("\n")
                 ) if detalle_txt else 1
+                # El PAGO también envuelve (columna angosta): el alto manda
+                # el texto más alto de la fila.
+                if f.pago:
+                    lineas = max(lineas, math.ceil(len(f.pago) / 18))
                 if lineas > 1:
                     ws.row_dimensions[row].height = 14 * lineas + 4
                 row += 1
@@ -1024,7 +1040,7 @@ def _hoja_combustible(ws: Worksheet, hoja: BalanceAvionHojaCombustible,
             row=row, column=1,
             value="Sin cargas de combustible en el periodo.",
         ).font = Font(color=MUTED, italic=True)
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
         row += 1
 
     row += 1
@@ -1034,9 +1050,9 @@ def _hoja_combustible(ws: Worksheet, hoja: BalanceAvionHojaCombustible,
         "gasto, con o sin vuelo) — mismo criterio que el reparto a socios. "
         "Resta una sola vez en la hoja 'balance'.",
     ).font = Font(color=MUTED, size=9, italic=True)
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
 
-    for i, w in enumerate([14, 52, 10, 15, 16, 15], start=1):
+    for i, w in enumerate([14, 52, 10, 15, 16, 15, 18], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A8"
 

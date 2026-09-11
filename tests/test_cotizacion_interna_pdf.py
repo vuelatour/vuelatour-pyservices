@@ -14,6 +14,8 @@ ni partición/gastos/utilidad/CFDI aunque un API viejo los mande; un payload
 mínimo (skew) y campos extra también renderizan.
 """
 
+import re
+
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
@@ -26,6 +28,7 @@ from app.services.cotizacion_interna_pdf import (
     NOTA_TRAMOS,
     _build_html,
     _dia_mes,
+    _estilos_interno,
     _hhmm,
     _millas,
     _truncar,
@@ -781,22 +784,175 @@ def test_router_error_de_render_es_500_con_detalle(monkeypatch) -> None:
 
 
 def test_cabe_en_una_hoja_carta() -> None:
+    """El caso REAL de la oficina (2 tramos y su cobro) cabe en UNA hoja con
+    el aire del 11-sep-2026 y le sobra ~14 % de hoja. Presupuesto medido con
+    una render de prueba: base ≈ 730 px + ≈ 40 px por FILA (cada tramo, cada
+    cobro y cada fila de ajuste) sobre ≈ 984 px útiles — una hoja mientras
+    `filas ≲ 6`. La cota se prueba floja a propósito: las métricas de fuente
+    del contenedor de producción no son las de esta Mac."""
     import pytest
 
     try:
         from weasyprint import HTML
     except Exception as e:  # noqa: BLE001 — ImportError u OSError (pango/cairo)
         pytest.skip(f"WeasyPrint no disponible: {e}")
-    tramos = [
-        _tramo(i, "CUN" if i % 2 else "MID", "MID" if i % 2 else "CUN", pernocta=i == 4)
-        for i in range(1, 9)
-    ]
-    cobros = _payload()["cobros"] * 4
+
+    assert len(HTML(string=_html()).render().pages) == 1
+
+    # Una cotización mediana (3 tramos + su cobro) sigue siendo UNA hoja.
+    medio = _html(
+        tramos_cotizados=[
+            _tramo(i, "CUN" if i % 2 else "MID", "MID" if i % 2 else "CUN")
+            for i in range(1, 4)
+        ],
+    )
+    assert len(HTML(string=medio).render().pages) == 1
+
+
+def test_cotizacion_larga_se_desborda_ordenada_no_se_corta() -> None:
+    """Una cotización pesada (8 tramos, 8 cobros) YA no cabe en una hoja: el
+    precio de que la tabla se lea (9.5 pt). Lo que sí se garantiza es que se
+    desborde ORDENADA — a lo sumo dos hojas, con el encabezado de la tabla
+    repetido — y que no se pierda ni una fila."""
+    import pytest
+
+    try:
+        from weasyprint import HTML
+    except Exception as e:  # noqa: BLE001 — ImportError u OSError (pango/cairo)
+        pytest.skip(f"WeasyPrint no disponible: {e}")
     html = _html(
-        tramos_cotizados=tramos,
-        cobros=cobros,
+        tramos_cotizados=[
+            _tramo(i, "CUN" if i % 2 else "MID", "MID" if i % 2 else "CUN", pernocta=i == 4)
+            for i in range(1, 9)
+        ],
+        cobros=_payload()["cobros"] * 8,
         tramos_ajuste_usd=540.0,
         tramos_ajuste_motivo="Hora mínima 1.0 h",
         notas_internas="\n".join(f"Nota {i}" for i in range(5)),
     )
-    assert len(HTML(string=html).render().pages) == 1
+    assert len(HTML(string=html).render().pages) <= 2
+    # El thead se repite en la hoja 2 (regla del CSS) y las filas no se parten.
+    assert "display: table-header-group" in html
+    assert "table.grid tr { page-break-inside: avoid; }" in html
+
+
+# ===== Aire de la hoja (11-sep-2026) y avión utilizado =====
+
+
+def _regla(css: str, selector: str) -> str:
+    """El bloque de declaraciones de una regla CSS (por selector exacto)."""
+    i = css.index(selector + " {")
+    return css[i : css.index("}", i)]
+
+
+def test_hoja_con_aire_tipografia_de_tablas_nunca_baja_de_95pt() -> None:
+    """Captura de la oficina: «todo muy junto». Regla de la hoja: el dato se
+    lee (≥ 9.5 pt en cuerpo y tablas) y las filas respiran (celdas de 3–4 px,
+    interlineado ≥ 1.3). Los encabezados y las aclaraciones en gris son
+    apoyo: pueden ir a 8–8.5 pt, nunca menos."""
+    css = _estilos_interno("Documento interno")
+
+    assert "font-size: 9.5pt" in _regla(css, "body")
+    assert "line-height: 1.3" in _regla(css, "body")
+    # Tablas (tramos, cobros) y el desglose: 9.5 pt de dato.
+    assert "font-size: 9.5pt" in _regla(css, "table")
+    assert "font-size: 9.5pt" in _regla(css, "table.grid")
+    # Celdas con aire (antes 1px 4px).
+    assert "padding: 3px 6px" in _regla(css, "table.grid th, table.grid td")
+    assert "padding: 2px 4px" in _regla(css, ".totales td")
+    assert "padding: 2px 4px" in _regla(css, "table.kv td")
+    # Apoyo: encabezados y gris, nunca por debajo de 8 pt.
+    assert "font-size: 8.5pt" in _regla(css, "table.grid th")
+    assert "font-size: 8pt" in _regla(css, ".op")
+    # Ningún tamaño de la hoja por debajo de 7.5 pt (el pie).
+    tamanios = [float(m) for m in re.findall(r"font-size: ([\d.]+)pt", css)]
+    assert tamanios and min(tamanios) >= 7.5
+
+    # Lo apachurrado de la v2 ya no está: el CUERPO dejó los 8.5 pt / 1.2 y
+    # ninguna celda vuelve a 1 px (los títulos grandes sí pueden cerrar la
+    # línea a 1.2 — ahí no estorba).
+    assert "font-size: 8.5pt" not in _regla(css, "body")
+    assert "line-height: 1.2" not in _regla(css, "body")
+    assert "padding: 1px 4px" not in css and "padding: 1px 3px" not in css
+
+
+def test_bloques_separados_y_desglose_no_toca_horas_cotizadas() -> None:
+    """Cada bloque se separa con el margen SUPERIOR de su h2; «Desglose de la
+    cotización» y «Horas cotizadas», que van lado a lado, además llevan canal
+    de 16 px y una línea divisoria."""
+    css = _estilos_interno("Documento interno")
+    assert "margin: 9px 0 4px" in _regla(css, "h2")
+    assert "padding-right: 16px" in _regla(css, ".cols td.col:first-child")
+    assert "padding-left: 16px" in _regla(css, ".cols td.col:last-child")
+    assert "border-left" in _regla(css, ".cols.desglose td.col:last-child")
+
+    html = _html()
+    # Siguen siendo dos columnas de la MISMA tabla (una hoja, misma info).
+    assert '<table class="cols desglose bloque">' in html
+    assert "Desglose de la cotización</h2>" in html and "Horas cotizadas</h2>" in html
+
+
+def test_avion_utilizado_segunda_linea_solo_si_el_api_lo_manda() -> None:
+    """Cabecera: «Avión cotizado» (siempre, con matrícula) y, cuando el API
+    manda `aeronave_utilizada`, la segunda línea «Avión utilizado: …» — la
+    oficina necesita ver los dos cuando no salió el avión que se cotizó."""
+    # Texto ya armado por el API.
+    html = _html(aeronave_utilizada="XB-RTO · Cessna 206")
+    assert "Avión cotizado" in html
+    assert '<div class="med">Piper Seneca V · N4142R</div>' in html
+    assert "Avión utilizado: XB-RTO · Cessna 206" in html
+
+    # Objeto {matricula, modelo}: se arma «matrícula · modelo».
+    html_obj = _html(aeronave_utilizada={"matricula": "XB-RTO", "modelo": "Cessna 206"})
+    assert "Avión utilizado: XB-RTO · Cessna 206" in html_obj
+
+    # Solo matrícula (el modelo no viaja): sin separador huérfano.
+    assert "Avión utilizado: XB-RTO<" in _html(aeronave_utilizada={"matricula": "XB-RTO"})
+
+
+def test_sin_aeronave_utilizada_la_linea_no_se_pinta() -> None:
+    """Skew en ambos sentidos: el API que todavía no manda el campo —o lo
+    manda con otra forma— no rompe ni ensucia el PDF."""
+    assert "Avión utilizado" not in _html()
+    assert "Avión utilizado" not in _html(aeronave_utilizada=None)
+    assert "Avión utilizado" not in _html(aeronave_utilizada="   ")
+    assert "Avión utilizado" not in _html(aeronave_utilizada={})
+    assert "Avión utilizado" not in _html(aeronave_utilizada=12345)
+    # El avión OPERATIVO del contrato legado v1 sigue sin pintarse.
+    assert "XB-OLD" not in _html(aeronave_operativa="Cessna 206 · XB-OLD")
+
+
+def test_avion_utilizado_difiere_se_marca_en_ambar() -> None:
+    """Lo que la oficina tiene que ver de un vistazo: se cotizó con un avión
+    y vuela OTRO. Lo decide el API por ID (`aeronave_cotizada_vs_utilizada_
+    difiere`) — comparar el texto no sirve, dos aviones pueden compartir
+    modelo — y el PDF lo pinta en ámbar con su marca."""
+    html = _html(
+        aeronave_utilizada={"matricula": "XB-RTO", "modelo": "Piper Seneca V"},
+        aeronave_cotizada_vs_utilizada_difiere=True,
+    )
+    assert 'class="sub ambar">Avión utilizado: XB-RTO · Piper Seneca V' in html
+    assert "Distinto al cotizado" in html
+
+    # El CSS de la marca GANA al gris de `.sub` (si no, no se vería).
+    css = _estilos_interno("Documento interno")
+    assert "color: #b45309" in _regla(css, "table.resumen .sub.ambar")
+
+
+def test_avion_utilizado_igual_no_se_marca() -> None:
+    """Mismo avión (o API que no manda la bandera): la línea va en gris, sin
+    marca — el aviso solo aparece cuando de verdad hay que mirarlo."""
+    igual = _html(aeronave_utilizada={"matricula": "N4142R", "modelo": "Piper Seneca V"})
+    assert "Avión utilizado: N4142R · Piper Seneca V" in igual
+    assert "Distinto al cotizado" not in igual
+    assert "sub ambar" not in igual
+    # La bandera sin avión utilizado no inventa la línea.
+    assert "Distinto al cotizado" not in _html(
+        aeronave_cotizada_vs_utilizada_difiere=True
+    )
+
+
+def test_avion_utilizado_se_escapa() -> None:
+    html = _html(aeronave_utilizada='XB-<script>"RTO"')
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
