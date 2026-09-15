@@ -45,6 +45,15 @@ class GastoVueloSugerirResponse(BaseModel):
     razon: str = ""
     modelo: str
     uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")
+    # ADITIVOS (15-sep-2026): misma disciplina que la sugerencia de
+    # conciliación — la IA propone y la persona confirma viendo los hechos.
+    evidencias: list[str] = Field(
+        default_factory=list,
+        description="Hechos que sostienen el match (mismo día, aeropuerto de la ruta…)",
+    )
+    motivo_sin_match: str | None = Field(
+        default=None, description="Por qué ningún vuelo encaja (solo cuando el sugerido es null)"
+    )
 
 
 # --- Carga masiva de combustible (plantilla XLSX + parseo estructural) ---

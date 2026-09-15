@@ -10,12 +10,21 @@ MediaType = Literal["image/jpeg", "image/png", "image/webp", "image/gif"]
 class TacometroRequest(BaseModel):
     """Una de dos fuentes de imagen: base64 (preferido) o URL pública/firmada."""
 
-    image_base64: str | None = Field(default=None, description="Imagen en base64 (sin prefijo data:)")
-    media_type: MediaType | None = Field(default=None, description="Requerido si se usa image_base64")
+    image_base64: str | None = Field(
+        default=None,
+        description="Imagen en base64 (sin prefijo data:)",
+    )
+    media_type: MediaType | None = Field(
+        default=None,
+        description="Requerido si se usa image_base64",
+    )
     image_url: str | None = Field(default=None, description="URL pública o firmada de la imagen")
     ultimo: float | None = Field(
         default=None,
-        description="Última lectura conocida de la aeronave (ancla de magnitud). La nueva debe ser similar y nunca menor.",
+        description=(
+            "Última lectura conocida de la aeronave (ancla de magnitud): la nueva"
+            " debe ser similar y nunca menor."
+        ),
     )
 
     @model_validator(mode="after")
@@ -28,10 +37,15 @@ class TacometroRequest(BaseModel):
 
 
 class TacometroResponse(BaseModel):
-    lectura: float | None = Field(description="Lectura del tacómetro en horas (HOBBS), o null si ilegible")
+    lectura: float | None = Field(
+        description="Lectura del tacómetro en horas (HOBBS), o null si ilegible",
+    )
     confianza: float = Field(ge=0, le=1, description="Confianza 0..1 de la lectura")
     legible: bool = Field(description="true si el display se pudo leer")
-    notas: str = Field(default="", description="Observaciones (borrosa, reflejo, dígitos parciales, etc.)")
+    notas: str = Field(
+        default="",
+        description="Observaciones (borrosa, reflejo, dígitos parciales, etc.)",
+    )
     calidad_foto: str = Field(
         default="MEDIA",
         description=(
@@ -40,6 +54,11 @@ class TacometroResponse(BaseModel):
             "(borrosa/oscura: la lectura puede tener dígitos equivocados)."
         ),
     )
+    # ADITIVO (15-sep-2026): validaciones deterministas que corrió el servicio
+    # (lectura fuera del rango que marca `ultimo`, por ejemplo).
+    advertencias: list[str] = Field(
+        default_factory=list, description="Problemas detectados al validar la lectura"
+    )
     modelo: str = Field(description="Modelo de Claude usado")
     uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")
 
@@ -47,8 +66,14 @@ class TacometroResponse(BaseModel):
 class ImagenFuente(BaseModel):
     """Una imagen: base64 (preferido) o URL pública/firmada."""
 
-    image_base64: str | None = Field(default=None, description="Imagen en base64 (sin prefijo data:)")
-    media_type: MediaType | None = Field(default=None, description="Requerido si se usa image_base64")
+    image_base64: str | None = Field(
+        default=None,
+        description="Imagen en base64 (sin prefijo data:)",
+    )
+    media_type: MediaType | None = Field(
+        default=None,
+        description="Requerido si se usa image_base64",
+    )
     image_url: str | None = Field(default=None, description="URL pública o firmada de la imagen")
 
     @model_validator(mode="after")
@@ -67,21 +92,46 @@ class GastoTicketRequest(BaseModel):
     - pdf_base64: la factura en PDF (visión nativa de documento).
     Campos nuevos ADITIVOS: el API viejo sigue mandando una sola imagen."""
 
-    image_base64: str | None = Field(default=None, description="Imagen en base64 (sin prefijo data:)")
-    media_type: MediaType | None = Field(default=None, description="Requerido si se usa image_base64")
+    image_base64: str | None = Field(
+        default=None,
+        description="Imagen en base64 (sin prefijo data:)",
+    )
+    media_type: MediaType | None = Field(
+        default=None,
+        description="Requerido si se usa image_base64",
+    )
     image_url: str | None = Field(default=None, description="URL pública o firmada de la imagen")
     images: list[ImagenFuente] | None = Field(
         default=None,
         max_length=8,
         description="Varias fotos del MISMO documento (hojas de una factura), máx 8",
     )
-    pdf_base64: str | None = Field(default=None, description="Factura en PDF (base64, sin prefijo data:)")
+    pdf_base64: str | None = Field(
+        default=None,
+        description="Factura en PDF (base64, sin prefijo data:)",
+    )
     excel_base64: str | None = Field(
         default=None,
-        description="Factura en Excel (.xlsx) o CSV en base64: se convierte a texto y la IA extrae los datos",
+        description=(
+            "Factura en Excel (.xlsx) o CSV en base64: se convierte a texto y la IA"
+            " extrae los datos"
+        ),
     )
     excel_filename: str | None = Field(
         default=None, description="Nombre del archivo Excel/CSV (decide el parser por extensión)"
+    )
+    # ADITIVOS (15-sep-2026): catálogos VIVOS que manda el API para validar la
+    # respuesta del modelo. Si no llegan se usa la flota estática de
+    # `_dominio.py` solo para advertir (nunca para borrar el dato).
+    matriculas_flota: list[str] | None = Field(
+        default=None,
+        max_length=50,
+        description="Matrículas vigentes de la flota (valida la que lea la IA)",
+    )
+    terminaciones_validas: list[str] | None = Field(
+        default=None,
+        max_length=50,
+        description="Terminaciones de tarjeta corporativa vigentes (4 dígitos)",
     )
 
     @model_validator(mode="after")
@@ -98,7 +148,8 @@ class GastoTicketRequest(BaseModel):
         )
         if fuentes != 1:
             raise ValueError(
-                "Debes enviar exactamente una fuente: image_base64/image_url, images[], pdf_base64 o excel_base64"
+                "Debes enviar exactamente una fuente: image_base64/image_url,"
+                " images[], pdf_base64 o excel_base64"
             )
         if self.image_base64 and not self.media_type:
             raise ValueError("media_type es requerido cuando se envía image_base64")
@@ -177,14 +228,32 @@ class GastoTicketResponse(BaseModel):
     )
     conceptos: list["ConceptoTicket"] = Field(
         default_factory=list,
-        description="Renglones del ticket incl. IVA como renglón si viene aparte (suma = total); máx 8",
+        description=(
+            "Renglones del ticket incl. IVA como renglón si viene aparte"
+            " (suma = total); máx 8"
+        ),
     )
     matricula: str | None = Field(
         default=None, description="Matrícula de la aeronave si aparece (XA-ABC/N123XX)"
     )
+    # ADITIVOS (15-sep-2026): desambiguan al proveedor y alimentan el semáforo
+    # de facturación y el cruce con la descripción del banco.
+    rfc_emisor: str | None = Field(
+        default=None, description="RFC del emisor de la factura (identifica al proveedor)"
+    )
+    iva_monto: float | None = Field(
+        default=None, description="IVA desglosado en el documento, si viene separado"
+    )
+    lugar: str | None = Field(
+        default=None, description="Ciudad o aeropuerto del ticket (empata con el banco)"
+    )
     confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1 de la extracción")
     legible: bool = Field(default=False, description="true si el ticket se pudo leer")
     notas: str = Field(default="", description="Observaciones")
+    advertencias: list[str] = Field(
+        default_factory=list,
+        description="Validaciones que no pasaron (suma de renglones, matrícula, fecha…)",
+    )
     modelo: str = Field(description="Modelo de Claude usado")
     uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")
 
@@ -242,13 +311,19 @@ class ConstanciaFiscalResponse(BaseModel):
     motivo: str | None = Field(
         default=None, description="Por qué no se pudo leer / observaciones de la extracción"
     )
+    advertencias: list[str] = Field(
+        default_factory=list, description="Validaciones que no pasaron (RFC, CP, régimen)"
+    )
     uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")
 
 
 class CombustibleTicketResponse(BaseModel):
     """Datos extraídos de un ticket de carga de combustible (turbosina/avgas)."""
 
-    litros: float | None = Field(default=None, description="Litros cargados (galones→L si aplica), o null")
+    litros: float | None = Field(
+        default=None,
+        description="Litros cargados (galones→L si aplica), o null",
+    )
     precio_litro: float | None = Field(default=None, description="Precio por litro, o null")
     total: float | None = Field(default=None, description="Total pagado, o null")
     folio: str | None = Field(
@@ -256,7 +331,10 @@ class CombustibleTicketResponse(BaseModel):
         description="Folio/remisión impreso en el ticket (ej. remisión ASA), o null",
     )
     moneda: Literal["MXN", "USD"] | None = Field(default=None, description="Moneda detectada")
-    aeropuerto: str | None = Field(default=None, description="Código/nombre del aeropuerto o FBO, o null")
+    aeropuerto: str | None = Field(
+        default=None,
+        description="Código/nombre del aeropuerto o FBO, o null",
+    )
     tipo_combustible: Literal["TURBOSINA", "AVGAS"] | None = Field(
         default=None, description="Turbosina (Jet A) o avgas (100LL)"
     )
@@ -269,9 +347,22 @@ class CombustibleTicketResponse(BaseModel):
     medio_pago: Literal["EFECTIVO", "TARJETA_CORP", "TRANSFERENCIA"] | None = Field(
         default=None, description="Medio de pago detectado en el ticket"
     )
+    # ADITIVOS (15-sep-2026): el ticket de combustible SIEMPRE trae matrícula
+    # (ata la carga al avión correcto) y, si viene en galones, el dato de
+    # origen permite auditar la conversión que hizo el modelo.
+    matricula: str | None = Field(
+        default=None, description="Matrícula de la aeronave impresa en el ticket"
+    )
+    galones_origen: float | None = Field(
+        default=None, description="Galones del ticket cuando la carga no vino en litros"
+    )
     confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1")
     legible: bool = Field(default=False, description="true si el ticket se pudo leer")
     notas: str = Field(default="", description="Observaciones")
+    advertencias: list[str] = Field(
+        default_factory=list,
+        description="Validaciones que no pasaron (litros × precio ≠ total, matrícula…)",
+    )
     modelo: str = Field(description="Modelo de Claude usado")
     uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")
 

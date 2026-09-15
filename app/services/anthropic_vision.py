@@ -18,7 +18,22 @@ from app.schemas.vision import (
     TacometroRequest,
     TacometroResponse,
 )
+from app.services._dominio import MATRICULAS_FLOTA, sistema_con_dominio
 from app.services.ia_usage import uso_ia_de
+from app.services.validaciones_ia import (
+    confianza_calibrada,
+    confianza_de,
+    limpiar_advertencias,
+    matricula_conocida,
+    normalizar_matricula,
+    num,
+    rango_plausible,
+    terminacion_4,
+    validar_fecha_documento,
+    validar_identidad_combustible,
+    validar_rfc,
+    validar_suma_conceptos,
+)
 
 _SYSTEM = (
     "Eres un asistente de operaciones de aviación. Lees el HORÓMETRO/TACÓMETRO "
@@ -43,6 +58,13 @@ _SYSTEM = (
     'frases). OBLIGATORIO cuando calidad_foto no es "ALTA": di QUÉ estorba y '
     'CUÁL dígito es el dudoso (ej. "foto borrosa: la décima podría ser 8 o 9"). '
     'No repitas la lectura ni narres todo el dial.\n'
+    "ANCLA DE MAGNITUD: junto a la foto puede venir el dato «la lectura "
+    "anterior de esta aeronave fue N hrs». Es la última lectura registrada, y "
+    "manda sobre tu intuición: la nueva NUNCA es menor que N y casi nunca "
+    "supera N + 15 (un avión vuela de 1 a 3 horas por salida). Si tu lectura "
+    "cae fuera de ese rango, RELEE las centenas y los millares —el error "
+    "típico es tomar la décima del tambor pequeño como un entero (1555.8 "
+    "leído como 15558)—, corrige, baja la confianza y dilo en notas.\n"
     "Si dudas entre dos dígitos, elige el más probable, baja la confianza y "
     'reporta calidad_foto "BAJA". No inventes dígitos que no ves: si faltan, usa '
     "null y explica en notas. Es MUCHO peor entregar una lectura equivocada como "
@@ -165,7 +187,7 @@ def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
     resp = _client().messages.create(
         model=s.anthropic_model,
         max_tokens=800,
-        system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
+        system=sistema_con_dominio(_SYSTEM),
         messages=[
             {
                 "role": "user",
@@ -177,21 +199,60 @@ def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
     text = next((b.text for b in resp.content if b.type == "text"), "")
     data = _extract_json(text)
 
-    lectura = data.get("lectura")
-    confianza = float(data.get("confianza", 0.0))
+    lectura = num(data.get("lectura"))
+    confianza = confianza_de(data.get("confianza"))
     calidad = str(data.get("calidad_foto", "") or "").strip().upper()
     if calidad not in {"ALTA", "MEDIA", "BAJA"}:
         # Modelo viejo o respuesta sin el campo: se deduce de la confianza para
         # no perder el aviso (nunca se asume ALTA "por defecto").
         calidad = "ALTA" if confianza >= 0.9 else "BAJA" if confianza < 0.7 else "MEDIA"
+
+    # Validación determinista contra el ancla (15-sep-2026): el prompt ya la
+    # explica, pero una lectura fuera de rango NO puede salir como segura.
+    advertencias: list[str] = []
+    dato_imposible = False
+    ultimo = num(req.ultimo)
+    if lectura is not None and ultimo and ultimo > 0:
+        if lectura < ultimo - 0.05:
+            dato_imposible = True
+            advertencias.append(
+                f"La lectura {lectura:.1f} es MENOR que la anterior ({ultimo:.1f}): "
+                "el horómetro no retrocede, revisa la foto."
+            )
+        elif lectura >= ultimo * 5:
+            # Orden de magnitud: 1555.8 leído como 15558 (la décima como
+            # entero). Es un dato IMPOSIBLE, no un salto grande.
+            dato_imposible = True
+            advertencias.append(
+                f"La lectura {lectura:.1f} es {lectura / ultimo:.0f} veces la anterior "
+                f"({ultimo:.1f}): casi seguro la décima se leyó como entero."
+            )
+        elif lectura > ultimo + 15:
+            # Salto grande pero POSIBLE (varios vuelos sin captura, piloto
+            # externo, taller): se avisa y se pide revisar, sin degradar la
+            # lectura a «ilegible» ni castigar la confianza como dato falso.
+            advertencias.append(
+                f"La lectura {lectura:.1f} está {lectura - ultimo:.1f} hrs por encima de "
+                f"la anterior ({ultimo:.1f}): confirma que no falte una captura "
+                "intermedia y que la décima no se haya leído como entero."
+            )
+            if calidad == "ALTA":
+                calidad = "MEDIA"
+            confianza = min(confianza, 0.7)
+    if dato_imposible:
+        # Mismo canal que ya usa la revisión manual: BAJA = revisar (amarillo).
+        calidad = "BAJA"
+        confianza = confianza_calibrada(confianza, True)
+
     return TacometroResponse(
-        lectura=float(lectura) if isinstance(lectura, (int, float)) else None,
+        lectura=lectura,
         confianza=confianza,
         legible=bool(data.get("legible", lectura is not None)),
         # Tope duro además del prompt: una nota kilométrica rompía la captura
         # aguas abajo (el API la valida por largo).
         notas=str(data.get("notas", ""))[:400],
         calidad_foto=calidad,
+        advertencias=advertencias,
         modelo=s.anthropic_model,
         uso_ia=uso,
     )
@@ -299,10 +360,26 @@ _TICKET_SYSTEM = (
     "que la SUMA de renglones (ya con descuentos aplicados) sea exactamente el "
     "TOTAL pagado; si aun así no cuadra, [].\n"
     '  "matricula": matrícula de la aeronave si aparece en el documento '
-    '(observaciones/referencias; formato XA-ABC, XB-ABC o N123XX), o null.\n'
+    "(observaciones/referencias; formato XA-ABC, XB-ABC o N123XX), o null. "
+    "Compárala con la flota del contexto de dominio: si no es ninguna de "
+    "ellas, devuélvela TAL CUAL la ves y anótalo en advertencias — nunca la "
+    '"corrijas" para que se parezca a una de la lista.\n'
+    '  "rfc_emisor": RFC del emisor (12-13 caracteres, MAYÚSCULAS) si el '
+    "documento es una factura/CFDI o lo imprime, o null. Identifica al "
+    "proveedor mucho mejor que el nombre comercial.\n"
+    '  "iva_monto": el IVA DESGLOSADO del documento como número, solo si '
+    "viene separado (subtotal + IVA = total), o null. No lo calcules tú.\n"
+    '  "lugar": ciudad o aeropuerto del gasto tal como aparece (ej. '
+    '"Cozumel", "Aeropuerto de Chetumal", "CUN", "Mérida"), o null. Con este '
+    "dato el sistema cruza el gasto contra el cargo del banco (la descripción "
+    'bancaria dice "AEROPUERTO DE COZUMEL", "ASA MERIDA"…), así que vale oro.\n'
     '  "confianza": número entre 0 y 1.\n'
     '  "legible": true/false según si el ticket se distingue.\n'
     '  "notas": string breve en español con cualquier observación.\n'
+    '  "advertencias": arreglo de strings con lo que te haga dudar (los '
+    "renglones no suman el total, hay dos totales distintos, el monto está "
+    "borroso, la factura trae varias aeronaves). Vacío si todo se leyó "
+    "limpio. Es preferible una advertencia a un dato inventado.\n"
     "No inventes datos que no aparezcan: usa null. GAS es SOLO combustible de "
     "AVIACIÓN (gasavión/AVGAS/turbosina/Jet A). Para facturas de aeropuerto: "
     "OPERACIONES es la categoría de las MIXTAS o generales (aterrizaje + "
@@ -315,6 +392,30 @@ _TICKET_PROMPT = (
     "Extrae los datos de gasto de este ticket y responde con el JSON indicado. "
     "Prioriza el TOTAL final, no subtotales ni impuestos por separado."
 )
+
+
+def _contexto_catalogos(req: GastoTicketRequest) -> str:
+    """Catálogos VIVOS que mandó el API (flota y tarjetas) para este ticket.
+
+    Van en el mensaje del usuario, no en el system: cambian entre llamadas y
+    romperían el caché del prompt."""
+    partes: list[str] = []
+    flota = [str(m).strip() for m in (req.matriculas_flota or []) if str(m).strip()]
+    if flota:
+        partes.append(
+            "MATRÍCULAS VIGENTES de la flota: " + ", ".join(flota) + ". Si el "
+            "documento muestra otra, devuélvela igual y anótalo en advertencias."
+        )
+    terminaciones = [
+        str(t).strip()[-4:] for t in (req.terminaciones_validas or []) if str(t).strip()
+    ]
+    if terminaciones:
+        partes.append(
+            "TERMINACIONES de tarjeta corporativa vigentes: "
+            + ", ".join(terminaciones)
+            + ". Si el voucher muestra otra, devuélvela igual y anótalo en advertencias."
+        )
+    return " ".join(partes)
 
 
 def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
@@ -342,10 +443,13 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
                 f"Las {len(blocks)} imágenes son HOJAS del MISMO documento (una sola "
                 "factura de varias páginas): léelas en orden como un solo comprobante. "
             ) + _TICKET_PROMPT
+    catalogos = _contexto_catalogos(req)
+    if catalogos:
+        prompt = f"{prompt}\n{catalogos}"
     resp = _client().messages.create(
         model=s.anthropic_model,
         max_tokens=2000,
-        system=[{"type": "text", "text": _TICKET_SYSTEM, "cache_control": {"type": "ephemeral"}}],
+        system=sistema_con_dominio(_TICKET_SYSTEM),
         messages=[
             {
                 "role": "user",
@@ -359,7 +463,7 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
     text = next((b.text for b in resp.content if b.type == "text"), "")
     data = _extract_json(text)
 
-    monto = data.get("monto")
+    monto = num(data.get("monto"))
     moneda = data.get("moneda")
     categoria = data.get("categoria_sugerida")
     valid_cats = {
@@ -373,24 +477,69 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         # visitante, 27-ago), PERSONAL_DUENO y NOMINA (sueldos, 29-ago).
         "VISITA", "PERSONAL_DUENO", "NOMINA",
     }
-    monto_f = float(monto) if isinstance(monto, (int, float)) else None
+    monto_f = monto
     # Propina solo si es coherente (0 < propina < monto): una lectura donde
     # "propina" >= total es un misread y dejaría el ticket en <= 0 en el
     # autofill de panel/app — se descarta aquí (punto único) conservando el
     # monto, que es el dato sagrado.
-    propina = data.get("propina")
+    propina = num(data.get("propina"))
     propina_f = (
-        float(propina)
-        if isinstance(propina, (int, float))
-        and monto_f is not None
-        and 0 < propina < monto_f
-        else None
+        propina if (propina is not None and monto_f is not None and 0 < propina < monto_f) else None
     )
+
+    # --- Validaciones deterministas (15-sep-2026) --------------------------
+    # Lo que se puede comprobar con aritmética o catálogo no se le cree al
+    # modelo. Un dato SECUNDARIO que no pasa se limpia y se advierte; el
+    # total (dato principal) nunca se borra.
+    avisos: list[str | None] = [
+        str(x).strip()[:200] for x in (data.get("advertencias") or []) if str(x).strip()
+    ]
+
+    fecha, aviso_fecha = validar_fecha_documento(data.get("fecha"))
+    avisos.append(aviso_fecha)
+
+    conceptos = _parse_conceptos(data.get("conceptos"))
+    aviso_conceptos = validar_suma_conceptos(conceptos, monto_f)
+    if aviso_conceptos:
+        conceptos = []
+        avisos.append(aviso_conceptos)
+
+    matricula = _parse_matricula(data.get("matricula"))
+    flota = [str(m) for m in (req.matriculas_flota or []) if str(m).strip()] or list(
+        MATRICULAS_FLOTA
+    )
+    if matricula and not matricula_conocida(matricula, flota):
+        avisos.append(
+            f"La matrícula {matricula} no está en la flota conocida: verifica a qué "
+            "avión pertenece el gasto antes de guardar."
+        )
+
+    terminacion = terminacion_4(data.get("tarjeta_terminacion"))
+    validas = {terminacion_4(t) for t in (req.terminaciones_validas or []) if str(t).strip()}
+    if terminacion and validas and terminacion not in validas:
+        avisos.append(
+            f"La tarjeta terminada en {terminacion} no está en el catálogo de tarjetas "
+            "corporativas: confirma quién pagó."
+        )
+
+    rfc_emisor, aviso_rfc = validar_rfc(data.get("rfc_emisor"))
+    avisos.append(aviso_rfc)
+
+    iva_monto = num(data.get("iva_monto"))
+    if iva_monto is not None and monto_f is not None and not 0 < iva_monto < monto_f:
+        avisos.append("El IVA leído no es coherente con el total: se descartó.")
+        iva_monto = None
+
+    advertencias = limpiar_advertencias(avisos)
+
     return GastoTicketResponse(
         monto=monto_f,
         propina=propina_f,
+        # El folio es la llave anti-duplicados del API: el prompt ya lo pedía y
+        # el esquema ya lo tenía, pero nunca se copiaba a la respuesta.
+        folio=_str_o_numero(data.get("folio")),
         moneda=moneda if moneda in ("MXN", "USD") else None,
-        fecha=str(data["fecha"]) if data.get("fecha") else None,
+        fecha=fecha,
         proveedor=str(data["proveedor"]) if data.get("proveedor") else None,
         concepto=str(data["concepto"]) if data.get("concepto") else None,
         categoria_sugerida=categoria if categoria in valid_cats else None,
@@ -399,34 +548,38 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
             if data.get("medio_pago") in ("EFECTIVO", "TARJETA_CORP", "TRANSFERENCIA")
             else None
         ),
-        tarjeta_terminacion=(
-            str(data["tarjeta_terminacion"]).strip()[-4:]
-            if data.get("tarjeta_terminacion") and str(data["tarjeta_terminacion"]).strip()
-            else None
-        ),
-        litros=(
-            float(data["litros"])
-            if isinstance(data.get("litros"), (int, float)) and data["litros"] > 0
-            else None
-        ),
-        conceptos=_parse_conceptos(data.get("conceptos")),
-        matricula=_parse_matricula(data.get("matricula")),
-        confianza=float(data.get("confianza", 0.0)),
-        legible=bool(data.get("legible", monto is not None)),
+        tarjeta_terminacion=terminacion,
+        litros=_litros_positivos(data.get("litros")),
+        conceptos=conceptos,
+        matricula=matricula,
+        rfc_emisor=rfc_emisor,
+        iva_monto=iva_monto,
+        lugar=_str_or_none(data.get("lugar")),
+        # El total es el dato principal: solo se castiga la confianza si no se
+        # pudo leer (un desglose que no suma no vuelve dudoso al total).
+        confianza=confianza_calibrada(confianza_de(data.get("confianza")), monto_f is None),
+        legible=bool(data.get("legible", monto_f is not None)),
         notas=str(data.get("notas", "")),
+        advertencias=advertencias,
         modelo=s.anthropic_model,
         uso_ia=uso,
     )
 
 
+def _litros_positivos(raw: object) -> float | None:
+    """Litros solo si son un número positivo (0 o negativo = dato inservible)."""
+    v = num(raw)
+    return v if v is not None and v > 0 else None
+
+
 def _parse_matricula(raw: object) -> str | None:
-    """Matrícula plausible (XA-/XB-/N…): mayúsculas, 4-7 caracteres."""
-    if not isinstance(raw, str):
-        return None
-    m = raw.strip().upper().replace(" ", "")
-    if 4 <= len(m) <= 7 and m[0] in ("X", "N") and any(c.isdigit() for c in m):
-        return m
-    return None
+    """Matrícula plausible (XA-/XB-/N…), normalizada con guion.
+
+    Antes exigía que la matrícula tuviera un dígito y por eso DESCARTABA en
+    silencio XB-PEV, XA-VGV, XB-ANU y XB-IJP (las mexicanas son tres letras):
+    el gasto se quedaba sin avión. Fuente única: `normalizar_matricula`.
+    """
+    return normalizar_matricula(raw)
 
 
 def _parse_conceptos(raw: object) -> list[dict]:
@@ -558,9 +711,7 @@ def leer_constancia_fiscal(req: ConstanciaFiscalRequest) -> ConstanciaFiscalResp
     resp = _client().messages.create(
         model=s.anthropic_model,
         max_tokens=1000,
-        system=[
-            {"type": "text", "text": _CONSTANCIA_SYSTEM, "cache_control": {"type": "ephemeral"}}
-        ],
+        system=sistema_con_dominio(_CONSTANCIA_SYSTEM),
         messages=[
             {
                 "role": "user",
@@ -573,24 +724,43 @@ def leer_constancia_fiscal(req: ConstanciaFiscalRequest) -> ConstanciaFiscalResp
     data = _extract_json(text)
 
     regimen = _str_or_none(data.get("regimen_fiscal"))
-    rfc = _parse_rfc(data.get("rfc"))
-    # Confianza defensiva: un valor raro del modelo (null/string) no debe
-    # tirar la extracción completa — el contrato es degradar, nunca 500.
-    conf = data.get("confianza")
-    confianza = min(max(float(conf), 0.0), 1.0) if isinstance(conf, (int, float)) else 0.0
+    # RFC con estructura Y dígito verificador (15-sep-2026): un RFC inventado
+    # no truena aquí, truena semanas después al timbrar. Mejor null + aviso.
+    rfc, aviso_rfc = validar_rfc(data.get("rfc"))
+    rfc_crudo = _parse_rfc(data.get("rfc"))
+    avisos: list[str | None] = [aviso_rfc]
+
+    cp = _parse_cp(data.get("cp"))
+    if cp is None and data.get("cp"):
+        avisos.append(f"El código postal «{data.get('cp')}» no tiene 5 dígitos.")
+    if regimen and regimen not in _REGIMENES_SAT:
+        avisos.append(
+            f"El régimen fiscal «{regimen}» no está en el catálogo del SAT: elígelo a mano."
+        )
+    advertencias = limpiar_advertencias(avisos)
+
+    motivo = _str_or_none(data.get("motivo"))
+    if advertencias and not motivo:
+        # Canal visible para un API que aún no lee `advertencias`.
+        motivo = " ".join(advertencias)[:300]
+
     return ConstanciaFiscalResponse(
         disponible=True,
-        legible=bool(data.get("legible", rfc is not None)),
+        # El documento puede ser perfectamente legible aunque el RFC no pase la
+        # validación: se conserva lo demás y el operador corrige el RFC.
+        legible=bool(data.get("legible", rfc_crudo is not None)),
         rfc=rfc,
         razon_social=_str_or_none(data.get("razon_social")),
         # Solo códigos del catálogo c_RegimenFiscal: un código inventado
         # rompería el timbrado; mejor null y que el operador lo elija.
         regimen_fiscal=regimen if regimen in _REGIMENES_SAT else None,
         regimen_descripcion=_str_or_none(data.get("regimen_descripcion")),
-        cp=_parse_cp(data.get("cp")),
+        cp=cp,
         domicilio=_str_or_none(data.get("domicilio")),
-        confianza=confianza,
-        motivo=_str_or_none(data.get("motivo")),
+        # El RFC es el dato principal de una constancia.
+        confianza=confianza_calibrada(confianza_de(data.get("confianza")), rfc is None),
+        motivo=motivo,
+        advertencias=advertencias,
         uso_ia=uso,
     )
 
@@ -600,10 +770,22 @@ _COMBUSTIBLE_SYSTEM = (
     "Jet A o avgas 100LL). A partir de la foto del ticket de combustible extraes los "
     "datos. Devuelves SOLO un objeto JSON, sin texto adicional ni ```fences```, con "
     "las claves exactas:\n"
-    '  "litros": litros cargados (si viene en galones, conviértelo: 1 gal = 3.78541 L), o null.\n'
-    '  "precio_litro": precio por litro, o null.\n'
-    '  "total": total pagado, o null.\n'
+    '  "litros": litros cargados (si viene en galones, conviértelo: 1 gal = 3.78541 L), o null. '
+    "Una carga normal va de 20 a 1200 L; si te sale algo muy fuera de ahí, "
+    "relee la cantidad y dilo en advertencias.\n"
+    '  "galones_origen": si el ticket viene en GALONES, la cantidad ORIGINAL '
+    "en galones (para poder auditar la conversión), o null si venía en litros.\n"
+    '  "precio_litro": precio unitario por litro. Los tickets de ASA imprimen '
+    "el precio SIN IVA y el total CON IVA: elige el precio que multiplicado "
+    "por los litros dé el TOTAL del ticket y di en notas cuál tomaste. Si no "
+    "aparece impreso, null (no lo calcules tú).\n"
+    '  "total": total pagado (el que se cobró, con IVA si así viene), o null.\n'
     '  "moneda": "MXN" o "USD", o null.\n'
+    '  "matricula": matrícula de la aeronave que se cargó — el ticket de '
+    "combustible SIEMPRE la trae (formato XA-ABC, XB-ABC o N123XX). Es el dato "
+    "que ata la carga al avión correcto: cópiala tal cual, y si no coincide "
+    "con la flota del contexto anótalo en advertencias. null si de plano no "
+    "aparece.\n"
     '  "aeropuerto": código IATA/ICAO o nombre del aeropuerto/FBO, o null.\n'
     '  "tipo_combustible": "TURBOSINA" o "AVGAS" según el ticket (GASAVION/'
     'GAS AVION/100LL = AVGAS; JET A/TURBOSINA = TURBOSINA), o null.\n'
@@ -623,7 +805,14 @@ _COMBUSTIBLE_SYSTEM = (
     '  "confianza": número entre 0 y 1.\n'
     '  "legible": true/false.\n'
     '  "notas": string breve en español.\n'
-    "No inventes datos: usa null. Si el ticket indica galones, convierte a litros."
+    '  "advertencias": arreglo de strings con lo que te haga dudar (litros × '
+    "precio no da el total, dos precios impresos, cantidad borrosa, matrícula "
+    "que no reconoces). Vacío si todo se leyó limpio.\n"
+    "No inventes datos: usa null. Si el ticket indica galones, convierte a "
+    "litros y conserva los galones en galones_origen. GAS = combustible de "
+    "AVIACIÓN (AVGAS 100LL o turbosina Jet A) de proveedores como ASA, "
+    "GAFSACOMM, Gasol Caribe o el FBO del aeropuerto: NUNCA es gasolina de "
+    "automóvil."
 )
 
 _COMBUSTIBLE_PROMPT = (
@@ -634,16 +823,18 @@ _COMBUSTIBLE_PROMPT = (
 
 def leer_ticket_combustible(req: GastoTicketRequest) -> CombustibleTicketResponse:
     s = get_settings()
+    prompt = _COMBUSTIBLE_PROMPT
+    catalogos = _contexto_catalogos(req)
+    if catalogos:
+        prompt = f"{prompt}\n{catalogos}"
     resp = _client().messages.create(
         model=s.anthropic_model,
         max_tokens=1000,
-        system=[
-            {"type": "text", "text": _COMBUSTIBLE_SYSTEM, "cache_control": {"type": "ephemeral"}}
-        ],
+        system=sistema_con_dominio(_COMBUSTIBLE_SYSTEM),
         messages=[
             {
                 "role": "user",
-                "content": [_image_block(req), {"type": "text", "text": _COMBUSTIBLE_PROMPT}],
+                "content": [_image_block(req), {"type": "text", "text": prompt}],
             }
         ],
     )
@@ -651,34 +842,78 @@ def leer_ticket_combustible(req: GastoTicketRequest) -> CombustibleTicketRespons
     text = next((b.text for b in resp.content if b.type == "text"), "")
     data = _extract_json(text)
 
-    def _num(v: object) -> float | None:
-        return float(v) if isinstance(v, (int, float)) else None
-
     moneda = data.get("moneda")
     tipo = data.get("tipo_combustible")
+    litros = num(data.get("litros"))
+    precio_litro = num(data.get("precio_litro"))
+    total = num(data.get("total"))
+
+    # --- Validaciones deterministas (15-sep-2026) --------------------------
+    avisos: list[str | None] = [
+        str(x).strip()[:200] for x in (data.get("advertencias") or []) if str(x).strip()
+    ]
+    aviso_identidad, identidad_rota = validar_identidad_combustible(litros, precio_litro, total)
+    avisos.append(aviso_identidad)
+
+    if litros is not None and not rango_plausible(litros, 5, 3000):
+        avisos.append(
+            f"{litros:,.2f} litros está fuera del rango normal de una carga (5 a 3000 L): "
+            "revisa la cantidad."
+        )
+        identidad_rota = True
+
+    galones = num(data.get("galones_origen"))
+    if galones and litros:
+        esperado = galones * 3.78541
+        if abs(esperado - litros) > max(esperado * 0.01, 1.0):
+            # La conversión la rehace Python: no se confía en la aritmética
+            # del modelo cuando el ticket viene en galones.
+            avisos.append(
+                f"{galones:,.2f} galones son {esperado:,.2f} L, no {litros:,.2f} L: "
+                "se corrigió la conversión."
+            )
+            litros = round(esperado, 2)
+
+    fecha, aviso_fecha = validar_fecha_documento(data.get("fecha"))
+    avisos.append(aviso_fecha)
+
+    matricula = _parse_matricula(data.get("matricula"))
+    flota = [str(m) for m in (req.matriculas_flota or []) if str(m).strip()] or list(
+        MATRICULAS_FLOTA
+    )
+    if matricula and not matricula_conocida(matricula, flota):
+        avisos.append(
+            f"La matrícula {matricula} no está en la flota conocida: verifica a qué "
+            "avión se cargó el combustible."
+        )
+
     return CombustibleTicketResponse(
-        litros=_num(data.get("litros")),
-        precio_litro=_num(data.get("precio_litro")),
-        total=_num(data.get("total")),
+        litros=litros,
+        precio_litro=precio_litro,
+        total=total,
+        # Llave anti-duplicados del API (el prompt ya lo pedía y no se copiaba).
+        folio=_str_o_numero(data.get("folio")),
         moneda=moneda if moneda in ("MXN", "USD") else None,
         aeropuerto=str(data["aeropuerto"]) if data.get("aeropuerto") else None,
         tipo_combustible=tipo if tipo in ("TURBOSINA", "AVGAS") else None,
-        fecha=str(data["fecha"]) if data.get("fecha") else None,
+        fecha=fecha,
         hora=str(data["hora"]) if data.get("hora") else None,
         proveedor=str(data["proveedor"]) if data.get("proveedor") else None,
-        tarjeta_terminacion=(
-            str(data["tarjeta_terminacion"]).strip()[-4:]
-            if data.get("tarjeta_terminacion") and str(data["tarjeta_terminacion"]).strip()
-            else None
-        ),
+        tarjeta_terminacion=terminacion_4(data.get("tarjeta_terminacion")),
         medio_pago=(
             data.get("medio_pago")
             if data.get("medio_pago") in ("EFECTIVO", "TARJETA_CORP", "TRANSFERENCIA")
             else None
         ),
-        confianza=float(data.get("confianza", 0.0)),
-        legible=bool(data.get("legible", data.get("total") is not None)),
+        matricula=matricula,
+        galones_origen=galones,
+        # Litros y total SON el dato principal de una carga (de ahí salen las
+        # horas y el costo por litro del balance): si no cuadran, la lectura
+        # no puede salir como segura.
+        confianza=confianza_calibrada(confianza_de(data.get("confianza")), identidad_rota),
+        legible=bool(data.get("legible", total is not None)),
         notas=str(data.get("notas", "")),
+        advertencias=limpiar_advertencias(avisos),
         modelo=s.anthropic_model,
         uso_ia=uso,
     )
@@ -854,9 +1089,7 @@ def leer_producto_inventario(req: InventarioItemRequest) -> InventarioItemRespon
     resp = _client().messages.create(
         model=s.anthropic_model,
         max_tokens=1500,
-        system=[
-            {"type": "text", "text": _INVENTARIO_SYSTEM, "cache_control": {"type": "ephemeral"}}
-        ],
+        system=sistema_con_dominio(_INVENTARIO_SYSTEM),
         messages=[
             {
                 "role": "user",

@@ -1,5 +1,6 @@
 import base64
 import logging
+from xml.etree.ElementTree import ParseError
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -31,7 +32,16 @@ router = APIRouter(
 @router.post("/parse-recibida", response_model=FacturaRecibidaParsed)
 def parse_recibida(req: ParseRecibidaRequest) -> FacturaRecibidaParsed:
     """Parsea un CFDI recibido (XML de proveedor) y extrae sus datos."""
-    return parse_cfdi(req)
+    try:
+        return parse_cfdi(req)
+    # Un XML roto, un base64 inválido o un XML con DTD/entidades (rechazado
+    # por seguridad) daban 500 sin explicación: 422 con el motivo real.
+    except (ValueError, ParseError) as e:
+        logger.warning("CFDI recibido no parseable: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e)[:200] or "El XML no es un CFDI legible",
+        ) from e
 
 
 @router.get("/health", response_model=FacturacionHealthResponse)

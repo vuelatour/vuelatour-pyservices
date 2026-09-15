@@ -20,6 +20,12 @@ class CompraLinea(BaseModel):
 class CompraExtraerResponse(BaseModel):
     proveedor: str | None = Field(default=None, description="Proveedor/comercio")
     fecha: str | None = Field(default=None, description="Fecha de la orden YYYY-MM-DD")
+    # ADITIVOS (15-sep-2026): el número de orden/invoice es el candado natural
+    # contra capturar dos veces la misma compra; el tracking ayuda a recibirla.
+    numero_orden: str | None = Field(
+        default=None, description="Número de orden/invoice del proveedor (llave anti-duplicados)"
+    )
+    tracking: str | None = Field(default=None, description="Guía/tracking del embarque, si viene")
     moneda: str = Field(default="USD", description="Moneda detectada")
     lineas: list[CompraLinea] = Field(default_factory=list)
     subtotal_usd: float | None = None
@@ -28,5 +34,9 @@ class CompraExtraerResponse(BaseModel):
     total_usd: float | None = None
     confianza: float = Field(ge=0, le=1, default=0.0)
     notas: str = Field(default="")
+    advertencias: list[str] = Field(
+        default_factory=list,
+        description="Validaciones que no pasaron (las líneas no suman el subtotal, etc.)",
+    )
     modelo: str = Field(description="Modelo de Claude usado")
     uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")

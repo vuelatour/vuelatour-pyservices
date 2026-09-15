@@ -21,6 +21,16 @@ class VencimientoExtraerRequest(BaseModel):
         default=None, description="Requerido si se envía image_base64"
     )
 
+    # ADITIVOS (15-sep-2026): catálogos vivos del API para validar la lectura.
+    matriculas_flota: list[str] | None = Field(
+        default=None,
+        max_length=80,
+        description="Matrículas/placas vigentes (aeronaves y vehículos)",
+    )
+    tipos_documento: list[str] | None = Field(
+        default=None, max_length=60, description="Catálogo de tipos de documento del sistema"
+    )
+
     @model_validator(mode="after")
     def _check_source(self) -> "VencimientoExtraerRequest":
         if not self.pdf_base64 and not self.image_base64:
@@ -46,7 +56,19 @@ class VencimientoExtraerResponse(BaseModel):
     emisor: str | None = Field(
         default=None, description="Aseguradora/entidad emisora del documento, o null"
     )
+    # ADITIVOS (15-sep-2026): una póliza de FLOTA cubre varias aeronaves (antes
+    # se perdían todas menos la primera) y el folio evita duplicar la renovación.
+    matriculas: list[str] = Field(
+        default_factory=list,
+        description="Todas las matrículas que cubre el documento (la primera va en `matricula`)",
+    )
+    numero_poliza: str | None = Field(
+        default=None, description="Número de póliza/folio del documento, o null"
+    )
     confianza: float = Field(ge=0, le=1, default=0.0, description="Confianza 0..1 de la extracción")
     notas: str = Field(default="", description="Observaciones breves en español")
+    advertencias: list[str] = Field(
+        default_factory=list, description="Validaciones que no pasaron (fechas, matrícula, tipo)"
+    )
     modelo: str = Field(description="Modelo de Claude usado")
     uso_ia: UsoIA | None = Field(default=None, description="Consumo de tokens (aditivo)")

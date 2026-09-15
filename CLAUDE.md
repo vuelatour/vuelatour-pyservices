@@ -109,6 +109,22 @@ Reglas de este microservicio (FastAPI, Python 3.12).
 - `tabla-xlsx` acepta `hojas` (ADITIVO): una pestaña por hoja con su propia
   tabla (auditoría Paywise: Cotejo / Paywise sin cobro / Cobros sin
   Paywise); sin `hojas` el render es idéntico.
+- Estado de cuenta BANCARIO tolerante (15-sep-2026): `_leer_tabla` ya no
+  supone que el encabezado está en la fila 0 ni que el CSV es UTF-8 con
+  comas. `_filas_crudas` lee TODAS las filas (CSV con el módulo `csv` —
+  decodifica utf-8-sig → utf-8 → latin-1 y adivina el separador por
+  CONSISTENCIA, no por número de columnas, para que una coma dentro de
+  «1,234.56» no gane en un archivo separado por `;`), `_fila_encabezado`
+  salta el preámbulo del banco (cuenta, periodo, saldo inicial) buscando la
+  primera fila con una aguja de fecha Y una de monto, y `_nombres_columnas`
+  garantiza nombres únicos. `_parse_tabular` puebla ahora `referencia`
+  (columna propia: ahí viaja la terminación de la tarjeta, '0025830577' ⇒
+  0577 — el desempate del auto-cruce vive en el API) y `saldo_posterior`;
+  la descripción sigue cayendo a la columna de referencia si el archivo no
+  trae concepto. `_to_float` entiende «(1,234.56)» como cargo negativo.
+  `_advertencias_saldos` valida la cadena `saldo[i] = saldo[i−1] − cargo +
+  abono` y avisa dónde faltan movimientos. Tests:
+  `tests/test_estado_cuenta_banco.py`.
 
 ## IA
 
@@ -117,6 +133,80 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   magnitud; conservar ese contrato.
 - Todo punto de IA degrada a captura manual: los errores devuelven
   `legible=false`/`disponible=false`, nunca 500 por fallo del modelo.
+- **Contexto de dominio compartido** (`app/services/_dominio.py`,
+  15-sep-2026): flota, aeropuertos IATA, alias de proveedores y leyendas del
+  banco (ASUR, ASA, AFAC, MERPAGO*, «SEL TRASPASO ENTRE CUENTAS»…), IVA
+  16 %, monedas, banda de TC 15–25, DD/MM/AAAA y hora Cancún. TODA llamada a
+  Claude usa `sistema_con_dominio(_PROMPT)`: dos bloques `system` con
+  `cache_control`, el dominio PRIMERO (prefijo idéntico en todos los
+  endpoints ⇒ el caché de Anthropic lo cobra a ×0.10). Un dato de dominio se
+  cambia AQUÍ, una vez. Las listas de aeropuertos/proveedores son
+  orientativas; la flota solo sirve para ADVERTIR (nunca para borrar una
+  matrícula: la flota crece sin que el archivo se entere). Quien quiera
+  validar contra catálogos VIVOS los manda en el request
+  (`matriculas_flota`, `terminaciones_validas`, `tipos_documento`,
+  `rfcs_propios`).
+- **Validación determinista** (`app/services/validaciones_ia.py`): lo que se
+  puede comprobar con aritmética o catálogo NO se le pregunta al modelo. Se
+  comprueba después de la respuesta y se devuelve en `advertencias`
+  (ADITIVO en todas las respuestas de IA; el panel/app deben pintarlo).
+  Política de confianza, igual en todos lados: si falla el dato PRINCIPAL
+  (total del ticket, litros × precio de una carga, RFC de la constancia,
+  sumas de una compra, fechas de un vencimiento) → `confianza` se fuerza a
+  ≤ 0.3 (`confianza_calibrada`) y el dato se conserva con su aviso; si falla
+  un dato SECUNDARIO (desglose de renglones, matrícula, tarjeta) → ese campo
+  se limpia o se marca y la confianza del principal NO se castiga.
+- **Prompt del PDF de estado de cuenta**: la descripción debe ser LITERAL
+  (nunca parafrasear) — el dedupe del API compara descripciones, así que
+  parafrasear hace que re-subir el MISMO PDF duplique todo. El prompt trae
+  el formato de Scotiabank/BBVA/Banorte/Santander, pide `referencia`
+  íntegra, `saldo_posterior`, el periodo y los totales del resumen, y
+  `advertencias`; `_advertencias_pdf` valida cadena de saldos, totales
+  impresos vs transcritos y fechas dentro del periodo (una extracción
+  incompleta que no truncó no se detecta con `stop_reason`).
+- **Sugerencias (conciliación y gasto→vuelo)**: la IA PROPONE, la persona
+  confirma. El payload ya lleva el contexto que antes se tiraba (movimiento:
+  `tipo`, `referencia`, `cuenta_moneda`, `terminacion_tarjeta_detectada`;
+  candidato: `lugar`, `nota`, `categoria`, `tarjeta_terminacion`,
+  `matricula`, `faltante`, `tc_implicito`…), el modelo debe citar
+  `evidencias[]` y puede devolver `alternativas[]` (top 3) y
+  `motivo_sin_match`. Los ids se validan contra la lista SIEMPRE. La
+  confianza del modelo se TOPA con `_evidencias_deterministas` (monto
+  exacto/faltante, terminación igual o distinta, días entre fechas, moneda
+  cruzada dentro de la banda de TC, aeropuerto de la ruta): una tarjeta
+  distinta o un ABONO contra un gasto bajan el tope a 0.3 aunque el modelo
+  diga 0.99. Las fechas del lado gasto→vuelo se comparan con
+  `dias_entre_cancun` (día de PARED en Cancún, invariante 4).
+- **TIPOS DEL PAYLOAD: sé LIBERAL con lo que llega** (revisión adversaria
+  15-sep-2026). `GastoCandidato.vuelo_folio` estaba declarado `str` y el API
+  manda el folio como NÚMERO (`Number(vuelo.folio)`): pydantic v2 **no**
+  convierte int → str, así que `/conciliacion/sugerir` respondía **422** en
+  cuanto un gasto candidato tenía vuelo — el API lo registraba como
+  «pyservices respondió 422» y devolvía `disponible:false`, es decir, TODA la
+  sugerencia de IA muerta en producción sin un solo error visible. Hoy es
+  `str | int | None` con `field_validator(mode="before")` que normaliza a
+  texto, y `tests/test_sugerir_conciliacion.py` congela el payload REAL del
+  API. Regla: todo campo nuevo que venga de NestJS se declara con el tipo que
+  el API realmente serializa (números como `float`/`int`, ids como `str`) o se
+  acepta la unión y se normaliza aquí.
+- Dos bugs vivos corregidos el 15-sep-2026 al pasar por aquí: (1) `folio`
+  se pedía en los prompts de ticket y de combustible y existía en ambos
+  esquemas, pero NUNCA se copiaba a la respuesta — el candado
+  anti-duplicados del API nunca se prellenaba; (2) `_parse_matricula`
+  exigía un dígito y por eso descartaba en silencio XB-PEV, XA-VGV, XB-ANU
+  y XB-IJP (las mexicanas son tres letras). Fuente única ahora:
+  `normalizar_matricula`.
+- CFDI recibido (`recibida_parse.py`) NO usa IA y así debe quedarse. Se
+  parsea con `defusedxml` y, además, se rechaza cualquier XML con
+  DTD/ENTITY antes de tocar el parser (XXE / billion laughs), candado que
+  funciona aunque la dependencia falte. Valida UUID del timbre, versión y
+  —si el API manda `rfcs_propios`— que el receptor sea de la empresa:
+  `valido=false` + `motivo` en vez de un objeto a medias.
+- Tests de IA: NINGUNO llama a Claude. `tests/conftest.py` expone el
+  fixture `claude_fake(modulo, payload)` que parchea el `_client` de ese
+  módulo (`estado_cuenta`, `anthropic_vision`, `gasto_vuelo`,
+  `compras_extract`, `vencimiento_extract` tienen el suyo) y guarda los
+  kwargs para verificar el payload y los bloques `system`.
 
 ## Entorno
 
@@ -124,6 +214,12 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   esta Mac es 3.9 y NO corre el código — validar con `python3 -m ast` /
   tests en CI o Docker.
 - `pytest` + `ruff check app tests` antes de commit. Push a `main` = deploy
-  automático en Railway (autorizado sin preguntar).
+  automático en Railway (autorizado sin preguntar). OJO con dos ruidos de
+  base en esta Mac: `ruff check app` arrastra ~13 E501/E731 VIEJOS en
+  `cfdi_fel.py`, `cotizacion_pdf.py`, `dinero_xlsx.py`, `reparto_*.py`,
+  `reporte_vuelo_pdf.py` y `schemas/vision.py` (no los introdujo tu cambio:
+  compara antes de culparte), y `tests/test_main.py` /
+  `tests/test_recibo_pdf.py` fallan localmente porque WeasyPrint necesita
+  `libgobject`/GTK, que no está instalado aquí (en Docker/Railway sí).
 - `ANTHROPIC_API_KEY` solo en `.env.local` / variables de Railway. Nunca en
   el repo (ya hubo una key expuesta; está pendiente rotarla).
