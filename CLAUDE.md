@@ -32,6 +32,25 @@ Reglas de este microservicio (FastAPI, Python 3.12).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.
+- **Tipo de cambio: hasta 6 DECIMALES, sin ceros de cola** (17-sep-2026,
+  pedido sobre la cotización #314). Fuente única `app/services/_formato.py`
+  → `_tc_txt` (16.991632 → «16.991632»; 16.9916 → «16.9916»; 18 → «18»;
+  `None` → cadena vacía y quien llama decide si pinta «—»). Antes cada
+  documento usaba `f"{tc:g}"`, que son seis CIFRAS SIGNIFICATIVAS: el T.C.
+  16.991632 con el que 5,885.25 USD dan $100,000.00 MXN se imprimía
+  «16.9916», y quien remultiplicaba ese texto obtenía $99,999.81 («cuando
+  son muchos decimales como que siempre cambia»). Lo usan los TRES PDFs de
+  cotización (`cotizacion_pdf` total MXN, `cotizacion_grupo_pdf` total MXN,
+  `cotizacion_interna_pdf` resumen + total MXN + TUA/línea en pesos + T.C.
+  del cobro), el recibo (`recibo_pdf`) y el reporte por vuelo (PDF y Excel).
+  En Excel el formato de celda `TC` de `dinero_xlsx`/`balance_avion_xlsx`
+  pasó a `0.00####` (2 a 6 decimales) por lo mismo. El panel escribe el
+  MISMO texto con `fmtTc` y el API persiste `numeric(12,6)`: si los tres no
+  coinciden, el operador vuelve a ver dos números para el mismo dato. Aquí
+  NO se recalcula el total en pesos — llega del API (`monto_total_mxn`).
+  Tests: «T.C. con TODOS sus decimales» en `tests/test_cotizacion_pdf.py`,
+  `tests/test_cotizacion_grupo_pdf.py`, `tests/test_cotizacion_interna_pdf.py`
+  y `tests/test_recibo_pdf.py`.
 - Hoja del CLIENTE sin horas (15-sep-2026, pedido sobre el PDF del folio
   #314 MID→VSA): `cotizacion_pdf.py` ya NO pinta el bloque «Traslados»
   (traslado inicial/final con hora) ni el renglón «Tiempo de vuelo · H:MM h

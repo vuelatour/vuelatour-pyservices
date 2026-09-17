@@ -25,6 +25,7 @@ from app.config import get_settings
 from app.main import app
 from app.routers import reportes as reportes_router
 from app.schemas.reportes import CotizacionPdfRequest, MapaPuntoPdf
+from app.services._formato import _tc_txt
 from app.services.cotizacion_pdf import (
     _STATIC,
     CLASE_RAIZ,
@@ -1044,3 +1045,42 @@ def test_mapa_svg_router_sin_puntos_es_204(monkeypatch) -> None:
         )
         assert res.status_code == 204
         assert res.content == b""
+
+
+# ===== T.C. con TODOS sus decimales (17-sep-2026, cotización #314) =====
+
+
+def test_tc_txt_hasta_seis_decimales_sin_ceros_de_cola() -> None:
+    """Texto CONGELADO del tipo de cambio: hasta 6 decimales y sin ceros de
+    cola. Es el mismo texto que dan `fmtTc` (panel) y la precisión que
+    persiste el API (`numeric(12,6)`): si los tres no coinciden, el operador
+    vuelve a ver dos números distintos para el mismo dato."""
+    assert _tc_txt(16.991632) == "16.991632"  # el T.C. que cuadra el #314
+    assert _tc_txt(16.9916) == "16.9916"  # lo que se veía antes con `:g`
+    assert _tc_txt(18.0) == "18"
+    assert _tc_txt(18.1) == "18.1"
+    assert _tc_txt(17.25) == "17.25"
+    assert _tc_txt(0) == "0"
+    # Más de 6 decimales: se redondea al 6º (tope de lo que guarda el API).
+    assert _tc_txt(16.9916327) == "16.991633"
+    # Sin dato NO se inventa un T.C.: cadena vacía y el llamador decide.
+    assert _tc_txt(None) == ""
+
+
+def test_total_mxn_imprime_el_tc_completo_y_cuadra_con_los_pesos() -> None:
+    """Caso real del cliente (#314): 5,885.25 USD × 16.991632 = $100,000.00
+    MXN. Con `:g` la hoja imprimía «16.9916» — seis CIFRAS significativas —
+    y quien remultiplicaba ese texto obtenía $99,999.81: el documento no
+    cuadraba consigo mismo («cuando son muchos decimales como que siempre
+    cambia»). El total en pesos sigue siendo el que manda el API."""
+    html = _build_html(
+        _req_completo(total_usd=5885.25, total_mxn=100000.0, tc_usd_mxn=16.991632)
+    )
+    assert "Total MXN (T.C. 16.991632)" in html
+    assert "$100,000.00 MXN" in html
+    # El texto recortado ya no aparece (el paréntesis cierra el número).
+    assert "(T.C. 16.9916)" not in html
+    assert round(5885.25 * 16.991632, 2) == 100000.0
+    assert round(5885.25 * 16.9916, 2) == 99999.81
+    # Un T.C. redondo se sigue viendo redondo (no «18.000000»).
+    assert "Total MXN (T.C. 18)" in _build_html(_req_completo(tc_usd_mxn=18.0))

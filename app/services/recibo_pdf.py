@@ -18,6 +18,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from app.schemas.reportes import ReciboPdfRequest
+from app.services._formato import _tc_txt
 
 _BRAND = "#dc2626"
 _NAVY = "#102a43"
@@ -76,7 +77,7 @@ def _build_html(r: ReciboPdfRequest) -> str:
     if r.moneda == "MXN" and (r.tc_usd_mxn or r.equivalente_usd is not None):
         partes: list[str] = []
         if r.tc_usd_mxn:
-            partes.append(f"T.C. {r.tc_usd_mxn:g}")
+            partes.append(f"T.C. {_tc_txt(r.tc_usd_mxn)}")
         if r.equivalente_usd is not None:
             partes.append(f"equivale a {_money(r.equivalente_usd)} USD")
         tc_html = f'<div class="pago-tc">{escape(" · ".join(partes))}</div>'

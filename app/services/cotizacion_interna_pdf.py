@@ -62,6 +62,7 @@ from app.schemas.reportes import (
     CotizacionInternaTramoCotizadoPdf,
     CotizacionInternaTuaCobradaPdf,
 )
+from app.services._formato import _tc_txt
 from app.services.cotizacion_grupo_pdf import _RE_PAX_SUFIJO, _monto, _plural
 from app.services.cotizacion_pdf import (
     _BRAND,
@@ -167,7 +168,8 @@ def _horas(v: float | None, dec: int = 2) -> str:
 
 
 def _tc(v: float | None) -> str:
-    return "—" if not v else f"{v:g}"
+    """T.C. del resumen: hasta 6 decimales (`_tc_txt`), «—» si no llegó."""
+    return "—" if not v else _tc_txt(v)
 
 
 def _pct_banco(v: float) -> str:
@@ -503,7 +505,7 @@ def _tua_fila(t: CotizacionInternaTuaCobradaPdf) -> str:
     if (t.moneda or "USD").upper() == "MXN":
         op += f" MXN = ${t.total_nativo:,.2f} MXN"
         if t.tc_aplicado:
-            op += f" · T.C. {t.tc_aplicado:g}"
+            op += f" · T.C. {_tc_txt(t.tc_aplicado)}"
     return _fila_desglose(concepto, op, _monto(t.total_usd))
 
 
@@ -568,7 +570,7 @@ def _concepto_operacion(
         if ln.monto_nativo is not None:
             op += f" = ${ln.monto_nativo:,.2f} MXN"
         if ln.tc_aplicado:
-            op += f" · T.C. {ln.tc_aplicado:g}"
+            op += f" · T.C. {_tc_txt(ln.tc_aplicado)}"
     if clave == "EXTRA" and ln.aplica_iva is False:
         op += " · sin IVA"
     return concepto, op
@@ -671,7 +673,7 @@ def _desglose_html(r: CotizacionInternaPdfRequest) -> str:
         f'<tr class="total-row"><td>Total USD</td><td class="val">{_monto(r.total_usd)}</td></tr>'
     )
     if r.total_mxn is not None:
-        mxn_op = f"T.C. {r.tc_usd_mxn:g}" if r.tc_usd_mxn else ""
+        mxn_op = f"T.C. {_tc_txt(r.tc_usd_mxn)}" if r.tc_usd_mxn else ""
         if r.mxn_nativos:
             mxn_op = f"{mxn_op} · incluye ${r.mxn_nativos:,.2f} MXN nativos".strip(" ·")
         filas.append(
@@ -759,7 +761,7 @@ def _cobro_fila(c: CotizacionInternaCobroPdf, con_usd: bool) -> str:
             _monto(monto_usd) if monto_usd is not None else '<span class="rojo">sin T.C.</span>'
         )
         if c.tc and moneda != "USD":
-            usd_txt += f' <span class="muted">T.C. {c.tc:g}</span>'
+            usd_txt += f' <span class="muted">T.C. {_tc_txt(c.tc)}</span>'
         usd = f'<td class="num">{usd_txt}</td>'
     return (
         f"<tr><td>{_fecha_corta(c.fecha, con_anio=True)}</td><td>{metodo}</td>"

@@ -39,6 +39,7 @@ from app.schemas.reportes import (
     CotizacionGrupoLineaPdf,
     CotizacionGrupoPdfRequest,
 )
+from app.services._formato import _tc_txt
 from app.services.cotizacion_pdf import (
     _NAVY,
     CLASE_RAIZ,
@@ -177,7 +178,9 @@ def _desglose_html(r: CotizacionGrupoPdfRequest) -> str:
         f'<td class="val">{_money(r.total_usd)}</td></tr>'
     )
     if r.total_mxn is not None:
-        tc_txt = f" (T.C. {r.tc_usd_mxn:g})" if r.tc_usd_mxn else ""
+        # Mismo texto de T.C. que la cotización de un avión (`_tc_txt`):
+        # hasta 6 decimales, para que el total MXN cuadre al remultiplicar.
+        tc_txt = f" (T.C. {_tc_txt(r.tc_usd_mxn)})" if r.tc_usd_mxn else ""
         filas.append(
             f'<tr class="total-mxn"><td>Total MXN{escape(tc_txt)}</td>'
             f'<td class="val">{_money(r.total_mxn)} MXN</td></tr>'

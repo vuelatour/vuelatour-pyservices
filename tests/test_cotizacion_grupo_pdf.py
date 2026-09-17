@@ -567,3 +567,18 @@ def test_tuas_sin_unitario_queda_como_hoy() -> None:
     html = _html(desglose_consolidado=lineas)
     assert "TUA CZA · 44 pax</td>" in html and "TUA CUN · 5 pax</td>" in html
     assert "pax ×" not in html
+
+
+# ===== T.C. con TODOS sus decimales (17-sep-2026, cotización #314) =====
+
+
+def test_total_mxn_con_el_tc_completo_hasta_seis_decimales() -> None:
+    """Mismo texto que la cotización de un avión (`_tc_txt`, fuente única):
+    el T.C. se imprime completo para que el total en pesos cuadre al
+    remultiplicar. Con `:g` un 16.991632 salía «16.9916» y los pesos ya no
+    daban (pedido del cliente sobre la #314)."""
+    html = _html(total_usd=5885.25, total_mxn=100000.0, tc_usd_mxn=16.991632)
+    assert "Total MXN (T.C. 16.991632)" in html and "$100,000.00 MXN" in html
+    assert "(T.C. 16.9916)" not in html
+    # Un T.C. redondo se sigue viendo redondo (no «18.000000»).
+    assert "Total MXN (T.C. 18)" in _html()

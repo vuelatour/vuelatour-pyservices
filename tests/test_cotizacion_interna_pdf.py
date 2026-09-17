@@ -956,3 +956,58 @@ def test_avion_utilizado_se_escapa() -> None:
     html = _html(aeronave_utilizada='XB-<script>"RTO"')
     assert "<script>" not in html
     assert "&lt;script&gt;" in html
+
+
+# ===== T.C. con TODOS sus decimales (17-sep-2026, cotización #314) =====
+
+
+def test_tc_de_seis_decimales_en_resumen_desglose_tuas_y_cobros() -> None:
+    """Fuente única `_tc_txt`: los CINCO lugares donde esta hoja escribe un
+    T.C. (resumen, total MXN, TUA cobrada en pesos, línea del desglose en
+    pesos y el T.C. del cobro) lo imprimen completo, hasta 6 decimales. Con
+    `:g` todos decían «16.9916» y el total en pesos no cuadraba al
+    remultiplicar (pedido del cliente sobre la #314)."""
+    lineas = _payload()["lineas"] + [
+        {
+            "clave": "EXTRA",
+            "concepto": "Handling",
+            "monto_usd": 58.85,
+            "cantidad": 1,
+            "unitario": 1000.0,
+            "moneda": "MXN",
+            "monto_nativo": 1000.0,
+            "tc_aplicado": 16.991632,
+            "aplica_iva": True,
+        }
+    ]
+    tuas = [
+        {
+            "iata": "CZM",
+            "pax": 2,
+            "unitario": 380.0,
+            "moneda": "MXN",
+            "total_nativo": 760.0,
+            "tc_aplicado": 16.991632,
+            "total_usd": 44.73,
+        }
+    ]
+    cobros = [dict(_payload()["cobros"][0], tc=16.991632)]
+    html = _html(
+        tc_usd_mxn=16.991632,
+        total_usd=5885.25,
+        total_mxn=100000.0,
+        lineas=lineas,
+        tuas_cobradas=tuas,
+        cobros=cobros,
+    )
+    assert '<td class="k">T.C. USD→MXN</td><td class="v">16.991632</td>' in html
+    assert 'Total MXN <span class="op">T.C. 16.991632</span>' in html
+    assert "$100,000.00 MXN" in html
+    # TUA CZM y la línea Handling: cada una con su T.C. congelado completo.
+    assert html.count("· T.C. 16.991632") == 2
+    # T.C. del cobro en la tabla compacta.
+    assert '<span class="muted">T.C. 16.991632</span>' in html
+    # Ni un solo T.C. recortado a «16.9916» en toda la hoja.
+    assert re.search(r"16\.9916(?!32)", html) is None
+    # Un T.C. redondo se sigue viendo redondo (no «18.270000»).
+    assert '<td class="v">18.27</td>' in _html()

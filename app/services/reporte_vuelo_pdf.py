@@ -9,6 +9,7 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from app.schemas.reportes import ReporteVueloParticipacion, ReporteVueloRequest
+from app.services._formato import _tc_txt
 
 _BRAND = "#dc2626"
 _NAVY = "#102a43"
@@ -155,7 +156,7 @@ def _build_html(r: ReporteVueloRequest) -> str:
     cot += _row("IVA", _money(r.iva_usd))
     cot += _row("Total", f"<b>{_money(r.total_usd)}</b>")
     if r.total_mxn:
-        tc = f" (TC {r.tc_usd_mxn:.2f})" if r.tc_usd_mxn else ""
+        tc = f" (TC {_tc_txt(r.tc_usd_mxn)})" if r.tc_usd_mxn else ""
         cot += _row("Total MXN", f"{_money(r.total_mxn, 'MXN')}{escape(tc)}")
     # Regla 28-ago-2026 (informativo): del total, cuánto es VENTA DEL AVIÓN
     # (tiempo + ajuste + IVA proporcional) y cuánto ingreso de VuelaTour
@@ -402,7 +403,7 @@ def _build_html(r: ReporteVueloRequest) -> str:
                 + ("<td></td>" if tc else "")
                 + "</tr>"
             )
-        head_mxn = f"<th class='num'>MXN (T.C. {tc:g})</th>" if tc else ""
+        head_mxn = f"<th class='num'>MXN (T.C. {_tc_txt(tc)})</th>" if tc else ""
         balance = (
             "<table class='grid'><thead><tr><th>Concepto</th>"
             f"<th class='num'>USD</th>{head_mxn}</tr></thead>"

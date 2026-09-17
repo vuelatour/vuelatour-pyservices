@@ -43,7 +43,10 @@ NAVY = "102A43"
 LIGHT = "EEF2F7"
 MONEY = '"$"#,##0.00'
 HORAS = "0.0"
-TC = "0.0000"
+# T.C. USD→MXN: 2 decimales mínimo y hasta 6 (17-sep-2026). El API los
+# persiste con 6 (`numeric(12,6)`) porque con ellos cuadra el total en
+# pesos; mostrar «16.9916» escondía los que hacían cuadrar la cotización.
+TC = "0.00####"
 
 _thin = Side(style="thin", color="D5DBE3")
 _border = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)

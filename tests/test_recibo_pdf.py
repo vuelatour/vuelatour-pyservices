@@ -103,3 +103,20 @@ def test_recibo_sin_metodo_no_pinta_la_linea() -> None:
     assert "Método de pago" not in html
     # El resto del detalle del cobro sigue en su lugar.
     assert "Cuenta destino" in html and "REF-778899" in html
+
+
+# ===== T.C. con TODOS sus decimales (17-sep-2026, cotización #314) =====
+
+
+def test_recibo_imprime_el_tc_con_todos_sus_decimales() -> None:
+    """Fuente única `_tc_txt`: un T.C. de 6 decimales se imprime completo.
+    Con `:g` salía «16.9916» y el equivalente en USD del recibo no cuadraba
+    al remultiplicar ($100,000.00 ÷ 16.9916 = 5,885.26, no 5,885.25)."""
+    datos = _payload()
+    datos["tc_usd_mxn"] = 16.991632
+    datos["monto"] = 100000.0
+    datos["equivalente_usd"] = 5885.25
+    html = _build_html(ReciboPdfRequest(**datos))
+    assert "T.C. 16.991632 · equivale a $5,885.25 USD" in html
+    # Un T.C. redondo se sigue viendo redondo (no «17.500000»).
+    assert "T.C. 17.5 · " in _build_html(ReciboPdfRequest(**_payload()))

@@ -18,6 +18,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from app.schemas.reportes import ReporteVueloParticipacion, ReporteVueloRequest
+from app.services._formato import _tc_txt
 from app.services.tabla_xlsx import sheet_title
 
 _CANCUN = ZoneInfo("America/Cancun")
@@ -404,7 +405,7 @@ def render_reporte_vuelo_xlsx(r: ReporteVueloRequest) -> bytes:
     # Solo con datos de economía (payload viejo / RESERVA sin cotizar: nada). =====
     if r.remanente_usd is not None or r.ganancia_final_usd is not None:
         titulo("Balance del vuelo")
-        header(["Concepto", "USD", f"MXN (T.C. {tc})" if tc else "MXN"])
+        header(["Concepto", "USD", f"MXN (T.C. {_tc_txt(tc)})" if tc else "MXN"])
 
         def bal(
             label: str,

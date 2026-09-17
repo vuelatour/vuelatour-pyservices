@@ -50,6 +50,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from app.schemas.reportes import CotizacionPdfRequest, EscalaPdf, MapaPuntoPdf
+from app.services._formato import _tc_txt
 
 _BRAND = "#dc2626"
 _NAVY = "#102a43"
@@ -805,7 +806,9 @@ def _build_html(r: CotizacionPdfRequest, *, solo_hoja_1: bool = False) -> str:
 
     total_mxn_html = ""
     if r.total_mxn is not None:
-        tc_txt = f" (T.C. {r.tc_usd_mxn:g})" if r.tc_usd_mxn else ""
+        # T.C. con hasta 6 decimales (`_tc_txt`): con `:g` un 16.991632 salía
+        # «16.9916» y el cliente que remultiplicaba no daba con el total MXN.
+        tc_txt = f" (T.C. {_tc_txt(r.tc_usd_mxn)})" if r.tc_usd_mxn else ""
         total_mxn_html = (
             f'<tr class="total-mxn"><td>Total MXN{escape(tc_txt)}</td>'
             f'<td class="val">{_money(r.total_mxn)} MXN</td></tr>'
