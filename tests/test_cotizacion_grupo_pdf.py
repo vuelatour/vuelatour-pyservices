@@ -205,6 +205,22 @@ def test_hoja1_folio_cliente_fecha_y_grupo() -> None:
     assert "Incluye guía certificado &lt;en sitio&gt;." in html
 
 
+def test_grupo_no_lleva_bloque_traslados_ni_tiempo_por_tramo() -> None:
+    # Coherencia con la hoja del cliente de un avión (15-sep-2026, pedido
+    # sobre el folio #314): el documento del cliente no habla de traslados ni
+    # de «H:MM h por tramo». El PDF de grupo nunca los pintó —este test lo
+    # congela, porque importa los helpers de `cotizacion_pdf`— y su tarjeta
+    # "De un vistazo" se arma aquí (pasajeros/velocidad/motores/en el viaje).
+    html = _html()
+    for prohibido in ("Traslado", "Tiempo de vuelo", "por tramo"):
+        assert prohibido not in html, prohibido
+    assert "De un vistazo" in html and "Velocidad crucero" in html
+    # La "Fecha de salida" del grupo también va SIN hora (17-sep-2026, misma
+    # regla del cliente: el documento del cliente no muestra horas de vuelo).
+    assert "<strong>Fecha de salida:</strong> 12/10/2026" in html
+    assert "12/10/2026 08:00" not in html
+
+
 def test_reusa_estilos_mapa_y_branding_del_pdf_de_un_avion() -> None:
     # Importa, no copia: mismo mapa (modo local/amplio) y mismos estilos.
     assert cotizacion_grupo_pdf._mapa_svg is cotizacion_pdf._mapa_svg

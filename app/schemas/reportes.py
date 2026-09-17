@@ -113,6 +113,9 @@ class CotizacionPdfRequest(BaseModel):
     avion_motor_hp: int | None = None
     avion_caracteristicas: list[str] = Field(default_factory=list)
     # Duración estimada del tramo MÁS LARGO del viaje (horas decimales).
+    # YA NO SE PINTA (15-sep-2026, pedido del cliente: fuera «Tiempo de vuelo
+    # · H:MM h por tramo» de la tarjeta "De un vistazo"). El campo se
+    # conserva —el API lo sigue mandando y es ADITIVO— para no romper skew.
     avion_tiempo_tramo_hr: float | None = None
     mapa_puntos: list[MapaPuntoPdf] = Field(default_factory=list)
     # ===== Avión COTIZADO en la hoja 1 (feedback del cliente 4-sep-2026):

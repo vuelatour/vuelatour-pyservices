@@ -32,6 +32,25 @@ Reglas de este microservicio (FastAPI, Python 3.12).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.
+- Hoja del CLIENTE sin horas (15-sep-2026, pedido sobre el PDF del folio
+  #314 MID→VSA): `cotizacion_pdf.py` ya NO pinta el bloque «Traslados»
+  (traslado inicial/final con hora) ni el renglón «Tiempo de vuelo · H:MM h
+  por tramo» de la tarjeta «De un vistazo». En su lugar, la columna derecha
+  de `.meta` lleva **`<strong>Fecha del vuelo:</strong> dd/mm/aaaa`** —
+  `_fecha_vuelo_html` + `_fecha_corta` (hermano de `_fecha_legible`, SIN
+  hora), misma fuente que imprimía «Traslado inicial»
+  (`fecha_traslado_inicial`, que el API ya resuelve respetando los tramos
+  ocultos), en día de PARED de Cancún. Si `fecha_traslado_final` cae en OTRO
+  día de pared la etiqueta pasa a «Fechas del vuelo» y el valor al rango
+  «15/09/2026 – 17/09/2026»; sin fecha inicial la línea NO se pinta (jamás
+  el «Por confirmar» de `_fecha_legible`). Campos ADITIVOS que siguen en el
+  schema y ya no se pintan: `avion_tiempo_tramo_hr`. Como el PDF y la vista
+  previa salen del MISMO `_build_html`, el cambio es uno solo y la hoja
+  editable del panel (`quote-sheet.tsx`) lo replica: ahí salida y regreso
+  CON hora siguen capturándose, pero en un bloque `data-cot-ui` que solo
+  existe en edición. La cotización INTERNA de oficina NO cambia. Tests:
+  `tests/test_cotizacion_pdf.py` (sección «Fecha del vuelo en `.meta`») y
+  los fixtures del panel (`npm run gen:hoja-fixture`).
 - Cotización de GRUPO (`/reportes/cotizacion-grupo`, 4-sep-2026):
   `cotizacion_grupo_pdf.py` IMPORTA los helpers de `cotizacion_pdf.py`
   (estilos, mapa, itinerario, ficha de aeronave, regla de matrícula) — no

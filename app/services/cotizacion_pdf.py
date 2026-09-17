@@ -20,6 +20,15 @@ Vista previa en pantalla (rediseño del cotizador, 8-sep-2026): el panel pide
 reglas) sin la hoja "La aeronave" ni fotos, con CSS de pantalla en lugar de
 `@page`. El HTML del PDF (default) queda byte-idéntico al de siempre.
 
+Hoja del cliente SIN horas (15-sep-2026, pedido del cliente): salieron del
+documento el bloque «Traslados» (traslado inicial/final con hora) y el
+renglón «Tiempo de vuelo · H:MM h por tramo» de la tarjeta «De un vistazo».
+La fecha del viaje se conserva como una línea del bloque `.meta` («Fecha del
+vuelo: 15/09/2026», o «Fechas del vuelo: 15/09/2026 – 17/09/2026» si el
+regreso cae en otro día de pared), con la MISMA fuente que imprimía
+«Traslado inicial» (`fecha_traslado_inicial`). La cotización INTERNA
+(`cotizacion_interna_pdf.py`, uso de oficina) conserva fechas Y horas.
+
 CSS de la hoja como archivo ESTÁTICO (form-as-document, 8-sep-2026): el
 cuerpo de la hoja vive en `app/static/cotizacion-hoja.css` y la fuente
 incrustada (Arimo, OFL) en `app/static/cotizacion-fuente.css`; Python solo
@@ -70,6 +79,41 @@ def _fecha_legible(s: str | None) -> str:
         return dt.astimezone(_CANCUN).strftime("%d/%m/%Y %H:%M")
     except ValueError:
         return s
+
+
+def _fecha_corta(s: str | None) -> str:
+    """Día de PARED en Cancún de un instante ISO → '15/09/2026' (SIN hora).
+
+    Hermano de `_fecha_legible` para la línea «Fecha del vuelo» de la hoja 1
+    (15-sep-2026, pedido del cliente): el bloque «Traslados» con hora salió
+    del documento del cliente y solo queda la FECHA. Misma entrada que antes
+    (`fecha_traslado_inicial` / `fecha_traslado_final`: ISO con zona que ya
+    resuelve el API respetando tramos ocultos) y la misma conversión a
+    Cancún (UTC−5) — solo cambia el formato.
+
+    Sin dato → '' (el llamador NO pinta la línea); texto no parseable → tal
+    cual, sin tocar (el llamador escapa).
+    """
+    if not s:
+        return ""
+    txt = s.strip()
+    # Un DÍA suelto ('2026-09-15') ya es fecha de PARED: NO pasa por la zona
+    # (mismo cuidado que `_fecha_dia` con la fecha por tramo — asumir UTC y
+    # convertir a Cancún lo movería un día hacia atrás). Hoy el API manda
+    # instantes ISO; esto es cinturón por si algún día manda el día suelto.
+    if len(txt) == 10 and txt[4] == "-" and txt[7] == "-":
+        try:
+            return datetime.strptime(txt, "%Y-%m-%d").strftime("%d/%m/%Y")
+        except ValueError:
+            return txt
+    try:
+        dt = datetime.fromisoformat(txt.replace("Z", "+00:00"))
+        # Si viene sin zona, se asume UTC; luego se convierte a Cancún.
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+        return dt.astimezone(_CANCUN).strftime("%d/%m/%Y")
+    except ValueError:
+        return txt
 
 
 # Meses abreviados es-MX (misma tabla que bitacora_taco_pdf).
@@ -608,6 +652,31 @@ def _modelos_cotizados(r: CotizacionPdfRequest) -> list[str]:
     return modelos
 
 
+def _fecha_vuelo_html(r: CotizacionPdfRequest) -> str:
+    """Línea «Fecha del vuelo: 15/09/2026» para la columna derecha de
+    `.meta` (15-sep-2026, pedido del cliente), mismo estilo sutil que
+    Fecha/Tipo/Aeronave (sin CSS nuevo).
+
+    Sustituye al bloque «Traslados»: el cliente ve la FECHA del viaje, nunca
+    la hora de los traslados (esa sigue en la cotización INTERNA de oficina).
+    Fuente EXACTAMENTE la misma que imprimía «Traslado inicial»
+    (`fecha_traslado_inicial`, que el API calcula respetando los tramos
+    ocultos), en día de pared de Cancún. Si `fecha_traslado_final` cae en
+    OTRO día de pared, la etiqueta pasa a «Fechas del vuelo» y el valor al
+    rango «15/09/2026 – 17/09/2026». Sin fecha inicial no se pinta nada.
+    """
+    inicio = _fecha_corta(r.fecha_traslado_inicial)
+    if not inicio:
+        return ""
+    fin = _fecha_corta(r.fecha_traslado_final)
+    if fin and fin != inicio:
+        return (
+            "<br>\n      <strong>Fechas del vuelo:</strong> "
+            f"{escape(inicio)} – {escape(fin)}"
+        )
+    return f"<br>\n      <strong>Fecha del vuelo:</strong> {escape(inicio)}"
+
+
 def _aeronave_cotizada_html(r: CotizacionPdfRequest) -> str:
     """Línea «Aeronave cotizada: Piper Seneca V» (o «Aeronaves cotizadas:
     Kodiak 100 · Cessna 206») para la columna derecha de `.meta`, mismo
@@ -634,12 +703,10 @@ def _hoja_aeronave_html(r: CotizacionPdfRequest) -> str:
         vistazo.append(("Pasajeros", f"{r.avion_pasajeros} máx."))
     if r.avion_velocidad_kts:
         vistazo.append(_vistazo_velocidad(r.avion_velocidad_kts))
-    if r.avion_tiempo_tramo_hr and r.avion_tiempo_tramo_hr > 0:
-        th = int(r.avion_tiempo_tramo_hr)
-        tm = int(round((r.avion_tiempo_tramo_hr - th) * 60))
-        if tm == 60:
-            th, tm = th + 1, 0
-        vistazo.append(("Tiempo de vuelo", f"{th}:{tm:02d} h por tramo"))
+    # «Tiempo de vuelo · H:MM h por tramo» SE QUITÓ el 15-sep-2026 (pedido
+    # del cliente: la hoja del cliente no habla de tiempos). El campo
+    # `avion_tiempo_tramo_hr` sigue en el esquema y se acepta —ADITIVO, el
+    # API lo manda— pero ya no se pinta.
     if r.avion_num_motores:
         vistazo.append(_vistazo_motores(r.avion_num_motores, r.avion_motor_hp))
     fotos_html = _ficha_aeronave_html(
@@ -767,6 +834,9 @@ def _build_html(r: CotizacionPdfRequest, *, solo_hoja_1: bool = False) -> str:
     # Modelo COTIZADO junto a fecha/tipo (4-sep, feedback del cliente):
     # el tipo de avión pactado, nunca la matrícula. Vacío con API viejo.
     aeronave_html = _aeronave_cotizada_html(r)
+    # Fecha del vuelo en `.meta` (15-sep-2026): reemplaza al bloque
+    # «Traslados» (el cliente no ve horas). Vacía sin fecha.
+    fecha_vuelo_html = _fecha_vuelo_html(r)
 
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
@@ -783,7 +853,7 @@ def _build_html(r: CotizacionPdfRequest, *, solo_hoja_1: bool = False) -> str:
 
   <div class="meta">
     <div><strong>Folio:</strong> #{escape(r.folio)}<br><strong>Cliente:</strong> {escape(r.cliente)}</div>
-    <div style="text-align:right"><strong>Fecha de cotización:</strong> {_fecha_legible(r.fecha)}<br>
+    <div style="text-align:right"><strong>Fecha de cotización:</strong> {_fecha_legible(r.fecha)}{fecha_vuelo_html}<br>
       <strong>Tipo:</strong> {escape(r.tipo)}{aeronave_html}</div>
   </div>
 
@@ -792,11 +862,6 @@ def _build_html(r: CotizacionPdfRequest, *, solo_hoja_1: bool = False) -> str:
     {r.pasajeros} {'pasajero' if r.pasajeros == 1 else 'pasajeros'}{f" · {escape(r.avion_externo)}" if r.avion_externo else (f" · {escape(r.matricula)}" if mostrar_matricula else "")}
   </div>
 
-  <h2>Traslados</h2>
-  <table class="grid"><tbody>
-    <tr><td>Traslado inicial</td><td>{_fecha_legible(r.fecha_traslado_inicial)}</td></tr>
-    <tr><td>Traslado final</td><td>{_fecha_legible(r.fecha_traslado_final)}</td></tr>
-  </tbody></table>
   {escalas_html}
 
   <h2>Desglose</h2>

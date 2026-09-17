@@ -7,6 +7,11 @@ la numeración del mapa sale de `orden` del payload, nunca de índices propios.
 
 Fecha por tramo (3-sep-2026): `EscalaPdf.fecha` es un DÍA de pared
 (YYYY-MM-DD) SOLO para el PDF del cliente; sin hora, sin zona, sin fallback.
+
+Sin horas (15-sep-2026): la hoja del cliente ya no lleva el bloque
+«Traslados» ni el renglón «Tiempo de vuelo … h por tramo»; la fecha del
+viaje vive como una línea de `.meta` («Fecha del vuelo» / «Fechas del
+vuelo»), en día de pared de Cancún.
 """
 
 import base64
@@ -31,6 +36,7 @@ from app.services.cotizacion_pdf import (
     _estilos_fuente,
     _estilos_hoja,
     _estilos_page,
+    _fecha_corta,
     _fecha_dia,
     _mapa_svg,
     _mapa_svg_elemento,
@@ -394,8 +400,10 @@ FOTO_INT = "data:image/jpeg;base64,SU5U"
 
 def _req_completo(**extra) -> CotizacionPdfRequest:
     """Payload con TODO lo que pinta el PDF: hoja 1 (VGV, modelo cotizado,
-    traslados, itinerario con mapa, TUAS, extras, pernocta, descuento, IVA,
-    MXN, notas) y hoja 2 (fotos + tarjeta "De un vistazo" + características)."""
+    fecha del vuelo, itinerario con mapa, TUAS, extras, pernocta, descuento,
+    IVA, MXN, notas) y hoja 2 (fotos + tarjeta "De un vistazo" +
+    características). `avion_tiempo_tramo_hr` sigue viniendo del API y desde
+    el 15-sep-2026 NO se pinta (aditivo)."""
     base = dict(
         ruta="CUN → AZP → BZE → CZM → CUN",
         fecha="2026-09-08T14:00:00Z",
@@ -449,7 +457,7 @@ def test_preview_es_solo_la_hoja_1_sin_fotos_ni_ficha() -> None:
         "CUN → AZP → BZE → CZM → CUN",
         "· XA-VGV",
         "<strong>Aeronave cotizada:</strong> Piper Seneca V",
-        "<h2>Traslados</h2>",
+        "<strong>Fecha del vuelo:</strong> 12/09/2026",
         "<h2>Itinerario</h2>",
         '<div class="mapa">',
         "<h2>Desglose</h2>",
@@ -508,8 +516,9 @@ def test_preview_css_de_pantalla_sin_reglas_de_pagina() -> None:
 
 
 def test_preview_hoja_1_es_byte_identica_a_la_del_pdf() -> None:
-    # Mismo payload → el <body> de la hoja 1 (membrete, meta, ruta, traslados,
-    # itinerario+mapa, desglose, notas) es el MISMO texto; solo cambia la cola
+    # Mismo payload → el <body> de la hoja 1 (membrete, meta con la fecha del
+    # vuelo, ruta, itinerario+mapa, desglose, notas) es el MISMO texto; solo
+    # cambia la cola
     # (hoja 2 vs pie de pantalla) y el CSS de página.
     req = _req_completo()
     pdf = _build_html(req)
@@ -534,6 +543,120 @@ def test_pdf_html_no_cambia_con_la_vista_previa() -> None:
     assert "pie-pantalla" not in pdf and f"{PREVIEW_ANCHO_PX}px" not in pdf
 
 
+
+# ===== Fecha del vuelo en `.meta`, sin bloque «Traslados» (15-sep-2026) =====
+# Pedido del cliente sobre el PDF del folio #314 (MID→VSA): la hoja del
+# cliente NO habla de horas. El bloque «Traslados» (traslado inicial/final
+# con hora) salió del documento y en su lugar la columna derecha de `.meta`
+# lleva la FECHA del vuelo — MISMA fuente que imprimía «Traslado inicial»
+# (`fecha_traslado_inicial`, que el API resuelve respetando tramos ocultos),
+# en día de PARED de Cancún. La cotización INTERNA de oficina conserva sus
+# fechas y horas (otro documento, otro test).
+
+
+def test_meta_pinta_la_fecha_del_vuelo_un_solo_dia() -> None:
+    html = _build_html(
+        _req(
+            fecha="2026-09-08T14:00:00Z",
+            fecha_traslado_inicial="2026-09-15T21:00:00Z",  # 16:00 en Cancún
+            fecha_traslado_final="2026-09-16T01:00:00Z",  # 20:00 en Cancún, MISMO día
+        )
+    )
+    meta = _meta(html)
+    assert "<strong>Fecha del vuelo:</strong> 15/09/2026" in meta
+    # Etiqueta en singular y ni una hora en el bloque.
+    assert "Fechas del vuelo" not in html
+    assert "16:00" not in meta and "20:00" not in meta
+    # Columna derecha: entre «Fecha de cotización» y «Tipo».
+    assert (
+        meta.index("Fecha de cotización:")
+        < meta.index("Fecha del vuelo:")
+        < meta.index("<strong>Tipo:</strong>")
+    )
+
+
+def test_meta_pinta_el_rango_cuando_el_regreso_cae_en_otro_dia() -> None:
+    html = _build_html(
+        _req(
+            fecha="2026-09-08T14:00:00Z",
+            fecha_traslado_inicial="2026-09-15T13:00:00Z",
+            fecha_traslado_final="2026-09-17T23:00:00Z",
+        )
+    )
+    assert "<strong>Fechas del vuelo:</strong> 15/09/2026 – 17/09/2026" in _meta(html)
+    assert "Fecha del vuelo:" not in html
+
+
+def test_sin_fecha_de_traslado_la_linea_no_se_pinta() -> None:
+    # Cotización sin fecha de vuelo (o API viejo que no la manda): la línea
+    # simplemente no existe — jamás el «Por confirmar» de `_fecha_legible`.
+    meta = _meta(_build_html(_req(fecha="2026-09-08T14:00:00Z")))
+    assert "del vuelo:" not in meta
+    assert "Por confirmar" not in meta
+
+
+def test_solo_la_fecha_final_tampoco_pinta_la_linea() -> None:
+    # La fuente es `fecha_traslado_inicial`; el regreso solo decide si la
+    # etiqueta va en plural.
+    meta = _meta(
+        _build_html(_req(fecha="2026-09-08T14:00:00Z", fecha_traslado_final="2026-09-17T23:00:00Z"))
+    )
+    assert "del vuelo:" not in meta
+
+
+def test_fecha_del_vuelo_es_el_dia_de_pared_en_cancun() -> None:
+    # 02:30 UTC del 16 es todavía el 15 en Cancún (UTC−5): el cliente ve el
+    # día en que sale, no el del instante UTC (invariante de hora Cancún).
+    html = _build_html(_req(fecha_traslado_inicial="2026-09-16T02:30:00Z"))
+    assert "<strong>Fecha del vuelo:</strong> 15/09/2026" in _meta(html)
+    # Sin zona se asume UTC, igual que en el resto de la hoja.
+    html_sin_zona = _build_html(_req(fecha_traslado_inicial="2026-09-16T02:30:00"))
+    assert "<strong>Fecha del vuelo:</strong> 15/09/2026" in _meta(html_sin_zona)
+
+
+def test_fecha_corta_con_dia_suelto_no_lo_mueve_un_dia_atras() -> None:
+    # Cinturón (invariante de hora Cancún): un 'YYYY-MM-DD' ya ES día de
+    # pared; pasarlo por la zona como instante UTC lo movería al día previo.
+    assert _fecha_corta("2026-09-15") == "15/09/2026"
+    html = _build_html(_req(fecha_traslado_inicial="2026-09-15"))
+    assert "<strong>Fecha del vuelo:</strong> 15/09/2026" in _meta(html)
+
+
+def test_fecha_corta_sin_dato_y_texto_no_parseable() -> None:
+    assert _fecha_corta(None) == ""
+    assert _fecha_corta("") == ""
+    assert _fecha_corta("  por confirmar  ") == "por confirmar"
+    # Lo que no es fecha se pinta tal cual pero ESCAPADO (a diferencia del
+    # legado `_fecha_legible`): nada de HTML del payload dentro de la hoja.
+    html = _build_html(_req(fecha_traslado_inicial="<b>hoy</b>"))
+    assert "&lt;b&gt;hoy&lt;/b&gt;" in _meta(html)
+    assert "<b>hoy</b>" not in html
+
+
+def test_la_hoja_ya_no_lleva_el_bloque_traslados_en_pdf_ni_en_preview() -> None:
+    req = _req_completo()  # traslados 08:00 → 18:00 (hora Cancún) del 12-sep
+    for html in (_build_html(req), _build_html(req, solo_hoja_1=True)):
+        assert "Traslado" not in html
+        cuerpo = html[html.index(f'<body class="{CLASE_RAIZ}">') :]
+        assert "08:00" not in cuerpo and "18:00" not in cuerpo
+        assert "<strong>Fecha del vuelo:</strong> 12/09/2026" in cuerpo
+        # Los únicos <h2> de la hoja 1 son los que quedan.
+        assert re.findall(r"<h2>([^<]+)</h2>", cuerpo) == ["Itinerario", "Desglose"]
+
+
+def test_vistazo_ya_no_pinta_el_tiempo_de_vuelo_por_tramo() -> None:
+    # `avion_tiempo_tramo_hr` sigue en el esquema y el API lo manda (ADITIVO);
+    # la tarjeta "De un vistazo" ya no lo imprime y conserva el resto.
+    req = _req_completo(avion_tiempo_tramo_hr=2.75)
+    assert req.avion_tiempo_tramo_hr == 2.75
+    html = _build_html(req)
+    assert "De un vistazo" in html
+    for prohibido in ("Tiempo de vuelo", "por tramo", "2:45"):
+        assert prohibido not in html, prohibido
+    for esperado in ("Pasajeros", "6 máx.", "Velocidad crucero", "Motores", "2 × 220 HP"):
+        assert esperado in html, esperado
+
+
 # Cinturón del refactor (8-sep-2026): sha256 del HTML del PDF para 3 payloads
 # (los logos data-URI se normalizan a "data:LOGO" y las fuentes woff2 a
 # "data:FUENTE" para no depender de los binarios). Refrescados el 8-sep-2026
@@ -545,6 +668,9 @@ def test_pdf_html_no_cambia_con_la_vista_previa() -> None:
 # Tailwind — `h2 { font-weight: 700 }` (el preflight pone `inherit`; en
 # WeasyPrint h2 ya es bold) y `td, th { padding: 1px }` (el preflight pone 0;
 # es el valor del agente de usuario) — sin efecto en el PDF.
+# Refrescados el 15-sep-2026 al quitar el bloque «Traslados» (la fecha del
+# vuelo pasó a `.meta`) y el renglón «Tiempo de vuelo … h por tramo» de la
+# tarjeta "De un vistazo" — pedido del cliente sobre el PDF del folio #314.
 # Si un cambio INTENCIONAL de la hoja del cliente mueve estos hashes, se
 # refrescan con el valor que imprime el assert — pero antes hay que
 # preguntarse si la vista previa del panel y la hoja del panel (mismo CSS)
@@ -620,11 +746,11 @@ _SNAPSHOTS: dict[str, tuple[dict, str]] = {
             aeronave_cotizada_modelo="Piper Seneca V",
             modelos_cotizados=["Piper Seneca V", "Cessna 206"],
         ),
-        "190d3002fd0833f0792d073aa9cf54c73ca5c083f03619fb0e4769a659a318eb",
+        "32ce5c26df18e786f038faf6169c327e7c7403542590f4ec2050e1d1c085d75c",
     ),
     "minimo": (
         dict(folio="COT-1", cliente="Cliente", origen="CUN", destino="MID"),
-        "780afab7bfdc9f9c76fb5c085c73381073eaa49ae1325ce3ffd95e2d81ce81d4",
+        "c0b8406ac457f2c9741991956c835628f17b6ec24985ee85d764ad1b35d2454a",
     ),
     "externo_sin_itinerario": (
         dict(
@@ -669,7 +795,7 @@ _SNAPSHOTS: dict[str, tuple[dict, str]] = {
             avion_modelo=None,
             foto_exterior=None,
         ),
-        "c0052706556f72e3793ce973de2348468ffd9b4bc2eaa7ab14ab9c4d048ce526",
+        "8d1744f92b5cb4cca9761a9d4305178098efbfd3ffda75c04b2be36cb53ed018",
     ),
 }
 
