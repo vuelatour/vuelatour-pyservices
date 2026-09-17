@@ -197,7 +197,9 @@ def test_hoja1_folio_cliente_fecha_y_grupo() -> None:
     assert "<strong>Folio:</strong> G-12" in html
     assert "Agencia Demo S.A." in html
     # Salida en hora Cancún (UTC−5): 13:00Z → 08:00.
-    assert "12/10/2026 08:00" in html
+    # Sin hora (17-sep-2026): el cliente solo ve la fecha de salida.
+    assert "12/10/2026" in html
+    assert "12/10/2026 08:00" not in html
     assert "CUN → CZA → CUN" in html
     assert "Grupo de 44 pasajeros · 3 aeronaves" in html
     assert "Tour Chichén Itzá" in html

@@ -44,7 +44,6 @@ from app.services.cotizacion_pdf import (
     CLASE_RAIZ,
     _estilos_base,
     _fecha_corta,
-    _fecha_legible,
     _ficha_aeronave_html,
     _itinerario_html,
     _logo_data_uri,
@@ -413,7 +412,7 @@ def _build_html(r: CotizacionGrupoPdfRequest) -> str:
   <div class="meta">
     <div><strong>Folio:</strong> {escape(folio)}<br>
       <strong>Cliente:</strong> {escape(r.cliente)}</div>
-    <div style="text-align:right"><strong>Fecha de salida:</strong> {_fecha_corta(r.fecha)}
+    <div style="text-align:right"><strong>Fecha de salida:</strong> {_fecha_corta(r.fecha) or "Por confirmar"}
       {viaje_html}</div>
   </div>
 
