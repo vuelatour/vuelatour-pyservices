@@ -396,6 +396,8 @@ def _build_html(r: CotizacionGrupoPdfRequest) -> str:
     )
     viaje_html = f"<br><strong>Viaje:</strong> {escape(r.nombre)}" if r.nombre else ""
 
+    # Sin hora (17-sep-2026): el cliente solo ve la FECHA de salida.
+    fecha_salida = _fecha_corta(r.fecha) or "Por confirmar"
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
 {_estilos_base()}{_estilos_grupo()}
@@ -412,7 +414,7 @@ def _build_html(r: CotizacionGrupoPdfRequest) -> str:
   <div class="meta">
     <div><strong>Folio:</strong> {escape(folio)}<br>
       <strong>Cliente:</strong> {escape(r.cliente)}</div>
-    <div style="text-align:right"><strong>Fecha de salida:</strong> {_fecha_corta(r.fecha) or "Por confirmar"}
+    <div style="text-align:right"><strong>Fecha de salida:</strong> {fecha_salida}
       {viaje_html}</div>
   </div>
 
