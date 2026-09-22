@@ -12,9 +12,18 @@ Reglas: nada se recalcula (todo viene del API); jamás fotos ni ficha del
 avión; nada de operación (tacos, horas voladas, avión operativo, traslados)
 ni partición/gastos/utilidad/CFDI aunque un API viejo los mande; un payload
 mínimo (skew) y campos extra también renderizan.
+
+Desde el 22-sep-2026 (Fase 2.1 del rediseño del cotizador) el documento se
+comparte con el panel: el cuerpo del CSS es `app/static/cotizacion-interna.css`
+con TODO selector colgado de `.cot-interna`, el marcado va envuelto en esa
+raíz y hay dos rutas espejo de las del cliente
+(`GET /reportes/cotizacion-interna/hoja.css`,
+`POST /reportes/cotizacion-interna/preview-html`). La última sección del
+archivo lo prueba.
 """
 
 import re
+import sys
 
 from fastapi.testclient import TestClient
 
@@ -25,14 +34,21 @@ from app.schemas.reportes import CotizacionInternaPdfRequest
 from app.services import cotizacion_grupo_pdf, cotizacion_interna_pdf, cotizacion_pdf
 from app.services.cotizacion_interna_pdf import (
     BANDA_INTERNA,
+    CLASE_RAIZ,
     NOTA_TRAMOS,
     _build_html,
+    _cuerpo_interno_html,
     _dia_mes,
+    _estilos_cuerpo_interno,
+    _estilos_hoja_interna,
     _estilos_interno,
+    _estilos_page_interno,
     _hhmm,
     _millas,
     _truncar,
+    render_cotizacion_interna_preview_html,
 )
+from app.services.cotizacion_pdf import _STATIC
 
 
 def _tramo(orden: int, origen: str, destino: str, **extra) -> dict:
@@ -797,7 +813,7 @@ def test_el_bloque_de_cobros_puede_partirse_entre_hojas() -> None:
     assert '<table class="cols desglose bloque">' in html
     assert '<div class="bloque"><h2>Notas internas</h2>' in html
     css = _estilos_interno("Documento interno")
-    assert "page-break-inside: avoid" in _regla(css, "table.grid tr")
+    assert "page-break-inside: avoid" in _regla(css, f".{CLASE_RAIZ} table.grid tr")
     assert "display: table-header-group" in css
 
 
@@ -1057,15 +1073,21 @@ def test_cotizacion_larga_se_desborda_ordenada_no_se_corta() -> None:
     assert len(HTML(string=html).render().pages) <= 2
     # El thead se repite en la hoja 2 (regla del CSS) y las filas no se parten.
     assert "display: table-header-group" in html
-    assert "table.grid tr { page-break-inside: avoid; }" in html
+    assert f".{CLASE_RAIZ} table.grid tr {{ page-break-inside: avoid; }}" in html
 
 
 # ===== Aire de la hoja (11-sep-2026) y avión utilizado =====
 
 
-def _regla(css: str, selector: str) -> str:
-    """El bloque de declaraciones de una regla CSS (por selector exacto)."""
-    i = css.index(selector + " {")
+def _regla(css: str, selector: str, n: int = 1) -> str:
+    """El bloque de declaraciones de la n-ésima regla CSS con ese selector
+    EXACTO. `n` existe porque el bloque que neutraliza el preflight de
+    Tailwind (22-sep-2026) repite selectores de la hoja (`.cot-interna h2`,
+    `.cot-interna table`) para devolverles el valor por defecto del agente de
+    usuario: la regla de la hoja es la SEGUNDA."""
+    i = -1
+    for _ in range(n):
+        i = css.index(selector + " {", i + 1)
     return css[i : css.index("}", i)]
 
 
@@ -1073,21 +1095,27 @@ def test_hoja_con_aire_tipografia_de_tablas_nunca_baja_de_95pt() -> None:
     """Captura de la oficina: «todo muy junto». Regla de la hoja: el dato se
     lee (≥ 9.5 pt en cuerpo y tablas) y las filas respiran (celdas de 3–4 px,
     interlineado ≥ 1.3). Los encabezados y las aclaraciones en gris son
-    apoyo: pueden ir a 8–8.5 pt, nunca menos."""
+    apoyo: pueden ir a 8–8.5 pt, nunca menos.
+
+    Desde el 22-sep-2026 los selectores cuelgan de `.cot-interna` (el CSS es
+    un archivo estático que también consume el panel): el tamaño y el
+    interlineado del CUERPO viven en la raíz, no en `body`."""
     css = _estilos_interno("Documento interno")
 
-    assert "font-size: 9.5pt" in _regla(css, "body")
-    assert "line-height: 1.3" in _regla(css, "body")
+    assert "font-size: 9.5pt" in _regla(css, f".{CLASE_RAIZ}")
+    assert "line-height: 1.3" in _regla(css, f".{CLASE_RAIZ}")
     # Tablas (tramos, cobros) y el desglose: 9.5 pt de dato.
-    assert "font-size: 9.5pt" in _regla(css, "table")
-    assert "font-size: 9.5pt" in _regla(css, "table.grid")
+    assert "font-size: 9.5pt" in _regla(css, f".{CLASE_RAIZ} table", 2)
+    assert "font-size: 9.5pt" in _regla(css, f".{CLASE_RAIZ} table.grid")
     # Celdas con aire (antes 1px 4px).
-    assert "padding: 3px 6px" in _regla(css, "table.grid th, table.grid td")
-    assert "padding: 2px 4px" in _regla(css, ".totales td")
-    assert "padding: 2px 4px" in _regla(css, "table.kv td")
+    assert "padding: 3px 6px" in _regla(
+        css, f".{CLASE_RAIZ} table.grid th, .{CLASE_RAIZ} table.grid td"
+    )
+    assert "padding: 2px 4px" in _regla(css, f".{CLASE_RAIZ} .totales td")
+    assert "padding: 2px 4px" in _regla(css, f".{CLASE_RAIZ} table.kv td")
     # Apoyo: encabezados y gris, nunca por debajo de 8 pt.
-    assert "font-size: 8.5pt" in _regla(css, "table.grid th")
-    assert "font-size: 8pt" in _regla(css, ".op")
+    assert "font-size: 8.5pt" in _regla(css, f".{CLASE_RAIZ} table.grid th")
+    assert "font-size: 8pt" in _regla(css, f".{CLASE_RAIZ} .op")
     # Ningún tamaño de la hoja por debajo de 7.5 pt (el pie).
     tamanios = [float(m) for m in re.findall(r"font-size: ([\d.]+)pt", css)]
     assert tamanios and min(tamanios) >= 7.5
@@ -1095,8 +1123,8 @@ def test_hoja_con_aire_tipografia_de_tablas_nunca_baja_de_95pt() -> None:
     # Lo apachurrado de la v2 ya no está: el CUERPO dejó los 8.5 pt / 1.2 y
     # ninguna celda vuelve a 1 px (los títulos grandes sí pueden cerrar la
     # línea a 1.2 — ahí no estorba).
-    assert "font-size: 8.5pt" not in _regla(css, "body")
-    assert "line-height: 1.2" not in _regla(css, "body")
+    assert "font-size: 8.5pt" not in _regla(css, f".{CLASE_RAIZ}")
+    assert "line-height: 1.2" not in _regla(css, f".{CLASE_RAIZ}")
     assert "padding: 1px 4px" not in css and "padding: 1px 3px" not in css
 
 
@@ -1111,7 +1139,9 @@ def test_fuente_incrustada_la_misma_del_pdf_del_cliente() -> None:
     assert "@font-face" in css and "font-family: 'Arimo'" in css
     assert css.count("@font-face") == 2  # regular y bold
     # La familia del documento arranca en Arimo (y conserva los respaldos).
-    assert "font-family: Arimo, 'Helvetica Neue', Arial, sans-serif" in _regla(css, "*")
+    assert "font-family: Arimo, 'Helvetica Neue', Arial, sans-serif" in _regla(
+        css, f".{CLASE_RAIZ}, .{CLASE_RAIZ} *"
+    )
     # También en el pie de `@page` (WeasyPrint no hereda ahí).
     assert css.count("font-family: Arimo, 'Helvetica Neue', Arial, sans-serif") >= 3
 
@@ -1121,10 +1151,10 @@ def test_bloques_separados_y_desglose_no_toca_horas_cotizadas() -> None:
     cotización» y «Horas cotizadas», que van lado a lado, además llevan canal
     de 16 px y una línea divisoria."""
     css = _estilos_interno("Documento interno")
-    assert "margin: 9px 0 4px" in _regla(css, "h2")
-    assert "padding-right: 16px" in _regla(css, ".cols td.col:first-child")
-    assert "padding-left: 16px" in _regla(css, ".cols td.col:last-child")
-    assert "border-left" in _regla(css, ".cols.desglose td.col:last-child")
+    assert "margin: 9px 0 4px" in _regla(css, f".{CLASE_RAIZ} h2", 2)
+    assert "padding-right: 16px" in _regla(css, f".{CLASE_RAIZ} .cols td.col:first-child")
+    assert "padding-left: 16px" in _regla(css, f".{CLASE_RAIZ} .cols td.col:last-child")
+    assert "border-left" in _regla(css, f".{CLASE_RAIZ} .cols.desglose td.col:last-child")
 
     html = _html()
     # Siguen siendo dos columnas de la MISMA tabla (una hoja, misma info).
@@ -1176,7 +1206,7 @@ def test_avion_utilizado_difiere_se_marca_en_ambar() -> None:
 
     # El CSS de la marca GANA al gris de `.sub` (si no, no se vería).
     css = _estilos_interno("Documento interno")
-    assert "color: #b45309" in _regla(css, "table.resumen .sub.ambar")
+    assert "color: #b45309" in _regla(css, f".{CLASE_RAIZ} table.resumen .sub.ambar")
 
 
 def test_avion_utilizado_igual_no_se_marca() -> None:
@@ -1252,3 +1282,173 @@ def test_tc_de_seis_decimales_en_resumen_desglose_tuas_y_cobros() -> None:
     assert re.search(r"16\.9916(?!32)", html) is None
     # Un T.C. redondo se sigue viendo redondo (no «18.270000»).
     assert 'Total MXN <span class="op">T.C. 18.27</span>' in _html()
+
+
+# ===== Hoja interna: CSS estático, raíz `.cot-interna` y vista previa (2.1, 22-sep-2026) =====
+# El rediseño del cotizador convierte la PANTALLA en la hoja INTERNA (Fase
+# 2.2 del panel). Para que la hoja del panel y el papel no se separen nunca,
+# el CSS del cuerpo sale a `app/static/cotizacion-interna.css` con TODO
+# selector colgado de `.cot-interna`, el documento se envuelve en esa raíz y
+# el panel pide el MISMO cuerpo (`preview-html`) y el MISMO CSS (`hoja.css`)
+# — espejo exacto de lo que ya existía para la hoja del cliente.
+
+_CLASES_MARCADO_INTERNO = (
+    "header", "izq", "logo", "titulo", "sub", "folio", "banda", "resumen",
+    "lbl", "big", "med", "fecha", "ambar", "kv", "k", "small", "grid",
+    "tramos", "ruta", "ajuste", "aviso", "num", "muted", "op", "nota", "tag",
+    "totales", "val", "sub-row", "exentos-row", "total-row", "mxn-row",
+    "cols", "col", "desglose", "sem", "sem-verde", "sem-amarillo", "sem-rojo",
+    "sem-gris", "bloque", "notas-txt",
+)
+
+
+def _selectores(css: str) -> list[str]:
+    sin_comentarios = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    return [
+        s.strip()
+        for bloque in re.findall(r"([^{}]+)\{", sin_comentarios)
+        for s in bloque.split(",")
+        if s.strip()
+    ]
+
+
+def test_css_del_cuerpo_interno_es_el_archivo_estatico_y_lo_que_recibe_el_panel() -> None:
+    """Fuente única: el cuerpo vive en `app/static/cotizacion-interna.css`
+    (Python solo lo lee) y lo que el panel recibe en `hoja.css` es fuente +
+    cuerpo, EXACTAMENTE el mismo texto que incrusta el PDF."""
+    archivo = (_STATIC / "cotizacion-interna.css").read_text(encoding="utf-8")
+    assert _estilos_cuerpo_interno() == archivo
+    assert _estilos_hoja_interna() == cotizacion_pdf._estilos_fuente() + archivo
+    # El PDF = fuente + papel (@page) + cuerpo: lleva el CSS del panel entero.
+    css = _estilos_interno("Documento interno")
+    assert cotizacion_pdf._estilos_fuente() in css and archivo in css
+    assert _estilos_page_interno("Documento interno") in css
+    # Lo que SOLO tiene sentido en papel no viaja al panel: las reglas de
+    # página y el pie del documento (que además cambia con cada cotización).
+    assert "@page" in _estilos_page_interno("PIE-DE-PRUEBA")
+    assert "PIE-DE-PRUEBA" in _estilos_page_interno("PIE-DE-PRUEBA")
+    assert "@page" not in _estilos_hoja_interna()
+    assert "PIE-DE-PRUEBA" not in _estilos_hoja_interna()
+    # La hoja del CLIENTE es otro archivo: jamás se mezclan.
+    assert cotizacion_pdf._estilos_cuerpo() not in css
+    assert f".{cotizacion_pdf.CLASE_RAIZ} " not in archivo
+
+
+def test_todo_selector_del_cuerpo_interno_cuelga_de_la_raiz() -> None:
+    """Ningún selector suelto (body, table, h2, *): en el panel este CSS
+    convive con Tailwind y solo puede tocar lo que está dentro de
+    `.cot-interna`."""
+    assert CLASE_RAIZ == "cot-interna"
+    css = _estilos_cuerpo_interno()
+    selectores = _selectores(css)
+    assert selectores
+    sueltos = [s for s in selectores if not s.startswith(f".{CLASE_RAIZ}")]
+    assert sueltos == [], sueltos
+    # Todas las clases del marcado tienen regla (contrato con el panel).
+    faltan = [c for c in _CLASES_MARCADO_INTERNO if f".{c}" not in css]
+    assert faltan == [], faltan
+    # `body` y `@page` se quedaron del lado del papel, no del archivo.
+    assert "body" not in css and "@page" not in css
+    assert "body { margin: 0; }" in _estilos_page_interno("x")
+
+
+def test_el_documento_va_envuelto_en_la_raiz_cot_interna() -> None:
+    """El <div class="cot-interna"> es lo ÚNICO que cambió del marcado al
+    sacar el CSS a su archivo: dentro va el documento de siempre (cabecera,
+    banda, resumen, ficha, tramos, desglose|horas, cobros y notas)."""
+    html = _html()
+    assert html.count(f'<div class="{CLASE_RAIZ}">') == 1
+    assert f'<body>\n<div class="{CLASE_RAIZ}">' in html
+    assert html.endswith("\n</div>\n</body></html>")
+    cuerpo = html[html.index(f'<div class="{CLASE_RAIZ}">') :]
+    for trozo in ('class="header"', 'class="banda"', 'class="resumen"', "Tramos cotizados</h2>",
+                  'class="cols desglose bloque"', "<div><h2>Cobros"):
+        assert trozo in cuerpo, trozo
+    # El CSS sigue incrustado en el PDF (el panel lo pide por su ruta).
+    assert _estilos_interno(
+        "Documento interno · generado 8 sep 2026 10:12 (hora Cancún) · Itzi"
+    ) in html
+
+
+def test_la_vista_previa_interna_es_el_mismo_cuerpo_del_pdf() -> None:
+    """Jamás una réplica: `preview-html` devuelve el MISMO
+    `_cuerpo_interno_html` que el PDF — el HTML del cuerpo tal cual, sin
+    `<head>`, sin `<style>` y sin `@page` (el CSS va por `hoja.css`)."""
+    req = CotizacionInternaPdfRequest(**_payload())
+    prev = render_cotizacion_interna_preview_html(req)
+    assert prev == _cuerpo_interno_html(req)
+    assert prev in _build_html(req)
+    assert prev.startswith(f'<div class="{CLASE_RAIZ}">') and prev.endswith("</div>")
+    assert "<style" not in prev and "@page" not in prev and "<html" not in prev
+    # Mismos números y textos que el papel: es el mismo armador.
+    assert BANDA_INTERNA in prev and "Folio #1042 · v3" in prev
+
+
+def test_hoja_css_interna_router_sin_token_rechazado(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    assert client.get("/reportes/cotizacion-interna/hoja.css").status_code == 401
+    res = client.get(
+        "/reportes/cotizacion-interna/hoja.css", headers={"X-Internal-Token": "malo"}
+    )
+    assert res.status_code == 401
+
+
+def test_hoja_css_interna_router_devuelve_fuente_y_cuerpo_cacheables(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    monkeypatch.setitem(sys.modules, "weasyprint", None)
+    res = client.get("/reportes/cotizacion-interna/hoja.css", headers={"X-Internal-Token": TOKEN})
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "text/css; charset=utf-8"
+    assert res.headers["cache-control"] == "public, max-age=3600"
+    # EXACTAMENTE lo que lleva el PDF.
+    assert res.text == _estilos_hoja_interna()
+    assert res.text in _html()
+    # Y NO es el de la hoja del cliente.
+    assert res.text != cotizacion_pdf._estilos_hoja()
+
+
+def test_preview_html_interna_router_sin_token_rechazado(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    res = client.post("/reportes/cotizacion-interna/preview-html", json=_payload())
+    assert res.status_code == 401
+
+
+def test_preview_html_interna_router_devuelve_el_cuerpo_sin_weasyprint(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    # Cinturón: si algo intentara `from weasyprint import HTML` reventaría
+    # con ImportError → la vista previa NO depende de WeasyPrint.
+    monkeypatch.setitem(sys.modules, "weasyprint", None)
+    res = client.post(
+        "/reportes/cotizacion-interna/preview-html",
+        json=_payload(),
+        headers={"X-Internal-Token": TOKEN},
+    )
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "text/html; charset=utf-8"
+    assert res.headers["cache-control"] == "no-store"
+    assert res.text == render_cotizacion_interna_preview_html(
+        CotizacionInternaPdfRequest(**_payload())
+    )
+    assert res.text in _html()
+    assert "<style" not in res.text and "@page" not in res.text
+
+
+def test_preview_html_interna_router_error_es_500_con_detalle(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+
+    def _roto(req: CotizacionInternaPdfRequest) -> str:
+        raise ValueError("boom en la plantilla interna")
+
+    monkeypatch.setattr(reportes_router, "render_cotizacion_interna_preview_html", _roto)
+    res = client.post(
+        "/reportes/cotizacion-interna/preview-html",
+        json=_payload(),
+        headers={"X-Internal-Token": TOKEN},
+    )
+    assert res.status_code == 500
+    assert "boom en la plantilla interna" in res.json()["detail"]

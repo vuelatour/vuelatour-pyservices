@@ -223,6 +223,39 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   mismo `_mapa_svg` (204 sin puntos). Regla: un estilo de la hoja se cambia
   en el .css UNA vez y sale en PDF, preview y panel; jamás copiar CSS al
   panel ni renombrar las clases del marcado.
+- **La HOJA INTERNA también se comparte con el panel** (Fase 2.1 del
+  rediseño del cotizador, 22-sep-2026): la PANTALLA de la cotización pasa a
+  ser la hoja interna —la completa, la que la oficina llevaba en Excel— y el
+  PDF del cliente queda como salida, así que el documento interno se publica
+  igual que el del cliente desde el 8-sep. Tres piezas, mismo patrón:
+  (1) `app/static/cotizacion-interna.css` — el CUERPO del CSS que antes
+  vivía dentro de `_estilos_interno`, con TODO selector acotado a la raíz
+  **`.cot-interna`** (`cotizacion_interna_pdf.CLASE_RAIZ`, hermana de
+  `.cot-hoja`) y un bloque que neutraliza el preflight de Tailwind con los
+  valores por defecto del agente de usuario (h2 en negrita, img inline,
+  table en `display:table`, celdas de 1 px: sin efecto en WeasyPrint).
+  Python solo lo lee (`_estilos_cuerpo_interno`, `@lru_cache`);
+  `_estilos_hoja_interna()` = fuente + cuerpo y `_estilos_interno(pie)` =
+  `_estilos_page_interno(pie)` + eso. En el archivo NO van las reglas
+  `@page` ni el `margin: 0` del `<body>`: en el panel no hay página que
+  maquetar. (2) El marcado va envuelto en `<div class="cot-interna">` que
+  arma **`_cuerpo_interno_html`**, fuente ÚNICA usada por el PDF
+  (`_build_html`) y por la vista previa — jamás una réplica: el test afirma
+  que la preview es substring del HTML del PDF. (3) Dos rutas espejo de las
+  del cliente: `GET /reportes/cotizacion-interna/hoja.css` (text/css,
+  max-age 3600, EXACTAMENTE lo que incrusta el PDF) y
+  `POST /reportes/cotizacion-interna/preview-html` (mismo payload
+  `CotizacionInternaPdfRequest`, devuelve SOLO el cuerpo en `text/html`,
+  `no-store`, sin `<style>` ni `@page`, sin importar WeasyPrint; el CSS va
+  por la otra ruta). El panel copia el .css con su script de sync y compara
+  su hoja contra fixtures generados con `preview-html`. **Paridad
+  verificada**: el cuerpo del PDF es byte-idéntico al de antes salvo el
+  `<div>` raíz, y el CSS es el mismo texto salvo el prefijo `.cot-interna`
+  (medido con 6 payloads reales, incluidos la #329 y el de 8 tramos; alto y
+  ancho renderizados idénticos en Chrome headless antes/después). Regla: un
+  estilo de la hoja interna se cambia en el .css UNA vez y sale en PDF,
+  preview y panel; renombrar una clase del marcado rompe el contrato con el
+  panel. Tests: última sección de `tests/test_cotizacion_interna_pdf.py`.
 
 ## Conciliación
 

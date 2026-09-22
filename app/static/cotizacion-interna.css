@@ -1,0 +1,117 @@
+/* CSS del CUERPO de la COTIZACIÓN INTERNA (fuente única, 22-sep-2026).
+   Lo leen `cotizacion_interna_pdf._estilos_cuerpo_interno()` (el PDF con
+   WeasyPrint y la vista previa) y el panel vía
+   GET /reportes/cotizacion-interna/hoja.css: la HOJA INTERNA que edita la
+   oficina (Fase 2.2 del rediseño del cotizador) y el PDF interno que se
+   imprime comparten ESTE archivo — nunca una réplica.
+   Hermano de `cotizacion-hoja.css` (la hoja del CLIENTE, raíz `.cot-hoja`).
+   El panel lo COPIA con su script de sync (`npm run sync:hoja-interna-css`)
+   y un test suyo vigila que la copia no se desvíe de este original: se edita
+   AQUÍ, nunca allá.
+   Reglas del archivo:
+   - TODO selector va acotado a la raíz `.cot-interna` (la lleva el div que
+     envuelve el cuerpo del PDF y de la vista previa; en el panel es el
+     contenedor de la hoja). Así ningún selector suelto (h2, table, *) se
+     cuela fuera de la hoja ni colisiona con Tailwind (p. ej. `.grid` de
+     Tailwind = display:grid).
+   - Las clases son las del marcado de siempre (.header, .banda, .resumen,
+     .kv, .grid, .tramos, .totales, .cols, .sem-*, .tag…): renombrarlas
+     cambia el HTML del PDF y el contrato con el panel.
+   - Lo que NO vive aquí porque solo tiene sentido en papel: las reglas de
+     PÁGINA (márgenes, pie con el «Documento interno …» y el paginado) y el
+     margen cero de la raíz del documento, que se quedan en
+     `_estilos_page_interno()`; y la fuente incrustada, que es
+     `cotizacion-fuente.css` (compartida con la hoja del cliente: se
+     incrusta, no se copia).
+   - Tipografía: 'Arimo' (métrica de Arial) con los respaldos de siempre.
+     Sin ella el contenedor de Railway cae a su sans, ~8-12 % más ancho, y
+     «cabe en una hoja» se vuelve lotería.
+   - Aire (11-sep-2026, «todo muy junto»): ningún texto de tabla baja de
+     9.5 pt (encabezados y aclaraciones en gris, 8–8.5 pt: son apoyo),
+     interlineado 1.3 y celdas de 3 px × 6 px. */
+/* Neutraliza el "preflight" de Tailwind en el panel. Son los valores por
+   defecto del agente de usuario (sin efecto en WeasyPrint): sin ellos la
+   hoja interna del panel perdería la negrita de los h2, el logo pasaría a
+   block y las celdas sin regla propia se quedarían sin su padding de 1px, y
+   dejaría de ser idéntica al PDF. */
+.cot-interna h2 { font-weight: 700; }
+.cot-interna img { display: inline; max-width: none; height: auto; vertical-align: baseline; }
+.cot-interna table { display: table; text-indent: 0; }
+.cot-interna td, .cot-interna th { padding: 1px; }
+  .cot-interna, .cot-interna * { font-family: Arimo, 'Helvetica Neue', Arial, sans-serif; color: #1d1d1d; box-sizing: border-box; }
+  .cot-interna { font-size: 9.5pt; line-height: 1.3; }
+  .cot-interna .header { background: #102a43; color: #fff; padding: 7px 10px; border-radius: 5px;
+             display: flex; align-items: center; justify-content: space-between; }
+  .cot-interna .header .izq { display: flex; align-items: center; }
+  .cot-interna .header .logo { height: 18px; margin-right: 10px; }
+  .cot-interna .header .titulo { font-size: 11.5pt; font-weight: 800; color: #fff; line-height: 1.2; }
+  .cot-interna .header .sub { font-size: 8pt; color: #9fb3c8; display: block; }
+  .cot-interna .header .folio { text-align: right; color: #fff; font-size: 9.5pt; font-weight: 700; }
+  .cot-interna .banda { margin: 5px 0 7px; padding: 3px 9px; border-left: 3px solid #dc2626;
+            background: #fef2f2; color: #dc2626; font-size: 8pt; font-weight: 800;
+            letter-spacing: 1px; text-transform: uppercase; }
+  .cot-interna h2 { font-size: 9pt; text-transform: uppercase; letter-spacing: .8px; color: #dc2626;
+        border-bottom: 1px solid #e5e7eb; margin: 9px 0 4px; padding-bottom: 2px; }
+  .cot-interna table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+  .cot-interna table.resumen { margin: 0 0 4px; border-collapse: separate; border-spacing: 6px 0; }
+  .cot-interna table.resumen td { width: 33.3%; vertical-align: top; padding: 5px 8px;
+                      border: 1px solid #e5e7eb; border-radius: 4px; background: #f9fafb; }
+  .cot-interna table.resumen td.fecha { background: #fef2f2; border-color: #fecaca; }
+  .cot-interna table.resumen .lbl { font-size: 7.5pt; text-transform: uppercase; letter-spacing: .6px;
+                        color: #6b7280; }
+  .cot-interna table.resumen .big { font-size: 14pt; font-weight: 800; color: #dc2626; line-height: 1.2; }
+  .cot-interna table.resumen .med { font-size: 10.5pt; font-weight: 700; color: #102a43; line-height: 1.3; }
+  .cot-interna table.resumen .sub { font-size: 8.5pt; color: #6b7280; line-height: 1.35; }
+  /* Segunda línea del avión cuando DIFIERE del cotizado: gana al gris de
+     .sub (misma especificidad + .ambar) para que la marca se vea. */
+  .cot-interna table.resumen .sub.ambar { color: #b45309; font-weight: 700; }
+  .cot-interna table.kv td { padding: 2px 4px; vertical-align: top; }
+  .cot-interna table.kv td.k { color: #6b7280; width: 32%; white-space: nowrap; }
+  .cot-interna table.kv tr.small td { font-size: 8.5pt; color: #6b7280; }
+  .cot-interna table.grid { font-size: 9.5pt; }
+  .cot-interna table.grid th, .cot-interna table.grid td { border: 1px solid #e5e7eb; padding: 3px 6px;
+                                  text-align: left; vertical-align: top; }
+  .cot-interna table.grid th { background: #f3f4f6; font-size: 8.5pt; text-transform: uppercase;
+                   color: #374151; letter-spacing: .3px; }
+  .cot-interna table.grid tfoot td { font-weight: 700; background: #f7f7f8; color: #102a43; }
+  .cot-interna table.grid tfoot td.aviso { font-weight: 400; background: #fff; }
+  .cot-interna table.grid.tramos td.ruta { font-weight: 600; }
+  .cot-interna table.grid.tramos tfoot tr.ajuste td { font-weight: 400; background: #fffbeb; color: #92400e; }
+  .cot-interna thead { display: table-header-group; }
+  /* Si la tabla pasa a otra hoja: el encabezado se repite (arriba) y ninguna
+     fila se parte a la mitad. */
+  .cot-interna table.grid tr { page-break-inside: avoid; }
+  .cot-interna .num { text-align: right !important; white-space: nowrap; }
+  .cot-interna .muted { color: #6b7280; font-size: 8pt; font-weight: 400; }
+  .cot-interna .op { color: #6b7280; font-size: 8pt; font-weight: 400; }
+  /* Aclaración colgada de un h2 (el método de cobro previsto en «Cobros»):
+     no va en VERSALES como el título — es texto de apoyo. */
+  .cot-interna h2 .op { text-transform: none; letter-spacing: 0; }
+  .cot-interna .nota { font-size: 8pt; color: #6b7280; margin: 3px 0 2px; }
+  .cot-interna .ambar { color: #b45309; }  .cot-interna .rojo { color: #dc2626; }  .cot-interna .verde { color: #15803d; }
+  .cot-interna .tag { display: inline-block; border: 1px solid #d1d5db; border-radius: 3px; padding: 0 4px;
+          font-size: 8pt; color: #374151; margin-left: 4px; font-weight: 400; }
+  .cot-interna .tag.ambar { border-color: #f59e0b; }
+  .cot-interna .totales td { padding: 2px 4px; vertical-align: top; }
+  .cot-interna .totales .val { text-align: right; font-weight: 600; white-space: nowrap; }
+  .cot-interna .sub-row td { border-top: 1px solid #d1d5db; font-weight: 700; color: #102a43;
+                 padding-top: 4px; }
+  /* Rótulo del bloque de conceptos que NO causan IVA (van DEBAJO del IVA,
+     22-sep-2026): apoyo, no dato — versales grises sobre el primer exento. */
+  .cot-interna .exentos-row td { padding-top: 5px; font-size: 8pt; text-transform: uppercase;
+                     letter-spacing: .6px; color: #6b7280; }
+  .cot-interna .total-row td { border-top: 2px solid #102a43; font-size: 10.5pt; font-weight: 800;
+                   color: #dc2626; padding-top: 4px; }
+  .cot-interna .mxn-row td { font-weight: 700; color: #102a43; }
+  .cot-interna .cols { width: 100%; border-collapse: separate; border-spacing: 0; }
+  .cot-interna .cols td.col { vertical-align: top; width: 50%; padding: 0; }
+  .cot-interna .cols td.col:first-child { padding-right: 16px; }
+  .cot-interna .cols td.col:last-child { padding-left: 16px; }
+  .cot-interna .cols.desglose td.col:first-child { width: 58%; }
+  .cot-interna .cols.desglose td.col:last-child { width: 42%; border-left: 1px solid #eef0f3; }
+  .cot-interna .sem { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+          vertical-align: middle; margin-right: 4px; }
+  .cot-interna .sem-verde { background: #16a34a; }  .cot-interna .sem-amarillo { background: #f59e0b; }
+  .cot-interna .sem-rojo { background: #dc2626; }  .cot-interna .sem-gris { background: #9ca3af; }
+  .cot-interna .bloque { page-break-inside: avoid; }
+  .cot-interna .notas-txt { font-size: 9pt; color: #374151; white-space: pre-wrap; line-height: 1.4; }

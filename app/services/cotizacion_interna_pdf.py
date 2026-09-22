@@ -86,9 +86,26 @@ La fuente va INCRUSTADA (Arimo, la misma del PDF del cliente, vía
 `_estilos_fuente`): sin ella el contenedor de Railway cae a su sans por
 defecto (~8-12 % más ancho que el de esta Mac) y «cabe en una hoja» se
 vuelve lotería — es la razón de que la #329 cupiera aquí y no allá.
+
+HOJA INTERNA COMPARTIDA CON EL PANEL (2.1 del rediseño del cotizador,
+22-sep-2026). La pantalla de la cotización pasa a ser esta hoja (el PDF del
+cliente queda como salida), así que el documento se comparte igual que la
+hoja del cliente desde el 8-sep: el CUERPO del CSS vive en
+`app/static/cotizacion-interna.css` con TODO selector colgado de la raíz
+`.cot-interna` (`CLASE_RAIZ`), el marcado se envuelve en
+`<div class="cot-interna">` (`_cuerpo_interno_html`, fuente ÚNICA: la usan
+el PDF y la vista previa) y el panel pide el MISMO cuerpo por
+`POST /reportes/cotizacion-interna/preview-html` y el MISMO CSS por
+`GET /reportes/cotizacion-interna/hoja.css` (fuente incrustada + cuerpo).
+Solo se quedan del lado del papel las reglas `@page` y el margen del
+`<body>` (`_estilos_page_interno`): en el panel no hay página que maquetar.
+Regla: un estilo de esta hoja se cambia en el .css UNA vez y sale en el PDF,
+en la vista previa y en el panel; jamás copiar CSS al panel ni renombrar las
+clases del marcado.
 """
 
 from datetime import UTC, datetime
+from functools import lru_cache
 from html import escape
 
 from app.schemas.reportes import (
@@ -101,10 +118,9 @@ from app.schemas.reportes import (
 from app.services._formato import _tc_txt
 from app.services.cotizacion_grupo_pdf import _RE_PAX_SUFIJO, _monto, _plural
 from app.services.cotizacion_pdf import (
-    _BRAND,
     _CANCUN,
     _MESES_ES,
-    _NAVY,
+    _STATIC,
     ETIQUETA_BASE_GRAVABLE,
     ETIQUETA_SIN_IVA,
     ETIQUETA_SUBTOTAL,
@@ -120,6 +136,11 @@ from app.services.reporte_vuelo_pdf import _fecha
 
 # Texto de la banda: es lo que distingue este documento del que va al cliente.
 BANDA_INTERNA = "Cotización interna · uso exclusivo de oficina · no enviar al cliente"
+# Clase RAÍZ del documento interno (2.1, 22-sep-2026): la lleva el <div> que
+# envuelve el cuerpo en el PDF y en la vista previa, y el contenedor de la
+# hoja interna en el panel; TODO selector de `cotizacion-interna.css` cuelga
+# de ella. Hermana de `cotizacion_pdf.CLASE_RAIZ` ("cot-hoja", la del cliente).
+CLASE_RAIZ = "cot-interna"
 # Nota al pie de la tabla de tramos (regla del motor: 0.15 h por aterrizaje).
 NOTA_TRAMOS = "Tiempo de vuelo en hh:mm e incluye calzos"
 
@@ -951,9 +972,37 @@ def _notas_html(r: CotizacionInternaPdfRequest) -> str:
     )
 
 
-def _estilos_interno(pie: str) -> str:
-    """CSS propio del documento interno (UNA hoja carta). Branding compartido
-    con el PDF del cliente vía `_BRAND`/`_NAVY`.
+def _estilos_page_interno(pie: str) -> str:
+    """Reglas de PAPEL del documento interno: `@page` (Carta, márgenes de
+    9/12/10 mm, pie «Documento interno · generado … · usuario» a la izquierda
+    y el paginado a la derecha) y el `margin: 0` del <body>. SOLO tienen
+    sentido en WeasyPrint — el panel no las recibe (no hay página que
+    maquetar) y por eso NO viven en `cotizacion-interna.css`, igual que
+    `_estilos_page()` en la hoja del cliente. La familia se repite aquí
+    porque WeasyPrint no hereda la tipografía dentro de los márgenes de
+    página."""
+    fuente = "Arimo, 'Helvetica Neue', Arial, sans-serif"
+    return f"""  @page {{
+    size: Letter;
+    margin: 9mm 12mm 10mm;
+    @bottom-left {{ content: "{_css_str(pie)}"; font-size: 7.5pt; color: #9ca3af;
+                    font-family: {fuente}; }}
+    @bottom-right {{ content: "Página " counter(page) " de " counter(pages);
+                     font-size: 7.5pt; color: #9ca3af; font-family: {fuente}; }}
+  }}
+  body {{ margin: 0; }}
+"""
+
+
+@lru_cache(maxsize=1)
+def _estilos_cuerpo_interno() -> str:
+    """CSS del CUERPO del documento interno (cabecera navy, banda roja,
+    resumen, ficha, tablas de tramos y cobros, desglose/horas, cobros y
+    notas): lo comparten el PDF, la vista previa y la HOJA INTERNA del panel
+    (Fase 2.2). Desde el 22-sep-2026 vive en `app/static/cotizacion-interna.css`
+    (fuente única; aquí solo se lee) con TODO selector acotado a
+    `.cot-interna` (`CLASE_RAIZ`) — mismo patrón que `cotizacion-hoja.css`
+    con `.cot-hoja`.
 
     Aire (11-sep-2026, captura de la oficina: «todo muy junto»): la v2 salió
     a 8.5 pt con interlineado 1.2 y celdas de 1 px — ilegible de un vistazo.
@@ -966,10 +1015,16 @@ def _estilos_interno(pie: str) -> str:
          `h2` (9 px, antes 5) — por eso «Desglose de la cotización» y «Horas
          cotizadas», que van lado a lado, nunca se tocan: además del margen
          llevan 16 px de canal y una línea divisoria.
-      4. `@page` de 9 mm arriba / 12 mm a los lados / 10 mm abajo.
     La MISMA información sigue cabiendo en UNA hoja (ver el presupuesto del
     encabezado del módulo): lo que se encogió es el número de tramos/cobros
-    que caben, no el contenido.
+    que caben, no el contenido."""
+    return (_STATIC / "cotizacion-interna.css").read_text(encoding="utf-8")
+
+
+def _estilos_hoja_interna() -> str:
+    """Fuente incrustada + cuerpo: EXACTAMENTE lo que el panel recibe en
+    `GET /reportes/cotizacion-interna/hoja.css` y lo que lleva el PDF
+    (contiguo, para que un test lo verifique como substring).
 
     FUENTE INCRUSTADA (22-sep-2026): Arimo (OFL, métrica de Arial) vía
     `_estilos_fuente()` del PDF del cliente — el MISMO archivo, importado y
@@ -977,109 +1032,37 @@ def _estilos_interno(pie: str) -> str:
     `@font-face` y el contenedor de Railway (sin paquetes de fuentes) caía a
     su sans por defecto, ~8-12 % más ancho: lo que cabía en una hoja aquí se
     desbordaba allá — y el test de «una hoja» medía con métricas que
-    producción no usa.
-    """
-    fuente = "Arimo, 'Helvetica Neue', Arial, sans-serif"
-    return f"""{_estilos_fuente()}
-  @page {{
-    size: Letter;
-    margin: 9mm 12mm 10mm;
-    @bottom-left {{ content: "{_css_str(pie)}"; font-size: 7.5pt; color: #9ca3af;
-                    font-family: {fuente}; }}
-    @bottom-right {{ content: "Página " counter(page) " de " counter(pages);
-                     font-size: 7.5pt; color: #9ca3af; font-family: {fuente}; }}
-  }}
-  * {{ font-family: {fuente}; color: #1d1d1d; box-sizing: border-box; }}
-  body {{ margin: 0; font-size: 9.5pt; line-height: 1.3; }}
-  .header {{ background: {_NAVY}; color: #fff; padding: 7px 10px; border-radius: 5px;
-             display: flex; align-items: center; justify-content: space-between; }}
-  .header .izq {{ display: flex; align-items: center; }}
-  .header .logo {{ height: 18px; margin-right: 10px; }}
-  .header .titulo {{ font-size: 11.5pt; font-weight: 800; color: #fff; line-height: 1.2; }}
-  .header .sub {{ font-size: 8pt; color: #9fb3c8; display: block; }}
-  .header .folio {{ text-align: right; color: #fff; font-size: 9.5pt; font-weight: 700; }}
-  .banda {{ margin: 5px 0 7px; padding: 3px 9px; border-left: 3px solid {_BRAND};
-            background: #fef2f2; color: {_BRAND}; font-size: 8pt; font-weight: 800;
-            letter-spacing: 1px; text-transform: uppercase; }}
-  h2 {{ font-size: 9pt; text-transform: uppercase; letter-spacing: .8px; color: {_BRAND};
-        border-bottom: 1px solid #e5e7eb; margin: 9px 0 4px; padding-bottom: 2px; }}
-  table {{ width: 100%; border-collapse: collapse; font-size: 9.5pt; }}
-  table.resumen {{ margin: 0 0 4px; border-collapse: separate; border-spacing: 6px 0; }}
-  table.resumen td {{ width: 33.3%; vertical-align: top; padding: 5px 8px;
-                      border: 1px solid #e5e7eb; border-radius: 4px; background: #f9fafb; }}
-  table.resumen td.fecha {{ background: #fef2f2; border-color: #fecaca; }}
-  table.resumen .lbl {{ font-size: 7.5pt; text-transform: uppercase; letter-spacing: .6px;
-                        color: #6b7280; }}
-  table.resumen .big {{ font-size: 14pt; font-weight: 800; color: {_BRAND}; line-height: 1.2; }}
-  table.resumen .med {{ font-size: 10.5pt; font-weight: 700; color: {_NAVY}; line-height: 1.3; }}
-  table.resumen .sub {{ font-size: 8.5pt; color: #6b7280; line-height: 1.35; }}
-  /* Segunda línea del avión cuando DIFIERE del cotizado: gana al gris de
-     .sub (misma especificidad + .ambar) para que la marca se vea. */
-  table.resumen .sub.ambar {{ color: #b45309; font-weight: 700; }}
-  table.kv td {{ padding: 2px 4px; vertical-align: top; }}
-  table.kv td.k {{ color: #6b7280; width: 32%; white-space: nowrap; }}
-  table.kv tr.small td {{ font-size: 8.5pt; color: #6b7280; }}
-  table.grid {{ font-size: 9.5pt; }}
-  table.grid th, table.grid td {{ border: 1px solid #e5e7eb; padding: 3px 6px;
-                                  text-align: left; vertical-align: top; }}
-  table.grid th {{ background: #f3f4f6; font-size: 8.5pt; text-transform: uppercase;
-                   color: #374151; letter-spacing: .3px; }}
-  table.grid tfoot td {{ font-weight: 700; background: #f7f7f8; color: {_NAVY}; }}
-  table.grid tfoot td.aviso {{ font-weight: 400; background: #fff; }}
-  table.grid.tramos td.ruta {{ font-weight: 600; }}
-  table.grid.tramos tfoot tr.ajuste td {{ font-weight: 400; background: #fffbeb; color: #92400e; }}
-  thead {{ display: table-header-group; }}
-  /* Si la tabla pasa a otra hoja: el encabezado se repite (arriba) y ninguna
-     fila se parte a la mitad. */
-  table.grid tr {{ page-break-inside: avoid; }}
-  .num {{ text-align: right !important; white-space: nowrap; }}
-  .muted {{ color: #6b7280; font-size: 8pt; font-weight: 400; }}
-  .op {{ color: #6b7280; font-size: 8pt; font-weight: 400; }}
-  /* Aclaración colgada de un h2 (el método de cobro previsto en «Cobros»):
-     no va en VERSALES como el título — es texto de apoyo. */
-  h2 .op {{ text-transform: none; letter-spacing: 0; }}
-  .nota {{ font-size: 8pt; color: #6b7280; margin: 3px 0 2px; }}
-  .ambar {{ color: #b45309; }}  .rojo {{ color: {_BRAND}; }}  .verde {{ color: #15803d; }}
-  .tag {{ display: inline-block; border: 1px solid #d1d5db; border-radius: 3px; padding: 0 4px;
-          font-size: 8pt; color: #374151; margin-left: 4px; font-weight: 400; }}
-  .tag.ambar {{ border-color: #f59e0b; }}
-  .totales td {{ padding: 2px 4px; vertical-align: top; }}
-  .totales .val {{ text-align: right; font-weight: 600; white-space: nowrap; }}
-  .sub-row td {{ border-top: 1px solid #d1d5db; font-weight: 700; color: {_NAVY};
-                 padding-top: 4px; }}
-  /* Rótulo del bloque de conceptos que NO causan IVA (van DEBAJO del IVA,
-     22-sep-2026): apoyo, no dato — versales grises sobre el primer exento. */
-  .exentos-row td {{ padding-top: 5px; font-size: 8pt; text-transform: uppercase;
-                     letter-spacing: .6px; color: #6b7280; }}
-  .total-row td {{ border-top: 2px solid {_NAVY}; font-size: 10.5pt; font-weight: 800;
-                   color: {_BRAND}; padding-top: 4px; }}
-  .mxn-row td {{ font-weight: 700; color: {_NAVY}; }}
-  .cols {{ width: 100%; border-collapse: separate; border-spacing: 0; }}
-  .cols td.col {{ vertical-align: top; width: 50%; padding: 0; }}
-  .cols td.col:first-child {{ padding-right: 16px; }}
-  .cols td.col:last-child {{ padding-left: 16px; }}
-  .cols.desglose td.col:first-child {{ width: 58%; }}
-  .cols.desglose td.col:last-child {{ width: 42%; border-left: 1px solid #eef0f3; }}
-  .sem {{ display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-          vertical-align: middle; margin-right: 4px; }}
-  .sem-verde {{ background: #16a34a; }}  .sem-amarillo {{ background: #f59e0b; }}
-  .sem-rojo {{ background: {_BRAND}; }}  .sem-gris {{ background: #9ca3af; }}
-  .bloque {{ page-break-inside: avoid; }}
-  .notas-txt {{ font-size: 9pt; color: #374151; white-space: pre-wrap; line-height: 1.4; }}"""
+    producción no usa."""
+    return _estilos_fuente() + _estilos_cuerpo_interno()
 
 
-def _build_html(r: CotizacionInternaPdfRequest) -> str:
-    pie = _pie_texto(r)
+def _estilos_interno(pie: str) -> str:
+    """CSS COMPLETO del PDF interno: reglas de papel (`@page` + el margen del
+    <body>) + lo que recibe el panel (fuente incrustada + cuerpo, CONTIGUO,
+    para que un test lo verifique como substring). Mismo reparto que
+    `_estilos_base()` en la hoja del cliente. El branding (#dc2626 / #102a43)
+    ya viaja resuelto dentro del archivo estático, así que este módulo dejó
+    de necesitar `_BRAND`/`_NAVY`."""
+    return _estilos_page_interno(pie) + _estilos_hoja_interna()
+
+
+def _cuerpo_interno_html(r: CotizacionInternaPdfRequest) -> str:
+    """EL DOCUMENTO interno, sin `<head>` ni CSS: la raíz
+    `<div class="cot-interna">` con cabecera + banda, resumen, ficha, tramos,
+    desglose|horas, cobros y notas internas.
+
+    Fuente ÚNICA del marcado (22-sep-2026): lo usan el PDF (`_build_html`) y
+    la vista previa del panel (`render_cotizacion_interna_preview_html`) —
+    jamás una réplica. El <div> existe para que TODO selector del CSS pueda
+    colgar de `.cot-interna` y la hoja interna del panel se pinte con el
+    MISMO marcado y las MISMAS clases que el papel."""
     cuerpo = (
         '<table class="cols desglose bloque"><tr>'
         f'<td class="col">{_desglose_html(r)}</td>'
         f'<td class="col">{_horas_html(r)}</td>'
         "</tr></table>"
     )
-    return f"""<!doctype html>
-<html><head><meta charset="utf-8"><title>Cotización interna #{escape(r.folio)}</title><style>
-{_estilos_interno(pie)}
-</style></head><body>
+    return f"""<div class="{CLASE_RAIZ}">
 {_header_html(r)}
   {_resumen_html(r)}
   {_ficha_html(r)}
@@ -1087,6 +1070,15 @@ def _build_html(r: CotizacionInternaPdfRequest) -> str:
   {cuerpo}
   {_cobros_html(r)}
   {_notas_html(r)}
+</div>"""
+
+
+def _build_html(r: CotizacionInternaPdfRequest) -> str:
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Cotización interna #{escape(r.folio)}</title><style>
+{_estilos_interno(_pie_texto(r))}
+</style></head><body>
+{_cuerpo_interno_html(r)}
 </body></html>"""
 
 
@@ -1094,3 +1086,14 @@ def render_cotizacion_interna_pdf(req: CotizacionInternaPdfRequest) -> bytes:
     from weasyprint import HTML  # import perezoso
 
     return HTML(string=_build_html(req)).write_pdf()
+
+
+def render_cotizacion_interna_preview_html(req: CotizacionInternaPdfRequest) -> str:
+    """Vista previa del documento interno para el panel (2.1, 22-sep-2026):
+    el MISMO `_cuerpo_interno_html` del PDF con el MISMO payload — solo el
+    cuerpo (`<div class="cot-interna">…</div>`), sin `<head>`, sin `<style>`
+    y sin `@page`. El CSS viaja aparte por
+    `GET /reportes/cotizacion-interna/hoja.css`, así que la hoja del panel y
+    el papel se pintan con el mismo marcado y la misma hoja de estilos. NO
+    importa WeasyPrint (es HTML, no PDF)."""
+    return _cuerpo_interno_html(req)

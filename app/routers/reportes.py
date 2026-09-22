@@ -14,7 +14,11 @@ from app.schemas.reportes import (
 )
 from app.security import require_internal_token
 from app.services.cotizacion_grupo_pdf import render_cotizacion_grupo_pdf
-from app.services.cotizacion_interna_pdf import render_cotizacion_interna_pdf
+from app.services.cotizacion_interna_pdf import (
+    _estilos_hoja_interna,
+    render_cotizacion_interna_pdf,
+    render_cotizacion_interna_preview_html,
+)
 from app.services.cotizacion_pdf import (
     _estilos_hoja,
     _mapa_svg_elemento,
@@ -135,4 +139,43 @@ def cotizacion_interna_pdf(req: CotizacionInternaPdfRequest) -> Response:
         content=pdf,
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="cotizacion-interna-{folio}.pdf"'},
+    )
+
+
+@router.post("/cotizacion-interna/preview-html", response_class=HTMLResponse)
+def cotizacion_interna_preview_html(req: CotizacionInternaPdfRequest) -> HTMLResponse:
+    """VISTA PREVIA de la COTIZACIÓN INTERNA (hoja interna del panel, Fase 2.1
+    del rediseño, 22-sep-2026): el MISMO payload que `/cotizacion-interna` y
+    el MISMO `_cuerpo_interno_html`, pero devuelve el CUERPO en HTML —el
+    `<div class="cot-interna">…</div>` con su marcado y sus clases— en vez de
+    generar el PDF. El CSS viaja aparte por
+    `GET /reportes/cotizacion-interna/hoja.css`. NO importa WeasyPrint.
+    `Cache-Control: no-store` — es el borrador vivo de la oficina, jamás se
+    cachea. Un fallo del armado → 500 con detalle (el API lo propaga al
+    panel, que muestra "sin vista previa"). Espejo de
+    `/cotizacion/preview-html` (la del cliente); este documento NUNCA va al
+    cliente."""
+    try:
+        html = render_cotizacion_interna_preview_html(req)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Error generando la vista previa de cotización interna")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"No se pudo generar la vista previa: {e}",
+        ) from e
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/cotizacion-interna/hoja.css")
+def cotizacion_interna_hoja_css() -> Response:
+    """CSS de la HOJA INTERNA para el panel (Fase 2.1, 22-sep-2026):
+    `@font-face` incrustado (Arimo, el MISMO de la hoja del cliente) + el
+    cuerpo del documento interno (`_estilos_hoja_interna`), que es el mismo
+    texto que lleva el PDF. Todo selector cuelga de `.cot-interna`. Es
+    estático por deploy: cacheable 1 h. Espejo de
+    `GET /reportes/cotizacion/hoja.css`."""
+    return Response(
+        content=_estilos_hoja_interna(),
+        media_type="text/css; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=3600"},
     )
