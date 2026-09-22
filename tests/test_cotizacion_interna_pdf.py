@@ -239,10 +239,19 @@ def _html(**extra) -> str:
 
 
 def _fila_tramo(html: str, ruta: str) -> str:
-    """La fila <tr>…</tr> de la tabla de tramos cuya ruta es `ruta`."""
+    """La fila <tr>…</tr> de la tabla de tramos cuya celda RUTA empieza con
+    `ruta`. Desde el 22-sep-2026 esa celda abre con la ABREVIATURA
+    («CUN–MID»); el nombre largo solo vuelve como respaldo (fila consolidada
+    o sin los dos IATA)."""
     i = html.index(f'<td class="ruta">{ruta}')
     ini = html.rindex("<tr>", 0, i)
     return html[ini : html.index("</tr>", i) + 5]
+
+
+def _cuerpo(html: str) -> str:
+    """Solo el <body> (sin el CSS): para afirmar que una palabra no se PINTA
+    aunque aparezca en un selector o en un comentario de la hoja de estilos."""
+    return html[html.index("<body>") :]
 
 
 # ===== Identidad del documento =====
@@ -306,8 +315,12 @@ def test_ficha_cliente_condiciones_avion_con_matricula_y_tripulacion() -> None:
     assert "Cliente Demo S.A." in html and "RFC CDE010101AAA" in html
     assert "Cliente Demo, S.A. de C.V." in html
     assert "Público · $900.00/hr" in html
-    assert "Paywise" in html
-    assert "18.27" in html
+    # 22-sep-2026: la ficha ya NO lleva «Método de cobro» ni «T.C. USD→MXN»
+    # (el cliente los marcó como repetidos). El método vive en la cabecera
+    # de COBROS y el T.C. en la fila «Total MXN» y en el cobro.
+    assert "Método de cobro" not in html and "T.C. USD→MXN" not in html
+    assert '<h2>Cobros <span class="op">previsto: Paywise</span></h2>' in html
+    assert 'Total MXN <span class="op">T.C. 18.27</span>' in html
     assert "Saab" in html and "cotizó Itzi" in html
     # Matrícula SIEMPRE visible (no aplica la regla VGV del cliente).
     assert '<div class="med">Piper Seneca V · N4142R</div>' in html
@@ -355,8 +368,11 @@ def test_tabla_de_tramos_con_las_seis_columnas_y_total() -> None:
         '    <th class="num">Tiempo vuelo</th><th class="num">Costo por hora vuelo</th>\n'
         '    <th class="num">Total por tramo</th>' in html
     )
-    fila = _fila_tramo(html, "Cancun-Merida")
-    assert '<span class="muted">CUN–MID</span>' in fila
+    # La celda RUTA es la ABREVIATURA y nada más (22-sep-2026): el nombre
+    # largo «Cancun-Merida» era la repetición que el cliente marcó en rojo.
+    fila = _fila_tramo(html, "CUN–MID")
+    assert fila.startswith('<tr><td class="ruta">CUN–MID</td>')
+    assert "Cancun-Merida" not in html and "Merida-Cancun" not in html
     assert (
         "<td>26-jun</td>"
         '<td class="num">157</td>'
@@ -364,7 +380,7 @@ def test_tabla_de_tramos_con_las_seis_columnas_y_total() -> None:
         '<td class="num">$900.00</td>'
         '<td class="num">$1,170.00</td></tr>' in fila
     )
-    assert '<td class="ruta">Merida-Cancun' in html
+    assert '<td class="ruta">MID–CUN</td>' in html
     # Fila TOTAL en USD con Σ tiempo (del API) y Σ millas (columna informativa).
     assert (
         '<tr class="total"><td>TOTAL</td><td></td><td class="num">314</td>'
@@ -401,17 +417,20 @@ def test_fila_de_ajuste_solo_si_no_cuadra_con_el_servicio_aereo() -> None:
         '<tr class="total"><td colspan="5">Servicio aéreo</td>'
         '<td class="num">$900.00 USD</td></tr>' in html
     )
-    # El desglose enlaza con la tabla: Σ tramos + ajuste, y marca la hora mínima.
+    # El desglose ya NO repite la operación (22-sep-2026): «Servicio aéreo»
+    # va pelón y el enlace con la tabla (Σ tramos ± ajuste) vive en el `.op`
+    # de la fila «Cobrables» del bloque VERDE de horas — sin esa mudanza, la
+    # tabla cerraría en $360.00 y el desglose en $900.00 sin nada que los una.
+    assert '<td class="lbl">Servicio aéreo</td><td class="val">$900.00' in html
+    assert "1.00 h × $900.00/hr" not in html
     assert (
-        'Servicio aéreo <span class="op">1.00 h × $900.00/hr · hora mínima · '
-        "Σ tramos $360.00 + $540.00</span></td>"
-        '<td class="val">$900.00' in html
+        'Cobrables</td><td class="v"><b>1.00 h</b> <span class="op">hora mínima aplicada · '
+        "Hora mínima 1.0 h: +$540.00 sobre Σ tramos</span></td>" in html
     )
-    assert "Cobrables</td>" in html and "hora mínima aplicada" in html
     # Ajuste negativo (horas pactadas por debajo) y motivo ausente → etiqueta genérica.
     html = _html(tramos_ajuste_usd=-90.0, tramos_ajuste_motivo=None, cobrable_override=True)
     assert 'Ajuste de horas <span class="op">' in html and "&minus;$90.00" in html
-    assert "Σ tramos $2,340.00 − $90.00" in html and "cobrable manual" in html
+    assert "cobrable manual · Ajuste de horas: −$90.00 sobre Σ tramos" in html
     # Diferencias de menos de un centavo no generan fila.
     assert 'class="ajuste"' not in _html(tramos_ajuste_usd=0.004)
 
@@ -423,26 +442,53 @@ def test_tramos_marcas_ferry_pernocta_hhmm_de_respaldo_y_consolidado() -> None:
         _tramo(3, "MID", "CUN", fecha=None, millas=None, tarifa_hora_usd=None, total_usd=0),
     ]
     html = _html(tramos_cotizados=tramos, tramos_tiempo_total_hhmm=None, tramos_tiempo_total_hr=3.0)
-    f1 = _fila_tramo(html, "Cancun-Isla Holbox")
-    assert "CUN–HOL · ferry" in f1 and '<td class="num">00:24</td>' in f1  # hh:mm de tiempo_hr
-    f2 = _fila_tramo(html, "Isla Holbox-Merida")
+    # Abreviatura + marcas en la MISMA línea, sin <br> (una fila, no dos).
+    f1 = _fila_tramo(html, "CUN–HOL")
+    assert '<td class="ruta">CUN–HOL<span class="muted"> · ferry</span></td>' in f1
+    assert '<td class="num">00:24</td>' in f1  # hh:mm de tiempo_hr
+    assert "<br>" not in f1
+    f2 = _fila_tramo(html, "HOL–MID")
     assert "pernocta $150.00" in f2 and "<td>27-jun</td>" in f2
     assert '<td class="num">98.6</td>' in f2
-    f3 = _fila_tramo(html, "Merida-Cancun")
+    f3 = _fila_tramo(html, "MID–CUN")
     assert "<td>—</td>" in f3 and f3.count('<td class="num">—</td>') == 2 and "$0.00" in f3
     # Σ millas solo cuando todos los tramos las traen; Σ tiempo de respaldo.
     assert '<td>TOTAL</td><td></td><td class="num"></td><td class="num">03:00</td>' in html
-    # Fila ÚNICA de respaldo (snapshot sin tramos): ruta completa y aviso.
+    # Fila ÚNICA de respaldo (snapshot sin tramos): RESPALDO al nombre largo
+    # (no hay abreviatura posible) y aviso.
     html = _html(
         tramos_cotizados=[
             _tramo(1, "CUN", "CZM", ruta="Cancun-Cozumel-Cancun", consolidado=True, millas=120)
         ]
     )
     assert (
-        '<td class="ruta">Cancun-Cozumel-Cancun<br><span class="muted">tramos consolidados' in html
+        '<td class="ruta">Cancun-Cozumel-Cancun<span class="muted"> · tramos consolidados</span>'
+        in html
     )
     assert "cotización sin desglose por tramo" in html
     assert "Sin tramos cotizados." in _html(tramos_cotizados=[])
+
+
+def test_tramo_sin_los_dos_iata_conserva_el_nombre_largo() -> None:
+    """RESPALDO de la abreviatura (22-sep-2026): promoverla sin red dejaría
+    filas SIN ruta. Sin uno de los IATA se pinta el nombre largo de siempre;
+    sin nombres ni IATA, «—» (jamás una celda vacía)."""
+    html = _html(
+        tramos_cotizados=[
+            _tramo(1, "CUN", "MID", destino_iata="", es_ferry=True),
+            _tramo(2, "MID", "CUN", ruta="", origen_iata="", destino_iata=""),
+        ]
+    )
+    assert '<td class="ruta">Cancun-Merida<span class="muted"> · ferry</span></td>' in html
+    # Sin `ruta` ni IATAs: el join de nombres es lo único que queda.
+    assert '<td class="ruta">Merida-Cancun</td>' in html
+    vacio = _html(
+        tramos_cotizados=[
+            _tramo(1, "CUN", "MID", ruta="", origen_iata="", destino_iata="",
+                   origen_nombre="", destino_nombre="")
+        ]
+    )
+    assert '<td class="ruta">—</td>' in vacio
 
 
 def test_formatos_hhmm_dia_mes_y_millas() -> None:
@@ -460,10 +506,10 @@ def test_formatos_hhmm_dia_mes_y_millas() -> None:
 
 def test_desglose_con_operaciones_tuas_cobradas_y_comision() -> None:
     html = _html()
-    assert (
-        'Servicio aéreo <span class="op">2.60 h × $900.00/hr</span></td>'
-        '<td class="val">$2,340.00' in html
-    )
+    # «Servicio aéreo» SIN gris (22-sep-2026): las horas × tarifa son el
+    # bloque «Horas cotizadas» de al lado.
+    assert '<td class="lbl">Servicio aéreo</td><td class="val">$2,340.00' in html
+    assert "2.60 h × $900.00/hr" not in html
     assert 'TUA CUN <span class="op">4 pax × $20.85</span></td><td class="val">$83.40' in html
     assert 'Hieleras <span class="op">2 × $25.00</span></td><td class="val">$50.00' in html
     # Comisión del vendedor SÍ se ve, con nombre y pago con IVA (pagoVendedorUsd).
@@ -472,8 +518,13 @@ def test_desglose_con_operaciones_tuas_cobradas_y_comision() -> None:
         '</td><td class="val">$280.00' in html
     )
     assert 'Descuento <span class="op">descuento</span></td><td class="val">&minus;$33.40' in html
+    # Sin conceptos exentos la hoja NO parte nada: el renglón sigue siendo el
+    # «Subtotal (sin IVA)» de siempre y el IVA va sin gris (el número de
+    # arriba YA es su base: «16 % de $2,720.00» lo repetía).
     assert "Subtotal (sin IVA)" in html and "$2,720.00" in html
-    assert 'IVA 16 % <span class="op">16 % de $2,720.00</span></td><td class="val">$435.20' in html
+    assert "Subtotal gravable" not in html and "No causan IVA" not in _cuerpo(html)
+    assert '<td class="lbl">IVA 16 %</td><td class="val">$435.20' in html
+    assert "16 % de $2,720.00" not in html
     assert "<td>Total USD</td>" in html and "$3,155.20" in html
     assert 'Total MXN <span class="op">T.C. 18.27</span></td><td class="val">$57,645.50 MXN' in html
     assert "motor v1.3 · calculado 01/06/2026 10:12" in html
@@ -501,7 +552,7 @@ def test_tuas_exentas_no_se_muestran() -> None:
         },
     )
     html = _html(lineas=lineas, tuas_exentos=["MID"])
-    assert "exento" not in html.lower()
+    assert "exento" not in _cuerpo(html).lower()
     assert "TUA MID" not in html
     assert html.count("TUA CUN") == 1
     # TUAS cobradas en MXN: pax × unitario nativo, total nativo y T.C. congelado.
@@ -538,6 +589,125 @@ def test_comision_por_hora_y_ajuste_pactado() -> None:
         'Redondeo <span class="op">a precio pactado $3,200.00</span></td>'
         '<td class="val">$12.00' in html
     )
+
+
+# ===== Conceptos SIN IVA debajo del IVA (22-sep-2026) =====
+
+
+def _payload_exentos(**extra) -> dict:
+    """Cotización CON conceptos exentos —pernocta + extra `aplica_iva=false`—,
+    el caso que ningún fixture cubría antes del 22-sep-2026.
+
+    Servicio 2,340.00 + TUA 83.40 + hieleras 50.00 − descuento 33.40
+    = 2,440.00 de BASE GRAVABLE; IVA 16 % = 390.40; exentos: transfers
+    100.00 + pernocta 150.00 ⇒ total 3,080.40 (subtotal «total − IVA» =
+    2,690.00, que es justamente el número que ya no sirve como base)."""
+    lineas = [
+        {
+            "clave": "TIEMPO_VUELO",
+            "concepto": "Tiempo de vuelo · 2.6 hr × $900/hr",
+            "monto_usd": 2340.0,
+            "cantidad": 2.6,
+            "unitario": 900.0,
+        },
+        {
+            "clave": "TUAS",
+            "concepto": "TUA CUN",
+            "monto_usd": 83.4,
+            "cantidad": 4,
+            "unitario": 20.85,
+        },
+        {"clave": "EXTRA", "concepto": "Hieleras", "monto_usd": 50.0, "aplica_iva": True},
+        {"clave": "EXTRA", "concepto": "Transfers", "monto_usd": 100.0, "aplica_iva": False},
+        {"clave": "AJUSTE", "concepto": "Descuento", "monto_usd": -33.4},
+        {"clave": "IVA", "concepto": "IVA 16%", "monto_usd": 390.4},
+        {"clave": "PERNOCTA", "concepto": "Viáticos por pernocta (sin IVA)", "monto_usd": 150.0},
+    ]
+    base: dict = dict(
+        lineas=lineas,
+        extras_total_usd=150.0,
+        viaticos_pernocta_usd=150.0,
+        comision_vendedor_usd=0,
+        comision_vendedor_nombre=None,
+        iva_comision_vendedor_usd=0,
+        pago_vendedor_usd=None,
+        subtotal_usd=2690.0,
+        iva_base_usd=2440.0,
+        iva_usd=390.4,
+        total_usd=3080.4,
+        total_mxn=None,
+    )
+    base.update(extra)
+    return base
+
+
+def test_conceptos_sin_iva_bajan_debajo_del_iva_con_su_rotulo() -> None:
+    """Pedido del cliente (22-sep-2026): «los conceptos que estén SIN IVA que
+    vayan ABAJO de donde está el IVA, para que se entienda visualmente que no
+    lleva IVA». El renglón de arriba pasa a ser la BASE GRAVABLE — si siguiera
+    siendo «total − IVA» (2,690.00) no sumaría lo de arriba NI sería la base
+    del 16 %: las dos lecturas del Excel de la oficina rotas a la vez."""
+    html = _html(**_payload_exentos())
+    cuerpo = _cuerpo(html)
+    assert 'Subtotal gravable</td><td class="val">$2,440.00' in cuerpo
+    assert "Subtotal (sin IVA)" not in cuerpo and "$2,690.00" not in cuerpo
+    assert '<td class="lbl">IVA 16 %</td><td class="val">$390.40' in cuerpo
+    assert '<tr class="exentos-row"><td class="lbl" colspan="2">No causan IVA</td></tr>' in cuerpo
+    # Orden exacto: gravables → base → IVA → rótulo → exentos → Total.
+    orden = [
+        "Hieleras",
+        "Descuento",
+        "Subtotal gravable",
+        "IVA 16 %",
+        "No causan IVA",
+        "Transfers",
+        "Viáticos por pernocta",
+        "Total USD",
+    ]
+    posiciones = [cuerpo.index(t) for t in orden]
+    assert posiciones == sorted(posiciones), orden
+    # Las dos identidades de la partición, leídas del documento impreso.
+    assert 2340.0 + 83.4 + 50.0 - 33.4 == 2440.0
+    assert round(2440.0 + 390.4 + 100.0 + 150.0, 2) == 3080.4
+    assert '<td class="val">$3,080.40' in cuerpo
+
+
+def test_sin_conceptos_exentos_la_hoja_no_cambia() -> None:
+    """La partición es CONDICIONAL: sin exentos (226 de las 231 cotizaciones
+    vivas) el desglose sale exactamente como antes del 22-sep-2026."""
+    html = _cuerpo(_html())
+    assert "Subtotal (sin IVA)" in html
+    assert "Subtotal gravable" not in html and "No causan IVA" not in html
+    # Con IVA en 0 tampoco se parte nada aunque haya exentos: no hay «arriba
+    # y abajo del IVA» que explicar.
+    sin_iva = _cuerpo(
+        _html(**_payload_exentos(iva_usd=0, iva_base_usd=None, subtotal_usd=2690.0))
+    )
+    assert "No causan IVA" not in sin_iva and "Subtotal gravable" not in sin_iva
+    assert "Viáticos por pernocta" in sin_iva
+
+
+def test_particion_degrada_si_la_columna_no_suma() -> None:
+    """Riesgo conocido: la línea AJUSTE canónica mezcla lo que entra a la base
+    con el redondeo que se suma DESPUÉS del IVA (1 de 231 cotizaciones). Si
+    Σ gravables ≠ base, NO se reordena nada: vuelve el layout de siempre —
+    jamás un documento con una columna que no suma— y el gris «16 % de $X»
+    reaparece, que es justo cuando sí aporta."""
+    roto = _payload_exentos(
+        lineas=[
+            dict(ln, monto_usd=-28.4) if ln["clave"] == "AJUSTE" else ln
+            for ln in _payload_exentos()["lineas"]
+        ],
+        subtotal_usd=2695.0,
+        total_usd=3085.4,
+    )
+    cuerpo = _cuerpo(_html(**roto))
+    assert 'Subtotal (sin IVA)</td><td class="val">$2,695.00' in cuerpo
+    assert "Subtotal gravable" not in cuerpo and "No causan IVA" not in cuerpo
+    # Aquí el gris del IVA SÍ aporta: el renglón de arriba no es la base.
+    assert 'IVA 16 % <span class="op">16 % de $2,440.00</span>' in cuerpo
+    # Y la pernocta vuelve a su lugar de siempre, arriba del subtotal.
+    assert cuerpo.index("Viáticos por pernocta") < cuerpo.index("Subtotal (sin IVA)")
 
 
 # ===== Cobros =====
@@ -592,6 +762,43 @@ def test_cobros_vacios_y_sin_tc() -> None:
     html = _html(subtotal_usd=None, saldo_usd=None)
     assert 'Subtotal (sin IVA)</td><td class="val">—</td>' in html
     assert "Saldo —" in html
+
+
+def test_metodo_previsto_vive_en_la_cabecera_de_cobros() -> None:
+    """El método de cobro salió de la ficha (repetido) pero NO del documento:
+    en el 19 % de las cotizaciones no hay ningún cobro registrado y ese campo
+    es el que explica por qué el IVA va al 16 % o al 0 %. Además es el ÚNICO
+    lugar donde se ve el porcentaje de TERMINAL pactado (distinto de la
+    comisión bancaria de cada cobro). Cuesta cero altura: va en el `<h2>`."""
+    html = _html(comision_billpocket_pct=8.857)
+    assert (
+        '<h2>Cobros <span class="op">previsto: Paywise · comisión terminal 8.857 %</span></h2>'
+        in html
+    )
+    # Sin cobros registrados el método sigue ahí, también en la fila vacía.
+    vacio = _html(cobros=[], comision_billpocket_pct=8.857)
+    assert "Sin cobros registrados. · previsto: Paywise · comisión terminal 8.857 %" in vacio
+    # Sin método (skew / cotización sin pactar): la cabecera queda como antes.
+    limpio = _html(metodo_cobro=None, metodo_cobro_label=None, cobros=[])
+    assert "<h2>Cobros</h2>" in limpio
+    assert "previsto:" not in limpio
+    assert "Sin cobros registrados.</td>" in limpio
+
+
+def test_el_bloque_de_cobros_puede_partirse_entre_hojas() -> None:
+    """Si algo se desborda, que bajen a la hoja 2 un par de filas de cobro y
+    no el bloque ENTERO con media hoja en blanco detrás (era `.bloque` =
+    `page-break-inside: avoid`). Cada FILA conserva su propio `avoid` y el
+    `thead` se repite, así que se desborda ordenado igual."""
+    html = _html()
+    assert "<div><h2>Cobros" in html
+    assert '<div class="bloque"><h2>Cobros' not in html
+    # Donde sí se conserva: notas internas y el par desglose+horas.
+    assert '<table class="cols desglose bloque">' in html
+    assert '<div class="bloque"><h2>Notas internas</h2>' in html
+    css = _estilos_interno("Documento interno")
+    assert "page-break-inside: avoid" in _regla(css, "table.grid tr")
+    assert "display: table-header-group" in css
 
 
 def test_cobro_reembolso_y_sobre_de_grupo() -> None:
@@ -715,7 +922,7 @@ def test_sin_lineas_usa_escalares_espejo() -> None:
         version_motor=None,
         calculado_at=None,
     )
-    assert 'Servicio aéreo <span class="op">2.60 h × $900.00/hr</span>' in html
+    assert '<td class="lbl">Servicio aéreo</td><td class="val">$2,340.00' in html
     assert 'TUA CUN <span class="op">4 pax × $20.85</span>' in html and "$83.40" in html
     assert "Extras" in html and "$50.00" in html
     assert "Comisión del vendedor · Saab" in html and "$280.00" in html
@@ -784,12 +991,17 @@ def test_router_error_de_render_es_500_con_detalle(monkeypatch) -> None:
 
 
 def test_cabe_en_una_hoja_carta() -> None:
-    """El caso REAL de la oficina (2 tramos y su cobro) cabe en UNA hoja con
-    el aire del 11-sep-2026 y le sobra ~14 % de hoja. Presupuesto medido con
-    una render de prueba: base ≈ 730 px + ≈ 40 px por FILA (cada tramo, cada
-    cobro y cada fila de ajuste) sobre ≈ 984 px útiles — una hoja mientras
-    `filas ≲ 6`. La cota se prueba floja a propósito: las métricas de fuente
-    del contenedor de producción no son las de esta Mac."""
+    """Tras la poda del 22-sep-2026 y con la fuente INCRUSTADA, el caso real
+    de la oficina, la #329 (3 tramos + fila de ajuste + cobro — la que salía
+    en DOS hojas) y hasta el folio de 8 tramos caben en UNA.
+
+    Presupuesto RE-MEDIDO en píxeles (Chrome, con Arimo incrustada y la caja
+    útil del `@page`: 984 px): base fija ≈ 530 px y cada FILA 23-40 px —
+    23 normal, ~40 si alguna celda parte en dos líneas, como el método de un
+    cobro con referencia — ⇒ UNA hoja mientras `filas ≲ 11`. Medidos con los
+    payloads REALES de producción: #329 = 718 px (antes 874 en esta Mac y
+    ~1006 con la fuente del contenedor: de ahí la segunda hoja) y el folio
+    de 8 tramos = 808 px. El máximo real de producción es 10 filas."""
     import pytest
 
     try:
@@ -799,21 +1011,33 @@ def test_cabe_en_una_hoja_carta() -> None:
 
     assert len(HTML(string=_html()).render().pages) == 1
 
-    # Una cotización mediana (3 tramos + su cobro) sigue siendo UNA hoja.
-    medio = _html(
+    # La #329: 3 tramos, fila de ajuste (+ «Servicio aéreo») y su cobro.
+    como_329 = _html(
         tramos_cotizados=[
             _tramo(i, "CUN" if i % 2 else "MID", "MID" if i % 2 else "CUN")
             for i in range(1, 4)
         ],
+        tramos_ajuste_usd=165.0,
+        tramos_ajuste_motivo="Horas pactadas 1.75 h",
+        cobrable_override=True,
     )
-    assert len(HTML(string=medio).render().pages) == 1
+    assert len(HTML(string=como_329).render().pages) == 1
+
+    # El folio con MÁS tramos de producción (8) y su cobro: 10 filas.
+    ocho = _html(
+        tramos_cotizados=[
+            _tramo(i, "CUN" if i % 2 else "MID", "MID" if i % 2 else "CUN", es_ferry=i in (3, 4))
+            for i in range(1, 9)
+        ],
+    )
+    assert len(HTML(string=ocho).render().pages) == 1
 
 
 def test_cotizacion_larga_se_desborda_ordenada_no_se_corta() -> None:
-    """Una cotización pesada (8 tramos, 8 cobros) YA no cabe en una hoja: el
-    precio de que la tabla se lea (9.5 pt). Lo que sí se garantiza es que se
-    desborde ORDENADA — a lo sumo dos hojas, con el encabezado de la tabla
-    repetido — y que no se pierda ni una fila."""
+    """Una cotización sin techo (8 tramos, 8 cobros, notas: muy por encima de
+    las ~11 filas del presupuesto) puede no caber en una hoja. Lo que sí se
+    garantiza es que se desborde ORDENADA —a lo sumo dos hojas, con el
+    encabezado de la tabla repetido— y que no se pierda ni una fila."""
     import pytest
 
     try:
@@ -874,6 +1098,22 @@ def test_hoja_con_aire_tipografia_de_tablas_nunca_baja_de_95pt() -> None:
     assert "font-size: 8.5pt" not in _regla(css, "body")
     assert "line-height: 1.2" not in _regla(css, "body")
     assert "padding: 1px 4px" not in css and "padding: 1px 3px" not in css
+
+
+def test_fuente_incrustada_la_misma_del_pdf_del_cliente() -> None:
+    """Sin `@font-face`, «cabe en una hoja» es lotería: el contenedor de
+    Railway no instala fuentes y cae a su sans por defecto (~8-12 % más
+    ancho que el de esta Mac), que es por lo que la #329 cabía aquí y salía
+    en dos hojas allá. Se incrusta la MISMA Arimo del PDF del cliente,
+    importando `_estilos_fuente` — jamás copiando el base64."""
+    css = _estilos_interno("Documento interno")
+    assert cotizacion_pdf._estilos_fuente() in css
+    assert "@font-face" in css and "font-family: 'Arimo'" in css
+    assert css.count("@font-face") == 2  # regular y bold
+    # La familia del documento arranca en Arimo (y conserva los respaldos).
+    assert "font-family: Arimo, 'Helvetica Neue', Arial, sans-serif" in _regla(css, "*")
+    # También en el pie de `@page` (WeasyPrint no hereda ahí).
+    assert css.count("font-family: Arimo, 'Helvetica Neue', Arial, sans-serif") >= 3
 
 
 def test_bloques_separados_y_desglose_no_toca_horas_cotizadas() -> None:
@@ -962,11 +1202,12 @@ def test_avion_utilizado_se_escapa() -> None:
 
 
 def test_tc_de_seis_decimales_en_resumen_desglose_tuas_y_cobros() -> None:
-    """Fuente única `_tc_txt`: los CINCO lugares donde esta hoja escribe un
-    T.C. (resumen, total MXN, TUA cobrada en pesos, línea del desglose en
-    pesos y el T.C. del cobro) lo imprimen completo, hasta 6 decimales. Con
-    `:g` todos decían «16.9916» y el total en pesos no cuadraba al
-    remultiplicar (pedido del cliente sobre la #314)."""
+    """Fuente única `_tc_txt`: los CUATRO lugares donde esta hoja escribe un
+    T.C. (total MXN, TUA cobrada en pesos, línea del desglose en pesos y el
+    T.C. del cobro) lo imprimen completo, hasta 6 decimales. Con `:g` todos
+    decían «16.9916» y el total en pesos no cuadraba al remultiplicar
+    (pedido del cliente sobre la #314). El quinto —la fila «T.C. USD→MXN» de
+    la ficha— se quitó el 22-sep-2026 por repetido."""
     lineas = _payload()["lineas"] + [
         {
             "clave": "EXTRA",
@@ -1000,7 +1241,7 @@ def test_tc_de_seis_decimales_en_resumen_desglose_tuas_y_cobros() -> None:
         tuas_cobradas=tuas,
         cobros=cobros,
     )
-    assert '<td class="k">T.C. USD→MXN</td><td class="v">16.991632</td>' in html
+    assert "T.C. USD→MXN" not in html  # la fila de la ficha ya no existe
     assert 'Total MXN <span class="op">T.C. 16.991632</span>' in html
     assert "$100,000.00 MXN" in html
     # TUA CZM y la línea Handling: cada una con su T.C. congelado completo.
@@ -1010,4 +1251,4 @@ def test_tc_de_seis_decimales_en_resumen_desglose_tuas_y_cobros() -> None:
     # Ni un solo T.C. recortado a «16.9916» en toda la hoja.
     assert re.search(r"16\.9916(?!32)", html) is None
     # Un T.C. redondo se sigue viendo redondo (no «18.270000»).
-    assert '<td class="v">18.27</td>' in _html()
+    assert 'Total MXN <span class="op">T.C. 18.27</span>' in _html()

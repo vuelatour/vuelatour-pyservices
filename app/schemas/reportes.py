@@ -83,6 +83,11 @@ class CotizacionPdfRequest(BaseModel):
     descuento_usd: float = 0
     iva_pct: float = 0
     iva_usd: float = 0
+    # BASE GRAVABLE del IVA (22-sep-2026): el renglón que va SOBRE el IVA
+    # cuando hay conceptos exentos (pernocta, extras con `aplica_iva=false`),
+    # que bajan DEBAJO del IVA. ADITIVO: hoy el API del cliente todavía no lo
+    # manda y se deriva como `total − IVA − Σ exentos` (re-suma de columna).
+    iva_base_usd: float | None = None
     total_usd: float = 0
     # Total MXN EXACTO por composición (USD×TC + nativos MXN tal cual) y el TC
     # congelado de la cotización, para la línea final "Total MXN".
@@ -150,7 +155,12 @@ class CotizacionGrupoTramoPdf(EscalaPdf):
 class CotizacionGrupoLineaPdf(BaseModel):
     """Línea del desglose consolidado APTA para el cliente. `cantidad` ×
     `unitario` viajan cuando la línea nació así (tour por persona: "44 ×
-    $85.00"); `moneda` es la nativa de la línea (MXN en extras en pesos)."""
+    $85.00"); `moneda` es la nativa de la línea (MXN en extras en pesos).
+
+    `aplica_iva=False` marca un concepto que NO causa IVA: desde el
+    22-sep-2026 esas líneas se pintan DEBAJO del IVA. ADITIVO (None = el API
+    no lo dice → la línea se trata como gravable, igual que siempre); la
+    PERNOCTA se reconoce además por su clave."""
 
     clave: str = ""
     concepto: str = ""
@@ -158,6 +168,7 @@ class CotizacionGrupoLineaPdf(BaseModel):
     cantidad: float | None = None
     unitario: float | None = None
     moneda: str | None = None
+    aplica_iva: bool | None = None
 
 
 class CotizacionGrupoExtraPdf(ExtraPdf):
@@ -229,6 +240,9 @@ class CotizacionGrupoPdfRequest(BaseModel):
     subtotal_usd: float | None = None
     iva_pct: float = 0
     iva_usd: float = 0
+    # Base gravable del IVA (22-sep-2026, mismo criterio que el PDF de un
+    # avión): ADITIVO; sin él se deriva `total − IVA − Σ exentos`.
+    iva_base_usd: float | None = None
     total_usd: float = 0
     total_mxn: float | None = None
     tc_usd_mxn: float | None = None

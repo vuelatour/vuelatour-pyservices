@@ -41,15 +41,51 @@ del snapshot: cada tramo trae su `tiempo_hr` (con calzo), su tarifa y su
 («01:18», «26-jun», «8.8570 % = $3,236.36») o se re-suma una columna
 informativa (millas).
 
-Presupuesto de UNA hoja tras el aire (≈ 738 pt / 984 px útiles, medido con
-una render de prueba): base fija (cabecera + banda + resumen + ficha +
-desglose|horas + cobros con su thead + notas) ≈ 730 px, y cada FILA de más
-≈ 40 px — cuenta cada tramo, cada cobro y las dos filas de la fila de
-ajuste. O sea: UNA hoja mientras `filas ≲ 6` (el caso real de la oficina
-—2 tramos, 1 cobro— usa el 86 %). Antes cabían ~8 tramos porque la tabla
-iba a 8 pt: ese es el precio de que se lea. Con más filas la tabla pasa a
-una segunda hoja —el `thead` se repite y ninguna fila se parte a la
-mitad—; los bloques llevan `page-break-inside: avoid`.
+PODA de repeticiones (22-sep-2026, capturas del cliente sobre la #329, que
+salía en DOS hojas). Se quitó lo que ya estaba dicho en otro renglón:
+  · las filas «Método de cobro» y «T.C. USD→MXN» de la ficha — el método
+    PREVISTO subió a la cabecera del bloque «Cobros» (ahí también vive el %
+    de terminal pactado) y el T.C. sigue en la fila «Total MXN» y en la
+    columna «Equiv. USD» del cobro;
+  · el nombre largo del tramo («Cancún-Playa del Carmen»): la fila ahora
+    abre con la ABREVIATURA «CUN–PCE» y las marcas en gris en la MISMA
+    línea (el nombre largo vuelve solo como respaldo: fila consolidada o
+    sin los dos IATA);
+  · el detalle gris del IVA («16 % de $X · Pago facturable…»): con el orden
+    nuevo el renglón de arriba YA es la base gravable, así que el gris solo
+    aparece si de verdad difieren;
+  · el gris del servicio aéreo («1.75 h × $1,650.00/hr · cobrable manual ·
+    Σ tramos…»): eso mismo está en el bloque «Horas cotizadas» (Cobrables +
+    Tarifa), donde la fila «Cobrables» ahora lleva el motivo Y el importe
+    del ajuste — sin esa mudanza NO se puede borrar el gris: en 6 de cada
+    10 cotizaciones la tabla cierra en «TOTAL Σ tramos» y el desglose en
+    «Servicio aéreo», y el ajuste es lo único que los concilia.
+
+Conceptos SIN IVA (22-sep-2026, mismo pedido): cuando hay algún concepto
+exento (pernocta, extra con `aplica_iva=false`, comisión de terminal) Y el
+vuelo lleva IVA, el renglón sobre el IVA pasa a ser la BASE GRAVABLE
+(«Subtotal gravable» = `iva_base_usd`) y los exentos bajan DEBAJO del IVA,
+bajo el rótulo «No causan IVA». La partición es de PRESENTACIÓN: ningún
+monto cambia y la hace la función compartida `particionar_por_iva`
+(`cotizacion_pdf`), que verifica las dos identidades (Σ gravables == base;
+base + IVA + Σ exentos == total) y, si no cuadran, DEGRADA al layout de
+siempre. Sin conceptos exentos la hoja sale exactamente igual que antes.
+
+Presupuesto de UNA hoja tras la poda (≈ 738 pt / 984 px útiles, medido con
+la fuente INCRUSTADA): base fija (cabecera + banda + resumen + ficha de 3
+filas + desglose|horas + cobros con su thead) ≈ 530 px y cada FILA de más
+≈ 40 px — cuenta cada tramo, cada TUA cobrada, cada extra, cada cobro y la
+pareja ajuste + «Servicio aéreo» de la tfoot. O sea: UNA hoja mientras
+`filas ≲ 11` (antes ≲ 6; el máximo real en producción es 10). Con más
+filas la tabla pasa a una segunda hoja —el `thead` se repite y ninguna
+fila se parte a la mitad—; «Notas internas» y el par desglose+horas llevan
+`page-break-inside: avoid`, pero el bloque de cobros NO: si algo se
+desborda, que bajen dos filas de cobro y no el bloque entero.
+
+La fuente va INCRUSTADA (Arimo, la misma del PDF del cliente, vía
+`_estilos_fuente`): sin ella el contenedor de Railway cae a su sans por
+defecto (~8-12 % más ancho que el de esta Mac) y «cabe en una hoja» se
+vuelve lotería — es la razón de que la #329 cupiera aquí y no allá.
 """
 
 from datetime import UTC, datetime
@@ -69,9 +105,16 @@ from app.services.cotizacion_pdf import (
     _CANCUN,
     _MESES_ES,
     _NAVY,
+    ETIQUETA_BASE_GRAVABLE,
+    ETIQUETA_SIN_IVA,
+    ETIQUETA_SUBTOTAL,
+    TOLERANCIA_USD,
+    LineaIva,
+    _estilos_fuente,
     _fecha_dia,
     _logo_data_uri,
     _money,
+    particionar_por_iva,
 )
 from app.services.reporte_vuelo_pdf import _fecha
 
@@ -165,11 +208,6 @@ def _millas(v: float | None) -> str:
 
 def _horas(v: float | None, dec: int = 2) -> str:
     return "—" if v is None else f"{v:.{dec}f} h"
-
-
-def _tc(v: float | None) -> str:
-    """T.C. del resumen: hasta 6 decimales (`_tc_txt`), «—» si no llegó."""
-    return "—" if not v else _tc_txt(v)
 
 
 def _pct_banco(v: float) -> str:
@@ -347,9 +385,31 @@ def _resumen_html(r: CotizacionInternaPdfRequest) -> str:
   </tr></table>"""
 
 
+def _metodo_previsto_txt(r: CotizacionInternaPdfRequest) -> str:
+    """«previsto: Transferencia · comisión terminal 8.86 %»: el método de cobro
+    PACTADO, que el 22-sep-2026 dejó de tener fila propia en la ficha y pasó a
+    la cabecera del bloque «Cobros» (cuesta cero altura y queda junto a los
+    cobros reales). NO es decorativo: es el campo que decide si la cotización
+    lleva IVA 16 % o 0 %, y es el ÚNICO lugar del documento donde se ve el
+    porcentaje de terminal pactado (distinto de la comisión BANCARIA de cada
+    cobro). Sin método → '' (la cabecera queda como antes)."""
+    metodo = (r.metodo_cobro_label or r.metodo_cobro or "").strip()
+    if not metodo:
+        return ""
+    txt = f"previsto: {metodo}"
+    if r.comision_billpocket_pct:
+        txt += f" · comisión terminal {r.comision_billpocket_pct:g} %"
+    return txt
+
+
 def _ficha_html(r: CotizacionInternaPdfRequest) -> str:
     """Ficha en dos columnas: cliente/condiciones | vendedor/tripulación/marcas.
-    La fecha de cotización va al final y en pequeño (no es protagonista)."""
+    La fecha de cotización va al final y en pequeño (no es protagonista).
+
+    22-sep-2026: SIN las filas «Método de cobro» y «T.C. USD→MXN» (el cliente
+    las marcó como repetidas). El método vive ahora en la cabecera de
+    «Cobros» (`_metodo_previsto_txt`) y el T.C. en la fila «Total MXN» del
+    desglose y en la columna «Equiv. USD» del cobro."""
     izq: list[str] = []
     cliente = escape(r.cliente or "Cliente")
     if r.es_broker:
@@ -371,11 +431,6 @@ def _ficha_html(r: CotizacionInternaPdfRequest) -> str:
         marcas.append("tarifa manual")
     tarifa += _op(" · ".join(marcas))
     izq.append(_kv("Tarifa", tarifa))
-    metodo = escape(r.metodo_cobro_label or r.metodo_cobro or "—")
-    if r.comision_billpocket_pct:
-        metodo += _op(f"comisión terminal {r.comision_billpocket_pct:g} %")
-    izq.append(_kv("Método de cobro", metodo))
-    izq.append(_kv("T.C. USD→MXN", _tc(r.tc_usd_mxn)))
 
     der: list[str] = []
     vendedor = escape(r.vendedor) if r.vendedor else "—"
@@ -416,22 +471,35 @@ def _ficha_html(r: CotizacionInternaPdfRequest) -> str:
 
 def _tramo_fila(t: CotizacionInternaTramoCotizadoPdf) -> str:
     """Una fila de la tabla de administración: RUTA · FECHA · MILLAS · TIEMPO ·
-    COSTO/HR · TOTAL. Debajo de la ruta, en gris, el par IATA y las marcas."""
-    ruta = t.ruta or "-".join(
+    COSTO/HR · TOTAL.
+
+    La celda RUTA abre con la ABREVIATURA «CUN–PCE» (22-sep-2026: el cliente
+    marcó el nombre largo como repetido) y las marcas —ferry, pernocta— van
+    en gris en la MISMA línea, sin `<br>`: la fila baja de dos renglones a
+    uno (89 → 40 px), que es de dónde sale la mitad de la hoja recuperada.
+
+    RESPALDO (obligatorio): la abreviatura solo existe si vienen los DOS
+    IATA y la fila no es la consolidada; si no, se conserva el nombre largo
+    de siempre (`ruta` o el join de nombres) — promoverla sin respaldo
+    dejaría la fila consolidada SIN ruta."""
+    largo = t.ruta or "-".join(
         p for p in (t.origen_nombre or t.origen_iata, t.destino_nombre or t.destino_iata) if p
+    )
+    abrev = (
+        f"{t.origen_iata}–{t.destino_iata}"
+        if (t.origen_iata and t.destino_iata and not t.consolidado)
+        else ""
     )
     detalles: list[str] = []
     if t.consolidado:
         detalles.append("tramos consolidados")
-    elif t.origen_iata and t.destino_iata:
-        detalles.append(f"{t.origen_iata}–{t.destino_iata}")
     if t.es_ferry:
         detalles.append("ferry")
     if t.pernocta:
         detalles.append("pernocta" + (f" {_money(t.pernocta_usd)}" if t.pernocta_usd else ""))
-    ruta_html = escape(ruta or "—")
+    ruta_html = escape(abrev or largo or "—")
     if detalles:
-        ruta_html += f'<br><span class="muted">{escape(" · ".join(detalles))}</span>'
+        ruta_html += f'<span class="muted"> · {escape(" · ".join(detalles))}</span>'
     tarifa = "—" if t.tarifa_hora_usd is None else _money(t.tarifa_hora_usd)
     tiempo = t.tiempo_hhmm or _hhmm(t.tiempo_hr)
     return (
@@ -517,29 +585,18 @@ def _concepto_operacion(
     clave = (ln.clave or "").upper()
     concepto = (ln.concepto or ln.clave or "Concepto").strip()
     if clave == "TIEMPO_VUELO":
-        # Etiqueta de administración; la operación sale del snapshot (horas
-        # cobrables × tarifa) y, si hubo ajuste, se enlaza con la tabla.
-        horas = ln.cantidad if ln.cantidad is not None else r.tiempo_cobrable_hr
-        tarifa = ln.unitario if ln.unitario is not None else r.tarifa_hora_usd
-        partes: list[str] = []
-        if horas is not None and tarifa is not None:
-            partes.append(f"{horas:.2f} h × {_money(tarifa)}/hr")
-        if r.hora_minima_aplicada:
-            partes.append("hora mínima")
-        if r.cobrable_override:
-            partes.append("cobrable manual")
-        if _hay_ajuste(r):
-            signo = "+" if r.tramos_ajuste_usd > 0 else "−"
-            partes.append(
-                f"Σ tramos {_money(r.tramos_total_usd)} {signo} "
-                f"{_money(abs(r.tramos_ajuste_usd))}"
-            )
-        return "Servicio aéreo", " · ".join(partes)
+        # Etiqueta de administración, SIN gris (22-sep-2026): «1.75 h ×
+        # $1,650.00/hr», «hora mínima», «cobrable manual» y «Σ tramos ±
+        # ajuste» son exactamente las filas «Cobrables» y «Tarifa» del
+        # bloque «Horas cotizadas» — el cliente marcó esta línea como
+        # repetida. El enlace con la tabla de tramos (Σ tramos ± ajuste) NO
+        # se pierde: vive en el `.op` de «Cobrables» (ver `_horas_html`).
+        return "Servicio aéreo", ""
     if clave == "COMISION_VENDEDOR":
         nombre = (r.comision_vendedor_nombre or "").strip()
         if nombre and nombre.lower() not in concepto.lower():
             concepto += f" · {nombre}"
-        partes = []
+        partes: list[str] = []
         modo = (r.comision_vendedor_modo or "").upper()
         if modo == "POR_HORA" and ln.cantidad is not None and ln.unitario is not None:
             partes.append(f"{ln.cantidad:.2f} h × {_money(ln.unitario)}/hr")
@@ -627,12 +684,33 @@ def _lineas_fallback(r: CotizacionInternaPdfRequest) -> list[CotizacionInternaLi
     return lineas
 
 
+def _sin_iva(ln: CotizacionInternaLineaPdf) -> bool:
+    """¿La línea canónica NO causa IVA? La PERNOCTA por su clave (el motor la
+    publica «Viáticos por pernocta (sin IVA)» y la suma después del IVA) y
+    cualquier línea que el API marque `aplica_iva=False`: extras exentos y la
+    comisión de terminal sintetizada. `None` = el API no lo dice → gravable,
+    como siempre."""
+    return (ln.clave or "").upper() == "PERNOCTA" or ln.aplica_iva is False
+
+
 def _desglose_html(r: CotizacionInternaPdfRequest) -> str:
     """Desglose interno: líneas canónicas en su orden (IVA aparte, en los
     totales), TUAS solo las cobradas (detalle `tuas_cobradas` en el lugar de
-    las líneas TUAS), subtotal sin IVA, IVA con su base, total USD y MXN."""
+    las líneas TUAS), subtotal, IVA, total USD y MXN.
+
+    22-sep-2026, dos cambios de PRESENTACIÓN (ningún monto se mueve):
+      · los conceptos que NO causan IVA bajan DEBAJO del IVA bajo el rótulo
+        «No causan IVA» y el renglón de arriba pasa a ser «Subtotal
+        gravable» (= `iva_base_usd`), que es sobre lo que se calcula el
+        16 %. Lo decide `particionar_por_iva` (compartida con el PDF del
+        cliente y el de grupo), que degrada al layout de siempre si las dos
+        identidades no cuadran;
+      · el gris del IVA se reduce: la nota larga del API (`iva_nota`) ya no
+        se pinta —el cliente la marcó como repetida— y «16 % de $X» solo
+        aparece si el renglón de arriba NO es la base (con la partición
+        activa lo es por construcción, así que no se pinta)."""
     lineas = list(r.lineas) or _lineas_fallback(r)
-    filas: list[str] = []
+    cuerpo: list[LineaIva] = []
     tuas_pintadas = False
     for ln in lineas:
         clave = (ln.clave or "").upper()
@@ -646,29 +724,53 @@ def _desglose_html(r: CotizacionInternaPdfRequest) -> str:
                 # El detalle por aeropuerto sustituye a las líneas TUAS 1:1
                 # (misma suma: `total_usd` de cada fila == línea canónica).
                 if not tuas_pintadas:
-                    filas.extend(_tua_fila(t) for t in r.tuas_cobradas)
+                    cuerpo.extend(
+                        LineaIva(t.total_usd, False, _tua_fila(t)) for t in r.tuas_cobradas
+                    )
                     tuas_pintadas = True
                 continue
         concepto, op = _concepto_operacion(ln, r)
-        filas.append(_fila_desglose(concepto, op, _monto(ln.monto_usd)))
-    if not filas:
+        cuerpo.append(
+            LineaIva(ln.monto_usd, _sin_iva(ln), _fila_desglose(concepto, op, _monto(ln.monto_usd)))
+        )
+
+    particion = particionar_por_iva(cuerpo, r.iva_base_usd, r.iva_usd, r.total_usd, r.iva_pct)
+    filas = [ln.fila for ln in particion.gravables]
+    if not filas and not particion.exentos:
         filas.append(
             '<tr><td class="lbl muted" colspan="2">Sin desglose (cotización sin precio).</td></tr>'
         )
 
-    # El subtotal (total − IVA) lo manda el API; sin dato se deja en blanco.
-    subtotal = "—" if r.subtotal_usd is None else _monto(r.subtotal_usd)
-    filas.append(
-        '<tr class="sub-row"><td class="lbl">Subtotal (sin IVA)</td>'
-        f'<td class="val">{subtotal}</td></tr>'
+    if particion.activa:
+        # El renglón sobre el IVA es la BASE GRAVABLE, no «total − IVA».
+        filas.append(
+            f'<tr class="sub-row"><td class="lbl">{ETIQUETA_BASE_GRAVABLE}</td>'
+            f'<td class="val">{_monto(particion.base_usd)}</td></tr>'
+        )
+        subtotal_impreso: float | None = particion.base_usd
+    else:
+        # El subtotal (total − IVA) lo manda el API; sin dato se deja en blanco.
+        subtotal = "—" if r.subtotal_usd is None else _monto(r.subtotal_usd)
+        filas.append(
+            f'<tr class="sub-row"><td class="lbl">{ETIQUETA_SUBTOTAL}</td>'
+            f'<td class="val">{subtotal}</td></tr>'
+        )
+        subtotal_impreso = r.subtotal_usd
+    # Gris del IVA SOLO si el renglón de arriba no es ya la base (si lo es,
+    # «16 % de $2,987.50» repetiría el número que está justo encima).
+    difiere_de_la_base = r.iva_base_usd is not None and (
+        subtotal_impreso is None or abs(subtotal_impreso - r.iva_base_usd) >= TOLERANCIA_USD
     )
-    iva_op = f"{r.iva_pct:g} % de {_money(r.iva_base_usd)}" if r.iva_base_usd is not None else ""
-    if r.iva_nota:
-        iva_op = f"{iva_op} · {r.iva_nota}".strip(" ·")
+    iva_op = f"{r.iva_pct:g} % de {_money(r.iva_base_usd)}" if difiere_de_la_base else ""
     filas.append(
         f'<tr><td class="lbl">IVA {r.iva_pct:g} %{_op(iva_op)}</td>'
         f'<td class="val">{_money(r.iva_usd)}</td></tr>'
     )
+    if particion.exentos:
+        filas.append(
+            f'<tr class="exentos-row"><td class="lbl" colspan="2">{ETIQUETA_SIN_IVA}</td></tr>'
+        )
+        filas.extend(ln.fila for ln in particion.exentos)
     filas.append(
         f'<tr class="total-row"><td>Total USD</td><td class="val">{_monto(r.total_usd)}</td></tr>'
     )
@@ -695,7 +797,15 @@ def _desglose_html(r: CotizacionInternaPdfRequest) -> str:
 
 def _horas_html(r: CotizacionInternaPdfRequest) -> str:
     """Horas del snapshot (vuelo + calzos + sobrevuelo → cotizadas → cobrables)
-    y tarifa: explican la fila de ajuste de la tabla. Solo lo que venga."""
+    y tarifa: explican la fila de ajuste de la tabla. Solo lo que venga.
+
+    La fila «Cobrables» carga desde el 22-sep-2026 el MOTIVO y el IMPORTE del
+    ajuste («Horas pactadas 1.75 h: +$165.00 sobre Σ tramos»). Es el
+    refuerzo que permite borrar el gris del «Servicio aéreo»: sin él, en las
+    6 de cada 10 cotizaciones que tienen ajuste la hoja diría «TOTAL
+    $2,722.50» en la tabla y «Servicio aéreo $2,887.50» en el desglose sin
+    nada que los concilie. Cuesta 0 px: es un `.op` en una fila que ya
+    existía."""
     filas: list[str] = []
     for lbl, v in (("Vuelo", r.vuelo_hr), ("Calzos", r.calzos_hr), ("Sobrevuelo", r.sobrevuelo_hr)):
         if v:
@@ -708,7 +818,13 @@ def _horas_html(r: CotizacionInternaPdfRequest) -> str:
             notas.append("hora mínima aplicada")
         if r.cobrable_override:
             notas.append("cobrable manual")
-        cobrables = f"<b>{_horas(r.tiempo_cobrable_hr)}</b>" + _op(", ".join(notas))
+        if _hay_ajuste(r):
+            signo = "+" if r.tramos_ajuste_usd > 0 else "−"
+            motivo = (r.tramos_ajuste_motivo or "Ajuste de horas").strip()
+            notas.append(
+                f"{motivo}: {signo}{_money(abs(r.tramos_ajuste_usd))} sobre Σ tramos"
+            )
+        cobrables = f"<b>{_horas(r.tiempo_cobrable_hr)}</b>" + _op(" · ".join(notas))
         filas.append(_kv("Cobrables", cobrables))
     if r.tarifa_hora_usd is not None:
         filas.append(_kv("Tarifa", f"{_money(r.tarifa_hora_usd)}/hr"))
@@ -773,13 +889,24 @@ def _cobro_fila(c: CotizacionInternaCobroPdf, con_usd: bool) -> str:
 def _cobros_html(r: CotizacionInternaPdfRequest) -> str:
     """Cobros del vuelo (cobro_vuelo, partes de sobre incluidas), compactos:
     fecha, método (referencia en gris), bruto, comisión bancaria, neto,
-    conciliado; resumen cobrado (cobrosEnUsd), comisiones, neto, saldo y semáforo."""
+    conciliado; resumen cobrado (cobrosEnUsd), comisiones, neto, saldo y semáforo.
+
+    El `<h2>` lleva el método PREVISTO (22-sep-2026, ver `_metodo_previsto_txt`)
+    y la fila vacía también: en el 19 % de las cotizaciones no hay ningún
+    cobro registrado y el método sigue siendo el que explica el IVA.
+
+    El bloque NO lleva `.bloque` (`page-break-inside: avoid`) a propósito:
+    cada FILA ya lo lleva y el `thead` se repite, así que en el peor caso se
+    va a la hoja 2 un par de filas — no el bloque entero con media hoja en
+    blanco detrás."""
     con_usd = any((c.moneda or "USD").upper() != "USD" for c in r.cobros)
     ncols = 7 if con_usd else 6
+    previsto = _metodo_previsto_txt(r)
     if r.cobros:
         filas = "".join(_cobro_fila(c, con_usd) for c in r.cobros)
     else:
-        filas = f'<tr><td colspan="{ncols}" class="muted">Sin cobros registrados.</td></tr>'
+        vacia = "Sin cobros registrados." + (f" · {previsto}" if previsto else "")
+        filas = f'<tr><td colspan="{ncols}" class="muted">{escape(vacia)}</td></tr>'
     th_usd = '<th class="num">Equiv. USD</th>' if con_usd else ""
 
     resumen = [f"Cobrado {_monto(r.total_cobrado_usd)} USD"]
@@ -806,7 +933,7 @@ def _cobros_html(r: CotizacionInternaPdfRequest) -> str:
             f"${r.cobros_sin_tc_mxn:,.2f} SIN tipo de cambio: fuera de la suma.</td></tr>"
         )
     return f"""
-  <div class="bloque"><h2>Cobros</h2>
+  <div><h2>Cobros{_op(previsto)}</h2>
   <table class="grid"><thead><tr>
     <th>Fecha</th><th>Método</th><th class="num">Bruto</th>
     <th class="num">Comisión banco</th><th class="num">Neto</th>{th_usd}<th>Conc.</th>
@@ -843,9 +970,17 @@ def _estilos_interno(pie: str) -> str:
     La MISMA información sigue cabiendo en UNA hoja (ver el presupuesto del
     encabezado del módulo): lo que se encogió es el número de tramos/cobros
     que caben, no el contenido.
+
+    FUENTE INCRUSTADA (22-sep-2026): Arimo (OFL, métrica de Arial) vía
+    `_estilos_fuente()` del PDF del cliente — el MISMO archivo, importado y
+    no copiado. Antes esta hoja declaraba 'Helvetica Neue', Arial sin
+    `@font-face` y el contenedor de Railway (sin paquetes de fuentes) caía a
+    su sans por defecto, ~8-12 % más ancho: lo que cabía en una hoja aquí se
+    desbordaba allá — y el test de «una hoja» medía con métricas que
+    producción no usa.
     """
-    fuente = "'Helvetica Neue', Arial, sans-serif"
-    return f"""
+    fuente = "Arimo, 'Helvetica Neue', Arial, sans-serif"
+    return f"""{_estilos_fuente()}
   @page {{
     size: Letter;
     margin: 9mm 12mm 10mm;
@@ -900,6 +1035,9 @@ def _estilos_interno(pie: str) -> str:
   .num {{ text-align: right !important; white-space: nowrap; }}
   .muted {{ color: #6b7280; font-size: 8pt; font-weight: 400; }}
   .op {{ color: #6b7280; font-size: 8pt; font-weight: 400; }}
+  /* Aclaración colgada de un h2 (el método de cobro previsto en «Cobros»):
+     no va en VERSALES como el título — es texto de apoyo. */
+  h2 .op {{ text-transform: none; letter-spacing: 0; }}
   .nota {{ font-size: 8pt; color: #6b7280; margin: 3px 0 2px; }}
   .ambar {{ color: #b45309; }}  .rojo {{ color: {_BRAND}; }}  .verde {{ color: #15803d; }}
   .tag {{ display: inline-block; border: 1px solid #d1d5db; border-radius: 3px; padding: 0 4px;
@@ -909,6 +1047,10 @@ def _estilos_interno(pie: str) -> str:
   .totales .val {{ text-align: right; font-weight: 600; white-space: nowrap; }}
   .sub-row td {{ border-top: 1px solid #d1d5db; font-weight: 700; color: {_NAVY};
                  padding-top: 4px; }}
+  /* Rótulo del bloque de conceptos que NO causan IVA (van DEBAJO del IVA,
+     22-sep-2026): apoyo, no dato — versales grises sobre el primer exento. */
+  .exentos-row td {{ padding-top: 5px; font-size: 8pt; text-transform: uppercase;
+                     letter-spacing: .6px; color: #6b7280; }}
   .total-row td {{ border-top: 2px solid {_NAVY}; font-size: 10.5pt; font-weight: 800;
                    color: {_BRAND}; padding-top: 4px; }}
   .mxn-row td {{ font-weight: 700; color: {_NAVY}; }}

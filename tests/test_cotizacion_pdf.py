@@ -31,6 +31,7 @@ from app.services.cotizacion_pdf import (
     CLASE_RAIZ,
     PREVIEW_ANCHO_PX,
     TZ_NOTA,
+    LineaIva,
     _build_html,
     _estilos_base,
     _estilos_cuerpo,
@@ -43,6 +44,7 @@ from app.services.cotizacion_pdf import (
     _mapa_svg_elemento,
     _peninsula_paths,
     _xy,
+    particionar_por_iva,
 )
 
 
@@ -658,6 +660,169 @@ def test_vistazo_ya_no_pinta_el_tiempo_de_vuelo_por_tramo() -> None:
         assert esperado in html, esperado
 
 
+# ===== Conceptos SIN IVA debajo del IVA (22-sep-2026) =====
+# Pedido del cliente: «los conceptos que estén SIN IVA que vayan ABAJO de
+# donde está el IVA, para que se entienda visualmente que no lleva IVA».
+# La partición la hace UNA función pura compartida por los tres documentos.
+
+
+def _cuerpo_hoja(html: str) -> str:
+    """Solo el <body> (sin el <style>): para comparar lo que se PINTA."""
+    return html[html.index(f'<body class="{CLASE_RAIZ}">') :]
+
+
+def _req_exentos(**extra) -> CotizacionPdfRequest:
+    """Cotización con pernocta + extra exento: base gravable 4,000 (servicio
+    3,800 + TUAS 200 + catering 100 − descuento 100), IVA 16 % = 640, exentos
+    250 (transfers 100 + pernocta 150) ⇒ total 4,890."""
+    base = dict(
+        subtotal_usd=3800,
+        tuas_usd=200,
+        extras=[
+            {"concepto": "Catering", "monto_usd": 100},
+            {"concepto": "Transfers", "monto_usd": 100, "aplica_iva": False},
+        ],
+        extras_total_usd=200,
+        viaticos_pernocta_usd=150,
+        descuento_usd=100,
+        iva_pct=16,
+        iva_usd=640,
+        total_usd=4890,
+    )
+    base.update(extra)
+    return _req(**base)
+
+
+def test_los_conceptos_sin_iva_van_debajo_del_iva_con_su_rotulo() -> None:
+    cuerpo = _cuerpo_hoja(_build_html(_req_exentos()))
+    assert 'Subtotal gravable</td><td class="val">$4,000.00' in cuerpo
+    assert "Subtotal (sin IVA)" not in cuerpo
+    assert '<tr class="exentos-row"><td class="lbl" colspan="2">No causan IVA</td></tr>' in cuerpo
+    orden = [
+        "Catering",
+        "Descuento",
+        "Subtotal gravable",
+        "IVA (16%)",
+        "No causan IVA",
+        "Transfers",
+        "Viáticos por pernocta",
+        "Total (USD)",
+    ]
+    posiciones = [cuerpo.index(t) for t in orden]
+    assert posiciones == sorted(posiciones), orden
+    # Las dos identidades, leídas del documento: la columna suma hasta la
+    # base y el 16 % se calcula sobre ella.
+    assert 3800 + 200 + 100 - 100 == 4000
+    assert 4000 + 640 + 100 + 150 == 4890
+    # El extra GRAVADO se queda arriba; el exento baja.
+    assert cuerpo.index("Catering") < cuerpo.index("IVA (16%)") < cuerpo.index("Transfers")
+    # La hoja y su vista previa siguen siendo el mismo HTML.
+    preview = _cuerpo_hoja(_build_html(_req_exentos(), solo_hoja_1=True))
+    assert "No causan IVA" in preview and "Subtotal gravable" in preview
+
+
+def test_sin_conceptos_exentos_el_cuerpo_no_cambia() -> None:
+    """La partición es CONDICIONAL: los payloads sin conceptos exentos (226
+    de 231 en producción) imprimen EXACTAMENTE el cuerpo de siempre —
+    «Subtotal (sin IVA)» incluido— aunque el CSS haya ganado una regla."""
+    for nombre in ("minimo", "externo_sin_itinerario"):
+        cuerpo = _cuerpo_hoja(_build_html(CotizacionPdfRequest(**_SNAPSHOTS[nombre][0])))
+        assert "Subtotal (sin IVA)" in cuerpo, nombre
+        assert "Subtotal gravable" not in cuerpo, nombre
+        assert "No causan IVA" not in cuerpo, nombre
+    # Un extra exento sin IVA en la cotización tampoco parte nada.
+    sin_iva = _cuerpo_hoja(_build_html(_req_exentos(iva_usd=0, total_usd=4250)))
+    assert "Subtotal (sin IVA)" in sin_iva and "No causan IVA" not in sin_iva
+
+
+def test_particion_degrada_si_las_identidades_no_cuadran() -> None:
+    """Nunca un documento con una columna que no suma: si Σ gravables ≠ base
+    (el caso real es el redondeo que se suma DESPUÉS del IVA) se pinta el
+    layout de siempre."""
+    roto = _cuerpo_hoja(_build_html(_req_exentos(total_usd=4895)))  # +5 de redondeo
+    assert "Subtotal (sin IVA)" in roto and "Subtotal gravable" not in roto
+    assert "No causan IVA" not in roto
+    assert roto.index("Viáticos por pernocta") < roto.index("Subtotal (sin IVA)")
+
+
+def test_particionar_por_iva_es_pura_y_verifica_las_dos_identidades() -> None:
+    """La función que replican los TRES documentos (y, en TypeScript, la hoja
+    del panel): mismos umbrales, mismas dos identidades, misma degradación."""
+    grav = [LineaIva(1000.0, False, "<tr>a</tr>"), LineaIva(-100.0, False, "<tr>b</tr>")]
+    exento = LineaIva(150.0, True, "<tr>c</tr>")
+    lineas = [grav[0], exento, grav[1]]
+
+    p = particionar_por_iva(lineas, 900.0, 144.0, 1194.0)
+    assert p.activa and p.base_usd == 900.0
+    assert [ln.fila for ln in p.gravables] == ["<tr>a</tr>", "<tr>b</tr>"]
+    assert [ln.fila for ln in p.exentos] == ["<tr>c</tr>"]
+
+    # Sin base del API se deriva de la columna (total − IVA − Σ exentos), y
+    # entonces hay que verificarla contra el PORCENTAJE (ver la prueba de la
+    # tercera identidad): 16 % de 900 = 144.
+    assert particionar_por_iva(lineas, None, 144.0, 1194.0, 16.0).base_usd == 900.0
+    # Sin exentos / sin IVA / con un exento en cero: no se parte nada y el
+    # orden original se conserva intacto.
+    for caso in (
+        particionar_por_iva(grav, 900.0, 144.0, 1044.0),
+        particionar_por_iva(lineas, 900.0, 0.0, 1050.0),
+        particionar_por_iva(
+            [grav[0], LineaIva(0.0, True, "<tr>c</tr>")], 1000.0, 160.0, 1160.0
+        ),
+    ):
+        assert not caso.activa and caso.exentos == []
+    assert [ln.fila for ln in particionar_por_iva(lineas, 900.0, 0.0, 1050.0).gravables] == [
+        "<tr>a</tr>",
+        "<tr>c</tr>",
+        "<tr>b</tr>",
+    ]
+    # Identidades rotas (base que no es la suma de arriba / total que no
+    # cierra): degradación.
+    assert not particionar_por_iva(lineas, 895.0, 144.0, 1189.0).activa
+    assert not particionar_por_iva(lineas, 900.0, 144.0, 1200.0).activa
+    # Medio centavo de tolerancia: los montos llegan redondeados a 2 dec.
+    assert particionar_por_iva(lineas, 900.004, 144.0, 1194.0).activa
+
+
+def test_base_derivada_se_verifica_contra_el_porcentaje_de_iva() -> None:
+    """TERCERA identidad (22-sep-2026, revisión adversaria). Cuando la base se
+    DERIVA —el PDF del cliente y el de grupo, porque el API todavía no manda
+    `iva_base_usd`— las otras dos identidades se cumplen POR CONSTRUCCIÓN: la
+    segunda es la ecuación de la que se despejó la base, y la primera también
+    cuadra cuando el desvío vive en una fila de arriba. Es justo lo que pasa
+    con el REDONDEO automático, que el armador del cliente absorbe dentro de
+    «Servicio aéreo»: sin este candado se rotularía «Subtotal gravable» un
+    número cuyo 16 % NO es el IVA impreso — el renglón que la oficina lee
+    como «sobre esto se calcula el impuesto»."""
+    # Cotización #192 de producción (redondeo automático de $8.66, IVA 16 %)
+    # a la que se le añade un concepto exento: base real 3,716.67, pero la
+    # columna de arriba suma 3,725.33 porque el redondeo va absorbido.
+    con_redondeo = _req_exentos(
+        subtotal_usd=3716.67 + 8.66,
+        tuas_usd=0,
+        extras=[{"concepto": "Transfers", "monto_usd": 100, "aplica_iva": False}],
+        extras_total_usd=100,
+        viaticos_pernocta_usd=0,
+        descuento_usd=0,
+        iva_usd=594.67,
+        total_usd=round(3716.67 + 594.67 + 100.0 + 8.66, 2),
+    )
+    cuerpo = _cuerpo_hoja(_build_html(con_redondeo))
+    assert "Subtotal gravable" not in cuerpo and "No causan IVA" not in cuerpo
+    assert 'Subtotal (sin IVA)</td><td class="val">$3,825.33' in cuerpo
+    # 16 % de 3,725.33 = 596.05 ≠ 594.67: por eso NO se rotula como base.
+    assert round(3725.33 * 0.16, 2) != 594.67
+
+    # A nivel de función: la misma columna con y sin el porcentaje.
+    lineas = [LineaIva(1000.0, False, "<tr>a</tr>"), LineaIva(150.0, True, "<tr>c</tr>")]
+    assert particionar_por_iva(lineas, None, 160.0, 1310.0, 16.0).activa
+    assert not particionar_por_iva(lineas, None, 155.0, 1305.0, 16.0).activa
+    # Sin `iva_pct` (API viejo que no lo manda) NO se rotula nada como base.
+    assert not particionar_por_iva(lineas, None, 160.0, 1310.0).activa
+    # Con la base EXPLÍCITA del API el porcentaje no se exige: manda el campo.
+    assert particionar_por_iva(lineas, 1000.0, 160.0, 1310.0).activa
+
+
 # Cinturón del refactor (8-sep-2026): sha256 del HTML del PDF para 3 payloads
 # (los logos data-URI se normalizan a "data:LOGO" y las fuentes woff2 a
 # "data:FUENTE" para no depender de los binarios). Refrescados el 8-sep-2026
@@ -672,6 +837,19 @@ def test_vistazo_ya_no_pinta_el_tiempo_de_vuelo_por_tramo() -> None:
 # Refrescados el 15-sep-2026 al quitar el bloque «Traslados» (la fecha del
 # vuelo pasó a `.meta`) y el renglón «Tiempo de vuelo … h por tramo» de la
 # tarjeta "De un vistazo" — pedido del cliente sobre el PDF del folio #314.
+# Refrescados el 22-sep-2026 (conceptos SIN IVA debajo del IVA). Los TRES
+# cambian SOLO porque `cotizacion-hoja.css` —compartido por los tres
+# documentos— gana la regla `.exentos-row`: NINGÚN cuerpo se movió. "minimo"
+# y "externo_sin_itinerario" no traen conceptos exentos, y "completo" sí
+# (pernocta $150 con IVA) pero es un payload SINTÉTICO incoherente con el
+# motor: su IVA de $734.40 es el 16 % de $4,590.00, o sea de una base que
+# INCLUYE la pernocta, y el motor nunca la mete (`calcTotales`:
+# `baseIva = subtotal + tuas + extrasConIva + comisión + ajuste`, y pernocta
+# y extras sin IVA se suman DESPUÉS). Por eso cae en la degradación —la
+# tercera identidad, `base × iva_pct == IVA`, no cuadra— y sale con el
+# layout de siempre. Quien cuadre algún día esos números sintéticos verá el
+# cuerpo cambiar: es lo esperado. Lo vigila
+# `test_sin_conceptos_exentos_el_cuerpo_no_cambia`.
 # Si un cambio INTENCIONAL de la hoja del cliente mueve estos hashes, se
 # refrescan con el valor que imprime el assert — pero antes hay que
 # preguntarse si la vista previa del panel y la hoja del panel (mismo CSS)
@@ -747,11 +925,11 @@ _SNAPSHOTS: dict[str, tuple[dict, str]] = {
             aeronave_cotizada_modelo="Piper Seneca V",
             modelos_cotizados=["Piper Seneca V", "Cessna 206"],
         ),
-        "32ce5c26df18e786f038faf6169c327e7c7403542590f4ec2050e1d1c085d75c",
+        "2d589ac413fb0e8f3da97f4a7b384dd07227ca1c947d03ebae06320be1e71ba7",
     ),
     "minimo": (
         dict(folio="COT-1", cliente="Cliente", origen="CUN", destino="MID"),
-        "c0b8406ac457f2c9741991956c835628f17b6ec24985ee85d764ad1b35d2454a",
+        "9f8fa79bec8961801044738d6565f1b0c512d177069405077d19909e8a16ea26",
     ),
     "externo_sin_itinerario": (
         dict(
@@ -796,7 +974,7 @@ _SNAPSHOTS: dict[str, tuple[dict, str]] = {
             avion_modelo=None,
             foto_exterior=None,
         ),
-        "8d1744f92b5cb4cca9761a9d4305178098efbfd3ffda75c04b2be36cb53ed018",
+        "fe1fb8afd9d76d1237008e9e2be317e2a3ef85d57e9c7913ee68a7b4dc6c2e6a",
     ),
 }
 

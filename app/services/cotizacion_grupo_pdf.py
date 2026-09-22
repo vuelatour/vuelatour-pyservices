@@ -43,9 +43,14 @@ from app.services._formato import _tc_txt
 from app.services.cotizacion_pdf import (
     _NAVY,
     CLASE_RAIZ,
+    ETIQUETA_BASE_GRAVABLE,
+    ETIQUETA_SIN_IVA,
+    ETIQUETA_SUBTOTAL,
+    LineaIva,
     _estilos_base,
     _fecha_corta,
     _ficha_aeronave_html,
+    _fila_totales,
     _itinerario_html,
     _logo_data_uri,
     _mapa_svg,
@@ -53,6 +58,7 @@ from app.services.cotizacion_pdf import (
     _mostrar_matricula,
     _vistazo_motores,
     _vistazo_velocidad,
+    particionar_por_iva,
 )
 
 # Claves que JAMÁS ve el cliente aunque algún API las mande como línea.
@@ -107,15 +113,28 @@ def _etiqueta_linea(ln: CotizacionGrupoLineaPdf) -> str:
     return lbl
 
 
-def _lineas_cliente(r: CotizacionGrupoPdfRequest) -> list[tuple[str, str]]:
-    """Cuerpo del desglose: (etiqueta, monto) en el ORDEN del API.
+def _sin_iva(ln: CotizacionGrupoLineaPdf) -> bool:
+    """¿La línea NO causa IVA? La pernocta por su clave (el motor la pone
+    siempre después del IVA) y cualquier otra que el API marque
+    `aplica_iva=False` (extras exentos, comisión de terminal). `None` = el
+    API no lo dice → gravable, como toda la vida."""
+    return (ln.clave or "").upper() == "PERNOCTA" or ln.aplica_iva is False
+
+
+def _lineas_cliente(r: CotizacionGrupoPdfRequest) -> list[LineaIva]:
+    """Cuerpo del desglose: una `LineaIva` (monto, exento, fila HTML) por
+    renglón, en el ORDEN del API.
 
     Filtra defensivamente lo que nunca ve el cliente: comisión del vendedor,
     redondeo (también un AJUSTE positivo = redondeo hacia arriba) y el IVA
     (va en los totales). Sin líneas (API viejo) el cuerpo se arma con los
     escalares del payload, mismo criterio que el PDF de un avión.
     """
-    filas: list[tuple[str, str]] = []
+    filas: list[LineaIva] = []
+
+    def fila(lbl: str, val: str, monto: float = 0.0, exento: bool = False) -> None:
+        filas.append(LineaIva(monto, exento, _fila_totales(lbl, val)))
+
     for ln in r.desglose_consolidado:
         clave = (ln.clave or "").upper()
         if clave in _CLAVES_OCULTAS or clave in _CLAVES_TOTALES:
@@ -124,7 +143,7 @@ def _lineas_cliente(r: CotizacionGrupoPdfRequest) -> list[tuple[str, str]]:
             continue
         if (ln.concepto or "").strip().lower() == "redondeo":
             continue
-        filas.append((_etiqueta_linea(ln), _monto(ln.monto_usd)))
+        fila(_etiqueta_linea(ln), _monto(ln.monto_usd), ln.monto_usd, _sin_iva(ln))
     if filas:
         return filas
 
@@ -133,25 +152,31 @@ def _lineas_cliente(r: CotizacionGrupoPdfRequest) -> list[tuple[str, str]]:
     lbl = "Servicio aéreo"
     if n_av:
         lbl += f" · {_plural(n_av, 'aeronave', 'aeronaves')}"
-    filas.append((lbl, _money(r.servicio_aereo_usd)))
+    fila(lbl, _money(r.servicio_aereo_usd), r.servicio_aereo_usd)
     if not r.tuas_detalle:
-        filas.append(("TUAS", _money(r.tuas_usd)))
+        fila("TUAS", _money(r.tuas_usd), r.tuas_usd)
     elif len(r.tuas_detalle) == 1:
-        filas.append((r.tuas_detalle[0], _money(r.tuas_usd)))
+        fila(r.tuas_detalle[0], _money(r.tuas_usd), r.tuas_usd)
     else:
-        filas.extend((det, "") for det in r.tuas_detalle)
-        filas.append(("TUAS (total)", _money(r.tuas_usd)))
+        for det in r.tuas_detalle:
+            fila(det, "")
+        fila("TUAS (total)", _money(r.tuas_usd), r.tuas_usd)
     for e in r.extras:
         lbl = e.concepto or "Extra"
         if e.cantidad is not None and e.unitario is not None and "×" not in lbl:
             lbl += f" · {e.cantidad:g} × {_money(e.unitario)}"
         if e.moneda == "MXN" and e.monto_nativo is not None:
             lbl += f" · ${e.monto_nativo:,.2f} MXN"
-        filas.append((lbl, _money(e.monto_usd)))
+        fila(lbl, _money(e.monto_usd), e.monto_usd, exento=not e.aplica_iva)
     if r.viaticos_pernocta_usd > 0:
-        filas.append(("Viáticos por pernocta", _money(r.viaticos_pernocta_usd)))
+        fila(
+            "Viáticos por pernocta",
+            _money(r.viaticos_pernocta_usd),
+            r.viaticos_pernocta_usd,
+            exento=True,
+        )
     if r.descuento_usd > 0:
-        filas.append(("Descuento", f"&minus;{_money(r.descuento_usd)}"))
+        fila("Descuento", f"&minus;{_money(r.descuento_usd)}", -r.descuento_usd)
     return filas
 
 
@@ -159,20 +184,35 @@ def _desglose_html(r: CotizacionGrupoPdfRequest) -> str:
     """Tabla de desglose + totales (subtotal / IVA / total USD / MXN) y el
     precio por persona (toggle). Todo viene del API; el único derivado es
     el subtotal cuando un API viejo no lo manda (total − IVA, como en el
-    PDF de un avión)."""
-    filas = [
-        f'<tr><td class="lbl">{escape(lbl)}</td><td class="val">{val}</td></tr>'
-        for lbl, val in _lineas_cliente(r)
-    ]
-    subtotal = r.subtotal_usd if r.subtotal_usd is not None else r.total_usd - r.iva_usd
-    filas.append(
-        '<tr class="sub-row"><td class="lbl">Subtotal (sin IVA)</td>'
-        f'<td class="val">{_money(subtotal)}</td></tr>'
-    )
+    PDF de un avión).
+
+    Conceptos SIN IVA (22-sep-2026): la partición es la MISMA función del PDF
+    de un avión (`particionar_por_iva`, importada — jamás copiada); sin
+    exentos, o si las identidades no cuadran, la tabla sale igual que
+    siempre."""
+    cuerpo = _lineas_cliente(r)
+    particion = particionar_por_iva(cuerpo, r.iva_base_usd, r.iva_usd, r.total_usd, r.iva_pct)
+    filas = [ln.fila for ln in particion.gravables]
+    if particion.activa:
+        filas.append(
+            f'<tr class="sub-row"><td class="lbl">{ETIQUETA_BASE_GRAVABLE}</td>'
+            f'<td class="val">{_money(particion.base_usd)}</td></tr>'
+        )
+    else:
+        subtotal = r.subtotal_usd if r.subtotal_usd is not None else r.total_usd - r.iva_usd
+        filas.append(
+            f'<tr class="sub-row"><td class="lbl">{ETIQUETA_SUBTOTAL}</td>'
+            f'<td class="val">{_money(subtotal)}</td></tr>'
+        )
     filas.append(
         f'<tr><td class="lbl">IVA ({r.iva_pct:.0f}%)</td>'
         f'<td class="val">{_money(r.iva_usd)}</td></tr>'
     )
+    if particion.exentos:
+        filas.append(
+            f'<tr class="exentos-row"><td class="lbl" colspan="2">{ETIQUETA_SIN_IVA}</td></tr>'
+        )
+        filas.extend(ln.fila for ln in particion.exentos)
     filas.append(
         f'<tr class="total-row"><td>Total ({escape(r.moneda)})</td>'
         f'<td class="val">{_money(r.total_usd)}</td></tr>'

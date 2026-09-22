@@ -58,6 +58,10 @@
   .cot-hoja .totales .val { text-align: right; font-weight: 600; }
   .cot-hoja .sub-row td { border-top: 1px solid #d1d5db; padding-top: 8px; font-weight: 700;
                  color: #102a43; }
+  /* Rótulo del bloque de conceptos que NO causan IVA (22-sep-2026): van
+     DEBAJO del IVA para que se vea que no lo llevan. Es apoyo, no dato. */
+  .cot-hoja .exentos-row td { padding: 10px 0 0; font-size: 11px; text-transform: uppercase;
+                 letter-spacing: 1px; color: #6b7280; }
   .cot-hoja .total-row td { border-top: 2px solid #102a43; padding-top: 12px; font-size: 18px;
                    font-weight: 800; color: #dc2626; }
   .cot-hoja .total-mxn td { font-size: 13px; font-weight: 700; color: #102a43; }

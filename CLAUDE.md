@@ -102,7 +102,8 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   «Documento interno · generado … · usuario»). Importa branding/formatos de
   `cotizacion_pdf.py` pero NO `_estilos_base` ni `_mostrar_matricula`: aquí
   la matrícula SIEMPRE se ve. Formato de administración: fecha protagonista
-  = DÍA DEL VUELO; tabla de tramos RUTA («Cancun-Merida») · FECHA («26-jun»)
+  = DÍA DEL VUELO; tabla de tramos RUTA («CUN–MID» desde el 22-sep-2026;
+  antes el nombre largo «Cancun-Merida») · FECHA («26-jun»)
   · DISTANCIA MILLAS · TIEMPO VUELO («01:18», incluye calzos) · COSTO POR
   HORA · TOTAL POR TRAMO + fila TOTAL; si `tramos_ajuste_usd` ≠ 0 una fila
   más con su motivo para que Σ tramos + ajuste == «Servicio aéreo» del
@@ -116,8 +117,10 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   cuerpo y tablas a 9.5 pt (encabezados/aclaraciones 8–8.5 pt, pie 7.5 pt;
   nada baja de ahí), celdas 3 px × 6 px, `@page` 9/12/10 mm. Presupuesto
   MEDIDO: una hoja mientras tramos + cobros + fila de ajuste ≲ 6 (base
-  ≈ 730 px + ≈ 40 px por fila sobre ≈ 984 px útiles); con más, segunda hoja
-  ORDENADA (`thead` repetido, `page-break-inside: avoid` por fila). Las
+  ≈ 730 px + ≈ 40 px por fila sobre ≈ 984 px útiles) — **SUPERSEDIDO el
+  22-sep-2026 por la poda: hoy ≲ 11 filas, ver la entrada de abajo**; con
+  más, segunda hoja ORDENADA (`thead` repetido, `page-break-inside: avoid`
+  por fila). Las
   notas se truncan con «…». Cabecera: «Avión cotizado» (siempre) y, si el
   API manda `aeronave_utilizada` (texto u objeto `{matricula, modelo}`), la
   segunda línea «Avión utilizado: …»; con
@@ -125,6 +128,78 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   por texto: dos aviones comparten modelo) esa línea va en ÁMBAR con la
   marca «Distinto al cotizado». El legado `aeronave_operativa` de la v1 se
   acepta y NO se pinta.
+- Cotización interna: PODA de repeticiones y UNA hoja de verdad
+  (22-sep-2026, capturas del cliente sobre la #329, que salía en DOS hojas).
+  Salieron del documento las filas **«Método de cobro» y «T.C. USD→MXN»** de
+  la ficha (el método PREVISTO subió al `<h2>` de «Cobros» —
+  `_metodo_previsto_txt`, «Cobros · previsto: Transferencia · comisión
+  terminal 8.86 %», también en la fila «Sin cobros registrados»: es el campo
+  que decide IVA 16 % vs 0 % y el único sitio con el % de TERMINAL pactado;
+  el T.C. sigue en «Total MXN» y en «Equiv. USD»), el **nombre largo del
+  tramo** (la celda RUTA abre con la ABREVIATURA «CUN–PCE» y las marcas en
+  gris en la MISMA línea, sin `<br>`: 89 → 40 px por fila; RESPALDO
+  obligatorio al nombre largo si falta un IATA o es la fila consolidada), la
+  **nota gris del IVA** (`iva_nota` ya no se pinta y «16 % de $X» solo si el
+  renglón de arriba NO es la base) y el **gris del «Servicio aéreo»** (horas
+  × tarifa ya están en «Horas cotizadas»). Refuerzo NO opcional: la fila
+  **«Cobrables» carga el motivo y el importe del ajuste** («Horas pactadas
+  1.75 h: +$165.00 sobre Σ tramos»); sin él, en las 6 de cada 10
+  cotizaciones con ajuste la tabla cerraría en «TOTAL Σ tramos» y el
+  desglose en «Servicio aéreo» sin nada que los concilie. Además la hoja
+  **incrusta Arimo** (`_estilos_fuente` del PDF del cliente, importada) —
+  antes declaraba `'Helvetica Neue', Arial` sin `@font-face` y el contenedor
+  de Railway caía a su sans (~8-12 % más ancho): lo que cabía en la Mac se
+  desbordaba en producción — y el bloque de Cobros dejó de ser `.bloque`
+  (`page-break-inside: avoid`): si algo se desborda bajan dos filas, no el
+  bloque entero. Presupuesto nuevo MEDIDO en píxeles con la fuente
+  incrustada (Chrome, caja útil 984 px): base ≈ 530 px + 23-40 px por fila
+  ⇒ **una hoja mientras filas ≲ 11** (antes ≲ 6). Con los payloads REALES de
+  prod: #329 = 718 px y el folio con más tramos (8) = 808 px. Tests:
+  `tests/test_cotizacion_interna_pdf.py`.
+- **Conceptos SIN IVA debajo del IVA** (22-sep-2026, mismo pedido: «que se
+  entienda visualmente que no lleva IVA»), en los TRES documentos y en la
+  hoja WYSIWYG del panel. Fuente única: `cotizacion_pdf.particionar_por_iva`
+  (pura) + `LineaIva` + las etiquetas `ETIQUETA_BASE_GRAVABLE` / `ETIQUETA_
+  SIN_IVA` / `ETIQUETA_SUBTOTAL`; `cotizacion_grupo_pdf` y
+  `cotizacion_interna_pdf` la IMPORTAN (jamás copiar). Qué hace: separa las
+  filas en gravables y exentas (PERNOCTA por clave y `aplica_iva=false` —
+  extras exentos y comisión de terminal), pone las exentas DEBAJO del IVA
+  bajo el rótulo «No causan IVA» y convierte el renglón de arriba en la BASE
+  GRAVABLE («Subtotal gravable» = `iva_base_usd`). Es OBLIGATORIO redefinir
+  ese renglón: valía `total − IVA` e incluía los exentos, así que bajarlos y
+  dejarlo igual rompería las dos lecturas del Excel de la oficina a la vez
+  (ni suma lo de arriba, ni el 16 % de él da el IVA). NADA se recalcula: es
+  presentación. Dos candados: **activación CONDICIONAL** (hace falta algún
+  exento ≠ 0 *y* IVA > 0 — sin eso el documento sale byte-idéntico al de
+  antes: 226 de 231 cotizaciones de prod) y **verificación de las
+  identidades** (`Σ gravables == base` y `base + IVA + Σ exentos == total`,
+  medio centavo de tolerancia) con **degradación** al layout de siempre si
+  no cuadran — el caso real es la línea AJUSTE canónica, que mezcla lo que
+  entra a la base con el redondeo que se suma DESPUÉS del IVA (1 de 231).
+  Jamás un documento con una columna que no suma. **TERCERA identidad,
+  `base × iva_pct == IVA`, obligatoria SOLO cuando la base se DERIVÓ** (el
+  PDF del cliente y el de grupo, porque el API todavía no manda
+  `iva_base_usd`): una base derivada cumple la segunda identidad POR
+  CONSTRUCCIÓN —se despejó de ella— y la primera también cuando el desvío
+  vive en una fila de arriba, que es justo lo que hace el REDONDEO
+  automático (el armador del cliente lo ABSORBE en «Servicio aéreo»). Sin
+  ese candado el PDF imprimiría «Subtotal gravable $3,725.33 / IVA (16 %)
+  $594.67» cuando el 16 % de ese renglón son $596.05 — el renglón que la
+  oficina lee como «sobre esto se calcula el impuesto». Sin `iva_pct` (API
+  viejo) también se degrada: nunca se rotula «Subtotal gravable» un número
+  que no se pudo verificar. Verificado contra prod: las 136 cotizaciones con
+  IVA cumplen `iva = base × pct` al centavo. El PDF del cliente empezó
+  además a LEER `ExtraPdf.aplica_iva` (existía en el esquema y el API ya lo
+  mandaba; hasta hoy se ignoraba). Campos ADITIVOS nuevos: `iva_base_usd` en
+  `CotizacionPdfRequest` y `CotizacionGrupoPdfRequest` y `aplica_iva` en
+  `CotizacionGrupoLineaPdf` — sin ellos la base se deriva `total − IVA −
+  Σ exentos` (re-suma de columna, lo único permitido aquí). CSS: `.exentos-row`
+  en `app/static/cotizacion-hoja.css` (cliente y grupo; el panel lo copia con
+  `npm run sync:hoja-css`) y en `_estilos_interno`. Los 3 sha256 de
+  `tests/test_cotizacion_pdf.py` se refrescaron SOLO por la regla nueva del
+  CSS compartido: **ningún cuerpo se movió** (el payload «completo» sí trae
+  pernocta con IVA, pero su IVA sintético es el 16 % de una base que INCLUYE
+  la pernocta —cosa que el motor nunca hace—, así que cae en la degradación).
 - Vista previa de cotización (`POST /reportes/cotizacion/preview-html`,
   8-sep-2026): MISMO payload `CotizacionPdfRequest` y MISMO
   `cotizacion_pdf._build_html(req, solo_hoja_1=True)` → `text/html` de SOLO

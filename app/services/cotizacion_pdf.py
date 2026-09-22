@@ -43,10 +43,12 @@ PDF comparten archivo, fuente y mapa — nunca una imitación.
 
 import base64
 import json
+from collections.abc import Sequence
 from datetime import datetime
 from functools import lru_cache
 from html import escape
 from pathlib import Path
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from app.schemas.reportes import CotizacionPdfRequest, EscalaPdf, MapaPuntoPdf
@@ -630,6 +632,124 @@ def _pie_pantalla_html() -> str:
     )
 
 
+# ===== Conceptos SIN IVA debajo del IVA (22-sep-2026) =====
+# Fuente ÚNICA de los TRES documentos de cotización (cliente, interna y
+# grupo) y de la hoja WYSIWYG del panel, que replica esta misma partición.
+
+# Rótulo del bloque que va DEBAJO del IVA. El panel imprime este mismo texto.
+ETIQUETA_SIN_IVA = "No causan IVA"
+# Etiqueta del renglón que va SOBRE el IVA cuando la partición está activa:
+# deja de ser «Subtotal (sin IVA)» (= total − IVA, que incluye los exentos)
+# y pasa a ser la BASE GRAVABLE, que es sobre la que se calcula el 16 %.
+ETIQUETA_BASE_GRAVABLE = "Subtotal gravable"
+ETIQUETA_SUBTOTAL = "Subtotal (sin IVA)"
+# Medio centavo: todo lo que llega está redondeado a 2 decimales.
+TOLERANCIA_USD = 0.005
+
+
+def _fila_totales(lbl: str, val: str) -> str:
+    """Una fila de `table.totales`: etiqueta escapada + monto YA formateado
+    (`val` puede traer entidades como `&minus;`, por eso no se escapa).
+    Fuente única del PDF del cliente y del de grupo."""
+    return f'<tr><td class="lbl">{escape(lbl)}</td><td class="val">{val}</td></tr>'
+
+
+class LineaIva(NamedTuple):
+    """Una fila del desglose lista para particionar: su `monto_usd`, si NO
+    causa IVA y la `fila` (HTML ya armado) que el documento pintará. El HTML
+    lo arma cada documento con SUS clases: aquí solo se ordena."""
+
+    monto_usd: float
+    exento: bool
+    fila: str
+
+
+class ParticionIva(NamedTuple):
+    """Resultado de `particionar_por_iva`. Con `activa=False` el documento
+    pinta EXACTAMENTE lo de siempre (mismo orden, misma etiqueta de
+    subtotal): `gravables` trae entonces todas las filas en su orden
+    original y `exentos` va vacío."""
+
+    activa: bool
+    gravables: list[LineaIva]
+    exentos: list[LineaIva]
+    base_usd: float
+
+
+def particionar_por_iva(
+    lineas: Sequence[LineaIva],
+    iva_base_usd: float | None,
+    iva_usd: float,
+    total_usd: float,
+    iva_pct: float = 0.0,
+) -> ParticionIva:
+    """Separa las filas del desglose en GRAVABLES (van arriba, suman la base
+    del IVA) y EXENTAS (bajan DEBAJO del IVA, bajo «No causan IVA»).
+
+    Pedido del cliente (22-sep-2026): «los conceptos que estén SIN IVA que
+    vayan ABAJO de donde está el IVA, para que se entienda visualmente que
+    no lleva IVA». Eso obliga a redefinir el renglón que va SOBRE el IVA:
+    hoy vale `total − IVA` e INCLUYE los exentos, así que bajarlos dejaría
+    una columna que ni suma lo de arriba ni es la base del 16 % — las dos
+    lecturas del Excel de la oficina rotas a la vez. Con la partición activa
+    ese renglón pasa a ser la BASE GRAVABLE (`iva_base_usd`).
+
+    NADA se recalcula: es una partición de PRESENTACIÓN sobre montos que ya
+    vienen del API. Por eso, antes de reordenar, se comprueban las
+    identidades (tolerancia de medio centavo):
+
+        Σ(gravables)                      == base
+        base + IVA + Σ(exentos)           == total
+
+    Si alguna falla —el caso conocido es el AJUSTE canónico, que mezcla la
+    parte que entra a la base con el redondeo que se suma DESPUÉS del IVA—
+    se DEGRADA al layout de siempre (`activa=False`). Jamás un documento con
+    una columna que no suma.
+
+    ACTIVACIÓN CONDICIONAL: hace falta al menos un concepto exento con monto
+    ≠ 0 **y** IVA > 0. Sin exentos, `subtotal == base` y «Subtotal (sin
+    IVA)» sigue siendo verdad: el documento sale byte-idéntico al de antes
+    (226 de las 231 cotizaciones vivas en producción).
+
+    `iva_base_usd` es el campo del API cuando viaja; si no (payload viejo, y
+    hoy el PDF del CLIENTE y el de GRUPO), se deriva como `total − IVA −
+    Σ exentos`, que es re-sumar la columna — lo único que pyservices tiene
+    permitido hacer con dinero ajeno.
+
+    TERCERA identidad, obligatoria SOLO cuando la base se derivó
+    (22-sep-2026, revisión adversaria): una base derivada cumple la segunda
+    identidad POR CONSTRUCCIÓN —se despejó de ella— y la primera también si
+    el desvío está dentro de las filas de arriba. El caso real es el
+    redondeo automático, que el armador del cliente ABSORBE en «Servicio
+    aéreo»: sin este candado se imprimiría «Subtotal gravable $3,725.33 /
+    IVA (16 %) $594.67» cuando el 16 % de ese renglón son $596.05 — justo el
+    renglón que la oficina lee como «sobre esto se calcula el IVA». Por eso
+    se exige además
+
+        base × iva_pct / 100            == IVA
+
+    y, sin `iva_pct` (API viejo que no lo manda), se degrada: nunca se
+    rotula «Subtotal gravable» un número que no se pudo verificar.
+    """
+    gravables: list[LineaIva] = []
+    exentos: list[LineaIva] = []
+    for ln in lineas:
+        destino = exentos if (ln.exento and abs(ln.monto_usd) >= TOLERANCIA_USD) else gravables
+        destino.append(ln)
+    if not exentos or iva_usd <= TOLERANCIA_USD:
+        return ParticionIva(False, list(lineas), [], 0.0)
+    suma_exentos = sum(ln.monto_usd for ln in exentos)
+    derivada = iva_base_usd is None
+    base = total_usd - iva_usd - suma_exentos if derivada else float(iva_base_usd)
+    suma_gravables = sum(ln.monto_usd for ln in gravables)
+    cuadra_base = abs(suma_gravables - base) <= TOLERANCIA_USD
+    cuadra_total = abs(base + iva_usd + suma_exentos - total_usd) <= TOLERANCIA_USD
+    cuadra_pct = not derivada or abs(base * (iva_pct / 100.0) - iva_usd) <= TOLERANCIA_USD
+    if not (cuadra_base and cuadra_total and cuadra_pct):
+        return ParticionIva(False, list(lineas), [], 0.0)
+    return ParticionIva(True, gravables, exentos, base)
+
+
 def _modelos_cotizados(r: CotizacionPdfRequest) -> list[str]:
     """Modelos del avión COTIZADO para la hoja 1 (feedback del cliente
     4-sep-2026): `modelos_cotizados` (tramos en aviones distintos, en orden
@@ -754,10 +874,10 @@ def _build_html(r: CotizacionPdfRequest, *, solo_hoja_1: bool = False) -> str:
 
     # ----- Desglose SIN horas (26-ago, regla del cliente): ni tiempo
     # cobrable ni tarifa por hora — el servicio se presenta como monto. -----
-    filas: list[str] = []
+    cuerpo: list[LineaIva] = []
 
-    def fila(lbl: str, val: str) -> None:
-        filas.append(f'<tr><td class="lbl">{escape(lbl)}</td><td class="val">{val}</td></tr>')
+    def fila(lbl: str, val: str, monto: float = 0.0, exento: bool = False) -> None:
+        cuerpo.append(LineaIva(monto, exento, _fila_totales(lbl, val)))
 
     # Tarifa por hora VISIBLE solo si la cotización lo pide (27-ago).
     if (
@@ -771,33 +891,61 @@ def _build_html(r: CotizacionPdfRequest, *, solo_hoja_1: bool = False) -> str:
             f"Servicio aéreo ({r.tiempo_cobrable_hr:g} h × "
             f"{_money(r.tarifa_hora_usd)}/hr)",
             _money(r.subtotal_usd),
+            r.subtotal_usd,
         )
     else:
-        fila("Servicio aéreo", _money(r.subtotal_usd))
+        fila("Servicio aéreo", _money(r.subtotal_usd), r.subtotal_usd)
     if not r.tuas_detalle:
-        fila("TUAS", _money(r.tuas_usd))
+        fila("TUAS", _money(r.tuas_usd), r.tuas_usd)
     elif len(r.tuas_detalle) == 1:
-        fila(r.tuas_detalle[0], _money(r.tuas_usd))
+        fila(r.tuas_detalle[0], _money(r.tuas_usd), r.tuas_usd)
     else:
+        # Las filas de detalle no llevan monto propio (van sin importe): el
+        # total de TUAS viaja en la fila «TUAS (total)».
         for det in r.tuas_detalle:
             fila(det, "")
-        fila("TUAS (total)", _money(r.tuas_usd))
+        fila("TUAS (total)", _money(r.tuas_usd), r.tuas_usd)
     for e in r.extras:
         lbl = e.concepto or "Extra"
         if e.moneda == "MXN" and e.monto_nativo is not None:
             lbl += f" · ${e.monto_nativo:,.2f} MXN"
-        fila(lbl, _money(e.monto_usd))
+        # `aplica_iva` existía en el esquema desde siempre y el API ya lo
+        # manda; hasta el 22-sep-2026 esta hoja lo IGNORABA (todos los
+        # extras salían arriba del IVA, causaran o no).
+        fila(lbl, _money(e.monto_usd), e.monto_usd, exento=not e.aplica_iva)
     if r.viaticos_pernocta_usd > 0:
-        fila("Viáticos por pernocta", _money(r.viaticos_pernocta_usd))
+        fila(
+            "Viáticos por pernocta",
+            _money(r.viaticos_pernocta_usd),
+            r.viaticos_pernocta_usd,
+            exento=True,
+        )
     if r.descuento_usd > 0:
-        fila("Descuento", f"&minus;{_money(r.descuento_usd)}")
+        fila("Descuento", f"&minus;{_money(r.descuento_usd)}", -r.descuento_usd)
+
+    # Conceptos SIN IVA debajo del IVA (22-sep-2026). Sin exentos —o si las
+    # identidades no cuadran— sale EXACTAMENTE la hoja de siempre.
+    particion = particionar_por_iva(cuerpo, r.iva_base_usd, r.iva_usd, r.total_usd, r.iva_pct)
+    filas = [ln.fila for ln in particion.gravables]
     # Subtotal SIN IVA antes del IVA (27-ago, pedido del cliente). Se deriva
-    # del total canónico (total − IVA) para cuadrar exacto con el desglose.
-    filas.append(
-        '<tr class="sub-row"><td class="lbl">Subtotal (sin IVA)</td>'
-        f'<td class="val">{_money(r.total_usd - r.iva_usd)}</td></tr>'
-    )
-    fila(f"IVA ({r.iva_pct:.0f}%)", _money(r.iva_usd))
+    # del total canónico (total − IVA) para cuadrar exacto con el desglose;
+    # con la partición activa el renglón es la BASE GRAVABLE del 16 %.
+    if particion.activa:
+        filas.append(
+            f'<tr class="sub-row"><td class="lbl">{ETIQUETA_BASE_GRAVABLE}</td>'
+            f'<td class="val">{_money(particion.base_usd)}</td></tr>'
+        )
+    else:
+        filas.append(
+            f'<tr class="sub-row"><td class="lbl">{ETIQUETA_SUBTOTAL}</td>'
+            f'<td class="val">{_money(r.total_usd - r.iva_usd)}</td></tr>'
+        )
+    filas.append(_fila_totales(f"IVA ({r.iva_pct:.0f}%)", _money(r.iva_usd)))
+    if particion.exentos:
+        filas.append(
+            f'<tr class="exentos-row"><td class="lbl" colspan="2">{ETIQUETA_SIN_IVA}</td></tr>'
+        )
+        filas.extend(ln.fila for ln in particion.exentos)
     desglose_html = "".join(filas)
     total_row_html = (
         f'<tr class="total-row"><td>Total ({escape(r.moneda)})</td>'

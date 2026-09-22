@@ -286,6 +286,50 @@ def test_desglose_pinta_lineas_tal_cual_y_totales_del_api() -> None:
     assert "6.5 h" not in html and "/hr" not in html
 
 
+def test_grupo_baja_los_conceptos_sin_iva_debajo_del_iva() -> None:
+    """Misma partición que el PDF de un avión — el grupo IMPORTA la función,
+    no la copia (regla del repo). Números cuadrados: servicio 10,000 + TUA
+    500 + tour 1,500 = 12,000 de base; IVA 16 % = 1,920; exentos 350
+    (transfers 200 + pernocta 150) ⇒ total 14,270."""
+    html = _html(
+        desglose_consolidado=[
+            {"clave": "TIEMPO_VUELO", "concepto": "Servicio aéreo · 3 aeronaves",
+             "monto_usd": 10000.0},
+            {"clave": "TUAS", "concepto": "TUA CZA · 20 pax", "monto_usd": 500.0},
+            {"clave": "EXTRA", "concepto": "Tour", "monto_usd": 1500.0, "aplica_iva": True},
+            {"clave": "EXTRA", "concepto": "Transfers", "monto_usd": 200.0,
+             "aplica_iva": False},
+            {"clave": "IVA", "concepto": "IVA 16%", "monto_usd": 1920.0},
+            {"clave": "PERNOCTA", "concepto": "Viáticos por pernocta", "monto_usd": 150.0},
+        ],
+        subtotal_usd=12350.0,
+        iva_base_usd=12000.0,
+        iva_usd=1920.0,
+        total_usd=14270.0,
+        total_mxn=None,
+        precio_por_persona_usd=None,
+    )
+    assert 'Subtotal gravable</td><td class="val">$12,000.00' in html
+    assert "Subtotal (sin IVA)" not in html and "$12,350.00" not in html
+    assert '<tr class="exentos-row"><td class="lbl" colspan="2">No causan IVA</td></tr>' in html
+    orden = ["Tour", "Subtotal gravable", "IVA (16%)", "No causan IVA", "Transfers",
+             "Viáticos por pernocta", "Total (USD)"]
+    posiciones = [html.index(t) for t in orden]
+    assert posiciones == sorted(posiciones), orden
+    # La función es LA misma del PDF de un avión (importada, no copiada).
+    assert cotizacion_grupo_pdf.particionar_por_iva is cotizacion_pdf.particionar_por_iva
+
+
+def test_grupo_sin_exentos_o_con_columna_que_no_suma_no_reordena_nada() -> None:
+    """Condicional y con degradación, igual que los otros dos documentos: el
+    payload de siempre —cuyo cuerpo no cuadra con su subtotal— se pinta como
+    toda la vida, con la pernocta arriba del subtotal."""
+    html = _html()
+    assert "Subtotal (sin IVA)" in html and "$19,072.00" in html
+    assert "Subtotal gravable" not in html and "No causan IVA" not in html
+    assert html.index("Viáticos por pernocta") < html.index("Subtotal (sin IVA)")
+
+
 def test_nunca_pinta_comision_del_vendedor_ni_redondeo() -> None:
     lineas = _payload()["desglose_consolidado"] + [
         {"clave": "COMISION_VENDEDOR", "concepto": "Comisión del vendedor", "monto_usd": 300.0},
