@@ -29,6 +29,25 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   default) y hubo que mover encabezado, bordes/relleno de los subtotales,
   los cuatro `merge_cells` y los `widths`. Test:
   `tests/test_balance_combustible_pago.py`.
+- **Hoja 'inventario' (tiendita): jamás un USD sumado como MXN**
+  (22-sep-2026). El cliente vio «Aceite 15w 50 · 30 · $3,300.00 MXN» sobre
+  una entrada de 30 × 110 **USD sin tipo de cambio**: la columna sumaba
+  dólares rotulados como pesos (en prod, 67 de 68 ENTRADAS están así). Hoy
+  «VALOR A COSTO MXN» lleva SOLO pesos reales y a su derecha aparece
+  **«VALOR A COSTO USD (sin T.C.)»** (`MONEY_USD` = `"$"#,##0.00`, el único
+  lugar del libro con símbolo) con su propio total y, bajo la tabla, la nota
+  «N productos tienen costo en USD sin tipo de cambio: su valor se muestra
+  en dólares y no entra al total en pesos». La columna solo existe cuando el
+  API manda el desglose nuevo Y hay algo que mostrar (`_hay_usd_sin_tc`:
+  `filas_sin_tc`, `total_valor_usd` o alguna fila con `valor_costo_usd` /
+  `sin_tc`): con un API viejo —o con un inventario 100 % en pesos— la hoja
+  es exactamente la de antes, 9 columnas. Al entrar la columna las del
+  periodo corren un lugar (`off`): encabezados, fila TOTALES, `n_cols` (9+off
+  para título/notas/merges) y `anchos` se mueven juntos — ejemplo vivo de la
+  regla de openpyxl de arriba. La conversión NO se hace aquí ni allá: sin
+  T.C. no hay peso que mostrar. Tests:
+  `tests/test_balance_inventario_xlsx.py` (caso real, mixto MXN+USD, nota en
+  singular/plural, payload viejo ⇒ hoja idéntica).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

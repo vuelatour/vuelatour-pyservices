@@ -81,6 +81,10 @@ FILL_COSTOS = "FDF3E7"  # ámbar suave
 FILL_COBROS = "E9F6EC"  # verde suave
 
 MONEY = "#,##0.00"
+# Columna en DÓLARES de la hoja 'inventario' (22-sep-2026): lleva el "$"
+# pegado al número para que a simple vista no se confunda con las columnas
+# en pesos, que van sin símbolo.
+MONEY_USD = '"$"#,##0.00'
 HORAS = "0.00"
 TACO = "0.0"
 # T.C. USD→MXN: 2 decimales mínimo y hasta 6 (17-sep-2026). El API los
@@ -1238,6 +1242,19 @@ _NOTA_INVENTARIO = (
     "conserva). El dinero salió del banco al COMPRAR la pieza, no al "
     "consumirla — la conciliación bancaria no cruza estos cargos."
 )
+# Aclaración que se AÑADE a la nota anterior solo cuando la hoja trae la
+# columna en dólares (22-sep-2026): el cliente vio «30 · $3,300.00 MXN» en
+# un ítem cuya única entrada fueron 30 × 110 USD sin tipo de cambio — la
+# columna sumaba dólares y los rotulaba pesos. Invariante: jamás un USD
+# sumado como MXN.
+_NOTA_INVENTARIO_USD = (
+    " VALOR A COSTO MXN suma SOLO las capas compradas en pesos (o en USD "
+    "con tipo de cambio capturado): lo comprado en dólares que todavía no "
+    "tiene T.C. se muestra aparte, EN DÓLARES, en la columna VALOR A COSTO "
+    "USD (sin T.C.) y no se convierte ni entra al total en pesos. Al "
+    "capturar el tipo de cambio de esas entradas su valor pasa solo a la "
+    "columna en pesos."
+)
 # Nota de la hoja 'otros gastos' del GENERAL (payload `gastos_empresa`;
 # 1-sep-2026: la pestaña se llamaba 'gastos VuelaTour' — solo cambió el
 # NOMBRE de la hoja, el campo del contrato sigue igual).
@@ -1273,6 +1290,39 @@ _NOTA_REPARTIDOS_A_AVIONES = (
 )
 
 
+def _hay_usd_sin_tc(inv: BalanceHojaInventario) -> bool:
+    """¿La hoja debe llevar la columna en DÓLARES? (22-sep-2026)
+
+    Solo cuando el API manda el desglose nuevo Y hay algo que mostrar en él:
+    así un API viejo (que no manda ninguno de los campos) sigue produciendo
+    la hoja de siempre, y un inventario 100 % en pesos no gana una columna
+    de ceros."""
+    if inv.filas_sin_tc:
+        return True
+    if inv.total_valor_usd:  # None o 0 → no hay nada que mostrar
+        return True
+    return any(f.valor_costo_usd or f.sin_tc for f in inv.filas)
+
+
+def _cuenta_sin_tc(inv: BalanceHojaInventario) -> int:
+    """Cuántos productos traen costo en USD sin T.C. Manda el número del API
+    (`filas_sin_tc`); si no viene se cuentan las filas (solo para el texto de
+    la nota — aquí no se recalcula dinero)."""
+    if inv.filas_sin_tc:
+        return inv.filas_sin_tc
+    return sum(1 for f in inv.filas if f.valor_costo_usd or f.sin_tc)
+
+
+def _nota_sin_tc(n: int) -> str:
+    """Nota al pie de la tabla, en el idioma del operador."""
+    plural = n != 1
+    return (
+        f"{n} producto{'s' if plural else ''} "
+        f"{'tienen' if plural else 'tiene'} costo en USD sin tipo de cambio: "
+        "su valor se muestra en dólares y no entra al total en pesos."
+    )
+
+
 def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
                      refacciones: BalanceAvionHojaGastos | None,
                      req: BalanceAvionRequest) -> None:
@@ -1284,8 +1334,17 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
     'refacciones' del general (`refacciones.filas`; el libro INDIVIDUAL
     conserva su hoja). Todo viene YA calculado del API — aquí solo se pinta
     (los totales del bloque 2 son re-suma de columnas para mostrar);
-    None = celda vacía, nunca un 0 falso."""
-    n_cols = 9
+    None = celda vacía, nunca un 0 falso.
+
+    22-sep-2026 (invariante: jamás un USD sumado como MXN): cuando el API
+    manda el desglose nuevo, VALOR A COSTO MXN lleva solo pesos reales y a
+    su derecha aparece VALOR A COSTO USD (sin T.C.) con lo comprado en
+    dólares que aún no tiene tipo de cambio, con su propio total y una nota
+    bajo la tabla. Sin esos campos (API viejo) la hoja es la de siempre."""
+    usd = _hay_usd_sin_tc(inv)
+    # Desplazamiento de las columnas del periodo cuando entra la de dólares.
+    off = 1 if usd else 0
+    n_cols = 9 + off
     # Anchos para estimar el alto de las filas que envuelven texto (mismo
     # patrón que _hoja_gastos): ÍTEM del bloque 1 y detalle del bloque 2.
     ancho_item = 34
@@ -1296,7 +1355,9 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
 
     # ===== Bloque 1: resumen por ítem =====
     _header_row(ws, 4, [
-        "ÍTEM", "EXISTENCIA\nACTUAL", "VALOR A\nCOSTO MXN", "COMPRADAS\nCANT",
+        "ÍTEM", "EXISTENCIA\nACTUAL", "VALOR A\nCOSTO MXN",
+        *(["VALOR A COSTO\nUSD (sin T.C.)"] if usd else []),
+        "COMPRADAS\nCANT",
         "COMPRAS\nMXN", "SALIDAS\nCANT", "VENDIDO\nMXN", "UTILIDAD\nMXN",
         "MATRÍCULAS",
     ])
@@ -1308,12 +1369,14 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
             ic.alignment = Alignment(wrap_text=True, vertical="top")
             _num(ws, row, 2, f.existencia, "General").border = _border
             _num(ws, row, 3, f.valor_costo_mxn).border = _border
-            _num(ws, row, 4, f.compradas_cant, "General").border = _border
-            _num(ws, row, 5, f.compradas_costo_mxn).border = _border
-            _num(ws, row, 6, f.salidas_cant, "General").border = _border
-            _num(ws, row, 7, f.vendido_mxn).border = _border
-            _num(ws, row, 8, f.utilidad_mxn).border = _border
-            mc = ws.cell(row=row, column=9, value=f.matriculas)
+            if usd:
+                _num(ws, row, 4, f.valor_costo_usd, MONEY_USD).border = _border
+            _num(ws, row, 4 + off, f.compradas_cant, "General").border = _border
+            _num(ws, row, 5 + off, f.compradas_costo_mxn).border = _border
+            _num(ws, row, 6 + off, f.salidas_cant, "General").border = _border
+            _num(ws, row, 7 + off, f.vendido_mxn).border = _border
+            _num(ws, row, 8 + off, f.utilidad_mxn).border = _border
+            mc = ws.cell(row=row, column=9 + off, value=f.matriculas)
             mc.border = _border
             mc.alignment = Alignment(wrap_text=True, vertical="top")
             lineas = max(
@@ -1329,14 +1392,34 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
         ws.cell(row=row, column=1, value="TOTALES").font = Font(bold=True)
         _num(ws, row, 2, inv.total_piezas, "General", bold=True)
         _num(ws, row, 3, inv.total_valor_mxn, MONEY, bold=True)
-        _num(ws, row, 5, inv.total_compras_mxn, MONEY, bold=True)
-        _num(ws, row, 7, inv.total_vendido_mxn, MONEY, bold=True)
-        _num(ws, row, 8, inv.total_utilidad_mxn, MONEY, bold=True)
+        if usd:
+            # Total en dólares APARTE. Lo manda el API; si faltara (solo
+            # llegaron las filas) se re-suma la columna para mostrarla — es
+            # la misma moneda, nunca se mezcla con pesos.
+            total_usd = inv.total_valor_usd
+            if total_usd is None:
+                vals = [f.valor_costo_usd for f in inv.filas
+                        if f.valor_costo_usd is not None]
+                total_usd = round(sum(vals), 2) if vals else None
+            _num(ws, row, 4, total_usd, MONEY_USD, bold=True)
+        _num(ws, row, 5 + off, inv.total_compras_mxn, MONEY, bold=True)
+        _num(ws, row, 7 + off, inv.total_vendido_mxn, MONEY, bold=True)
+        _num(ws, row, 8 + off, inv.total_utilidad_mxn, MONEY, bold=True)
         for c in range(1, n_cols + 1):
             cell = ws.cell(row=row, column=c)
             cell.fill = PatternFill("solid", fgColor=LIGHT)
             cell.border = _border
         row += 1
+        # Nota bajo la tabla: por qué el total en pesos "no cuadra" con la
+        # existencia de esos productos.
+        if usd:
+            n_sin_tc = _cuenta_sin_tc(inv)
+            if n_sin_tc > 0:
+                nc = ws.cell(row=row, column=1, value=_nota_sin_tc(n_sin_tc))
+                nc.font = Font(color=RED, size=9, italic=True)
+                ws.merge_cells(start_row=row, start_column=1,
+                               end_row=row, end_column=n_cols)
+                row += 1
     else:
         ws.cell(
             row=row, column=1,
@@ -1415,16 +1498,19 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
         row += 1
 
     row += 1
-    ws.cell(row=row, column=1, value=_NOTA_INVENTARIO).font = Font(
+    nota = _NOTA_INVENTARIO + (_NOTA_INVENTARIO_USD if usd else "")
+    ws.cell(row=row, column=1, value=nota).font = Font(
         color=MUTED, size=9, italic=True
     )
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
 
     # Anchos compartidos entre los dos bloques (col 1 = ÍTEM/FECHA, col 2 =
-    # números del bloque 1 y detalle del bloque 2 — por eso va ancha).
-    for i, w in enumerate(
-        [ancho_item, ancho_detalle, 16, 12, 14, 12, 14, 14, 24], start=1
-    ):
+    # números del bloque 1 y detalle del bloque 2 — por eso va ancha). Con
+    # la columna en dólares (22-sep) se inserta su ancho en la posición 4 y
+    # las del periodo corren un lugar.
+    anchos = [ancho_item, ancho_detalle, 16, *([18] if usd else []),
+              12, 14, 12, 14, 14, 24]
+    for i, w in enumerate(anchos, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A5"
 

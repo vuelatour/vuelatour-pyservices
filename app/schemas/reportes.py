@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class EscalaPdf(BaseModel):
@@ -1040,6 +1040,15 @@ class BalanceInventarioItemFila(BaseModel):
     nombre: str = ""  # nombre del ítem (+ ' · nº de parte' cuando lo tiene)
     existencia: float | None = None
     valor_costo_mxn: float | None = None
+    # Valor a costo de las capas vivas compradas en USD SIN tipo de cambio
+    # (22-sep-2026): son DÓLARES y se muestran como dólares en su propia
+    # columna — `valor_costo_mxn` suma únicamente pesos reales. Jamás se
+    # convierte aquí (no hay T.C. que usar) ni se suma al total en pesos.
+    # None = ese ítem no tiene capas en USD sin T.C. (y un API viejo, que
+    # no manda el campo, deja la columna fuera de la hoja).
+    valor_costo_usd: float | None = None
+    # true cuando alguna capa viva del ítem está en USD sin T.C.
+    sin_tc: bool = False
     # ENTRADAs del periodo (compras reales; DEVOLUCION/AJUSTE no son compra).
     compradas_cant: float | None = None
     compradas_costo_mxn: float | None = None
@@ -1051,6 +1060,13 @@ class BalanceInventarioItemFila(BaseModel):
     # Matrículas a las que se aplicó en el periodo (únicas, ' + ').
     matriculas: str | None = None
 
+    @field_validator("sin_tc", mode="before")
+    @classmethod
+    def _sin_tc_bool(cls, v: Any) -> Any:
+        """Liberal con lo que manda NestJS: null ⇒ False (nunca un 422 que
+        tumbe el libro entero por una bandera ausente)."""
+        return False if v is None else v
+
 
 class BalanceHojaInventario(BaseModel):
     """Hoja 'inventario' del Balance GENERAL (tiendita): bloque por ítem +
@@ -1059,9 +1075,20 @@ class BalanceHojaInventario(BaseModel):
     filas: list[BalanceInventarioItemFila] = Field(default_factory=list)
     total_piezas: float | None = None
     total_valor_mxn: float | None = None
+    # Σ de `valor_costo_usd` de las filas (22-sep-2026): total APARTE, en
+    # dólares. None = API viejo → la hoja sale como siempre, sin la columna.
+    total_valor_usd: float | None = None
     total_compras_mxn: float | None = None
     total_vendido_mxn: float | None = None
     total_utilidad_mxn: float | None = None
+    # Cuántas filas traen costo en USD sin T.C. (para la nota al pie de la
+    # tabla). 0 / ausente = no se pinta la nota.
+    filas_sin_tc: int = 0
+
+    @field_validator("filas_sin_tc", mode="before")
+    @classmethod
+    def _filas_sin_tc_num(cls, v: Any) -> Any:
+        return 0 if v is None else v
 
 
 class BalanceGeneralRequest(BaseModel):
