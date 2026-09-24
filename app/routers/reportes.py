@@ -7,12 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import HTMLResponse
 
 from app.schemas.reportes import (
+    CajaChicaReposicionRequest,
     CotizacionGrupoPdfRequest,
     CotizacionInternaPdfRequest,
     CotizacionPdfRequest,
     MapaSvgRequest,
 )
 from app.security import require_internal_token
+from app.services.caja_chica_xlsx import render_caja_chica_reposicion_xlsx
 from app.services.cotizacion_grupo_pdf import render_cotizacion_grupo_pdf
 from app.services.cotizacion_interna_pdf import (
     _estilos_hoja_interna,
@@ -27,6 +29,8 @@ from app.services.cotizacion_pdf import (
 )
 
 logger = logging.getLogger("reportes")
+
+XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 router = APIRouter(
     prefix="/reportes",
@@ -178,4 +182,26 @@ def cotizacion_interna_hoja_css() -> Response:
         content=_estilos_hoja_interna(),
         media_type="text/css; charset=utf-8",
         headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.post("/caja-chica-reposicion.xlsx")
+def caja_chica_reposicion_xlsx(req: CajaChicaReposicionRequest) -> Response:
+    """Excel de una REPOSICIÓN de caja chica (24-sep-2026) — o de lo
+    PENDIENTE por reponer, con el mismo formato. Encabezado + tabla de lo que
+    se repone en el orden del libro + fila TOTAL + totales y avisos. El API
+    manda TODO calculado (fuente única `caja-chica-saldo.util.ts`); aquí SOLO
+    se pinta. El nombre del archivo lo pone el API en su propia respuesta."""
+    try:
+        xlsx = render_caja_chica_reposicion_xlsx(req)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Error generando el Excel de la reposición de caja chica")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"No se pudo generar el Excel de la reposición: {e}",
+        ) from e
+    return Response(
+        content=xlsx,
+        media_type=XLSX_MEDIA,
+        headers={"Content-Disposition": 'attachment; filename="reposicion-caja-chica.xlsx"'},
     )

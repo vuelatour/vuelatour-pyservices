@@ -48,6 +48,28 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   T.C. no hay peso que mostrar. Tests:
   `tests/test_balance_inventario_xlsx.py` (caso real, mixto MXN+USD, nota en
   singular/plural, payload viejo ⇒ hoja idéntica).
+- **Excel de la REPOSICIÓN de caja chica** (24-sep-2026,
+  `POST /reportes/caja-chica-reposicion.xlsx`, `CajaChicaReposicionRequest`
+  todo con default y `extra="ignore"`, servicio `caja_chica_xlsx.py`).
+  Pedido: «al momento de reembolsar la caja de cada uno … un Excel con lo
+  que estoy reembolsando». Una hoja: título, ENCABEZADO (etiqueta en A:C
+  —ancho suficiente para «Por reponer antes de esta reposición», que el
+  export genérico cortaba a 12 caracteres— valor en D, nota en E:H), TABLA
+  de 14 columnas con fecha REAL `dd/mm/yyyy` y montos `"$"#,##0.00`, fila
+  TOTAL (Σ Gasto y Σ Reintegro/ajuste que manda el API), bloque TOTALES
+  (el renglón `destacado` va en negritas) y AVISOS en naranja; `resaltar`
+  pinta fecha y captura de la fila. Impresión horizontal a una hoja de
+  ancho. **Aquí no se calcula nada**: filas, saldos por fila, totales y
+  diferencia llegan del API (`caja-chica-saldo.util.ts`). Las columnas son
+  paridad MANUAL con `COLUMNAS_EXCEL_CAJA` del API (que las usa en su
+  respaldo genérico cuando este endpoint todavía no está desplegado).
+  **Texto que empieza con «=» se escribe como TEXTO** (`_texto_literal`,
+  revisión 24-sep-2026): openpyxl vuelve fórmula cualquier cadena con «=»
+  al inicio y una nota de gasto «= 3 taxis» daba un libro que Excel abre con
+  error. Ojo: los DEMÁS libros (Libro Dinero, balances) todavía no tienen
+  esta guarda — hoy no hay notas así en prod, pero el folio de la factura y
+  las notas son texto libre.
+  Tests: `tests/test_caja_chica_xlsx.py`.
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

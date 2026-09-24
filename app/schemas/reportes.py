@@ -1340,3 +1340,77 @@ class DineroXlsxRequest(BaseModel):
     utilidades_otros_gastos_mxn: float | None = None
     utilidades_tc: float | None = None
     utilidades_aviones: list[DineroUtilidadAvion] = Field(default_factory=list)
+
+
+# ================= Caja chica: Excel de la REPOSICIÓN (24-sep-2026) =================
+#
+# Pedido del cliente: «al momento de reembolsar la caja de cada uno, me puede
+# arrojar un Excel descargable con la información de lo que estoy
+# reembolsando». El API manda TODO calculado (qué gastos repone la
+# reposición, saldos por fila del historial, totales y diferencia salen de
+# `caja-chica-saldo.util.ts`); aquí SOLO se pinta. Todo con default y
+# extra="ignore": skew tolerante en ambos sentidos.
+
+
+class CajaChicaDato(BaseModel):
+    """Par etiqueta → valor del encabezado o del bloque de totales."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    etiqueta: str = ""
+    # float = monto (formato "$"#,##0.00); str = texto tal cual.
+    valor: float | str | None = None
+    # Texto a la derecha del valor (p. ej. «Quedó pendiente por reponer»).
+    nota: str | None = None
+    # true = renglón protagonista (negritas + fondo): «POR REPONER HOY».
+    destacado: bool = False
+
+
+class CajaChicaFila(BaseModel):
+    """Una entrada del libro dentro del periodo de la reposición."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    # Fecha de pared YYYY-MM-DD (se escribe como FECHA de Excel dd/mm/aaaa).
+    fecha: str | None = None
+    tipo: str = ""
+    categoria: str = ""
+    descripcion: str = ""
+    vuelo: str = ""
+    matricula: str = ""
+    # Monto del GASTO (positivo); None en reintegros/ajustes.
+    gasto: float | None = None
+    # Reintegro / ajuste con signo; None en gastos.
+    otro: float | None = None
+    comprobante: str = ""
+    facturacion: str = ""
+    capturo: str = ""
+    # Texto ya formateado por el API («2026-09-01 07:00», hora Cancún).
+    capturado: str = ""
+    saldo: float | None = None
+    por_reponer: float | None = None
+    # Capturado DESPUÉS de registrar la reposición: fecha y captura en naranja.
+    resaltar: bool = False
+
+
+class CajaChicaReposicionRequest(BaseModel):
+    """Excel de una reposición de caja chica (o de lo pendiente por reponer)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    titulo: str = "Reposición de caja chica"
+    subtitulo: str | None = None
+    # Nombre de la pestaña (≤ 31, sin \ / * ? : [ ]; el render lo sanea).
+    hoja: str | None = None
+    encabezado_titulo: str | None = None
+    encabezado: list[CajaChicaDato] = Field(default_factory=list)
+    filas: list[CajaChicaFila] = Field(default_factory=list)
+    # Fila TOTAL de la tabla (Σ columna Gasto y Σ columna Reintegro/ajuste).
+    n_gastos: int = 0
+    total_gastos: float | None = None
+    total_otros: float | None = None
+    totales_titulo: str | None = None
+    totales: list[CajaChicaDato] = Field(default_factory=list)
+    avisos: list[str] = Field(default_factory=list)
+    # Texto cuando no hay filas (en vez de una tabla vacía muda).
+    sin_filas: str | None = None
