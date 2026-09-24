@@ -10,12 +10,15 @@ from app.schemas.facturacion import (
     CancelarResponse,
     FacturacionHealthResponse,
     FacturaPreviewResponse,
+    LeerPdfEmitidaRequest,
+    LeerPdfEmitidaResponse,
     TimbrarRequest,
     TimbrarResponse,
 )
 from app.schemas.recibida import FacturaRecibidaParsed, ParseRecibidaRequest
 from app.security import require_internal_token
 from app.services.cfdi_fel import cancelar, timbrar
+from app.services.emitida_pdf import AVISO_ILEGIBLE, PdfNoValidoError, leer_pdf_emitida
 from app.services.factura_preview_pdf import render_factura_preview_pdf
 from app.services.facturama import cancelar_facturama, probar_conexion, timbrar_facturama
 from app.services.recibida_parse import parse_cfdi
@@ -42,6 +45,26 @@ def parse_recibida(req: ParseRecibidaRequest) -> FacturaRecibidaParsed:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(e)[:200] or "El XML no es un CFDI legible",
         ) from e
+
+
+@router.post("/leer-pdf-emitida", response_model=LeerPdfEmitidaResponse)
+def leer_pdf_emitida_endpoint(req: LeerPdfEmitidaRequest) -> LeerPdfEmitidaResponse:
+    """Lee el PDF (representación impresa del CFDI) de una factura que la
+    oficina EMITIÓ a mano y devuelve lo que encontró para prellenar el
+    registro. Determinista (pypdf + regex), sin IA y sin guardar nada.
+
+    422 solo si NO es un PDF (base64 roto, sin `%PDF-`, > 11 MB). Protegido,
+    escaneado, roto o lento ⇒ 200 con `texto_extraido=false` + aviso: el API
+    degrada a captura manual. Jamás 500.
+    """
+    try:
+        return leer_pdf_emitida(req.pdf_b64)
+    except PdfNoValidoError as e:
+        # 422 numérico: la constante cambió de nombre entre versiones de Starlette.
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception:  # noqa: BLE001 — la lectura degrada, nunca tumba el diálogo
+        logger.exception("Error inesperado leyendo el PDF de una factura emitida")
+        return LeerPdfEmitidaResponse(texto_extraido=False, avisos=[AVISO_ILEGIBLE])
 
 
 @router.get("/health", response_model=FacturacionHealthResponse)

@@ -313,6 +313,65 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   abono` y avisa dónde faltan movimientos. Tests:
   `tests/test_estado_cuenta_banco.py`.
 
+## Lectura de facturas emitidas (PDF)
+
+- `POST /facturacion/leer-pdf-emitida` {`pdf_b64`} (24-sep-2026, registro
+  «Facturas emitidas» que Mari captura a mano): el API
+  (`facturas-emitidas/leer-archivo`) manda el PDF de la factura y prellena
+  serie, folio, UUID, fecha, RFC/nombre de emisor y receptor, subtotal, IVA,
+  total, moneda, método y forma de pago. Servicio `app/services/
+  emitida_pdf.py`, esquemas `LeerPdfEmitida*` en `schemas/facturacion.py`
+  (todo con default). **Determinista: pypdf + regex, SIN IA** — y así debe
+  quedarse (como `recibida_parse.py`). Nada se guarda aquí; duplicados,
+  razón social emisora y cliente sugerido los decide el API.
+- **Nunca 500.** 422 SOLO si no es un PDF utilizable (`PdfNoValidoError`:
+  base64 roto, sin `%PDF-` en los primeros 1024 bytes, > 11 MB). Protegido
+  con contraseña, escaneado (< 30 alfanuméricos), roto o lento ⇒ 200 con
+  `texto_extraido=false` + aviso. pypdf corre en un hilo DAEMON con tope
+  `TOPE_SEGUNDOS` = 20 s (el API corta a los 30 s; un hilo atorado no frena
+  el apagado en un redeploy) y lee máximo 5 páginas; la INTERPRETACIÓN del
+  texto corre en otro hilo con lo que sobre del mismo tope (mínimo 1 s): un
+  texto patológico —miles de «Total:» apilados— es cuadrático y quedaba
+  fuera del tope (la respuesta sale a tiempo; el hilo termina solo). Lo que
+  no se encuentra
+  sale `None`: el API arma «No encontré: …». Mejor vacío que inventado.
+- Extractor TOLERANTE (cada PAC arma su PDF distinto) y probado con el
+  layout del ejemplo real (Seguros Inbursa, CFDI 4.0): etiquetas en una
+  línea y valores en la siguiente («Emisor: RFC emisor: Régimen…» ⇒
+  «NOMBRE RFC 601»), basura binaria del QR (se limpia con NFKC + sin
+  caracteres de control), una SEGUNDA línea «Emisor: 26300 Póliza…» sin RFC
+  que no pisa al emisor, el RFC del PAC (cadena `||1.1|…|RFC|` y «RFC
+  proveedor de certificación») excluido, «Prima total» sí es total y
+  «Subtotal»/«Importe total con letra» no, «No. de serie del certificado»
+  no es la serie y «Folio fiscal» no es el folio. También: «Serie y Folio:
+  A-123», factura del SAT («Efecto de comprobante», montos mezclados con
+  etiquetas), bloques «Receptor / Nombre / RFC», totales apilados en columna
+  o en fila (se emparejan por posición; si no cuadran, `None`), UUID de
+  «CFDI relacionados» nunca se toma como el propio. Avisos ADITIVOS
+  (strings; el API los pinta como `LECTURA_PDF`): varios UUID sin etiqueta,
+  moneda distinta de MXN/USD, CFDI de Egreso/Pago y «Subtotal + IVA no da
+  el total impreso» (salvo descuento/retenciones impresos).
+- Revisión adversaria (24-sep-2026), trampas que YA mordían y quedaron
+  congeladas en tests: (1) el encabezado de conceptos «CANTIDAD MONEDA IVA
+  IMPORTE» cortaba la búsqueda con «Moneda IVA» y nunca llegaba a «MONEDA:
+  MXN» ⇒ solo cuenta un código del catálogo c_Moneda (`_MONEDAS_ISO`) y
+  «DLS/DLLS/US$» es USD; (2) «Retención IVA: 106.67» se tomaba como EL IVA ⇒
+  una etiqueta IVA precedida de «Retención/Ret./retenido» se descarta
+  (`_RETENCION_ANTES`) y las retenciones (IVA y/o ISR, `_PREFIJO_RETENCION`)
+  entran al cuadre; (3) «Importe total: 1,000.00» de un renglón de concepto
+  le ganaba al «Total: 1,160.00» del cuadro ⇒ con subtotal e IVA leídos, el
+  total es el que CUADRA (`_extraer_total`), y si ninguno cuadra el de
+  siempre + aviso; (4) «Folio interno 555» antes de «Folio: 777» daba el
+  folio «INTERNO-555» ⇒ primero las etiquetas con «:»/«#»/«No.» y una serie
+  separada por ESPACIO debe ir en mayúsculas; «Serie:» vacía no toma la
+  palabra de la línea siguiente («Fecha 2026…»). Fecha también «2026/09/24».
+- Dependencia `pypdf>=6.1.3` en `requirements.txt` (piso con los arreglos de
+  DoS/bombas de descompresión de pypdf; el Dockerfile instala de
+  ahí; `uv.lock` está en `.gitignore`). El import es tolerante: sin pypdf el
+  router arranca y la lectura degrada a aviso. Tests:
+  `tests/test_leer_pdf_emitida.py` con PDFs SINTÉTICOS de ReportLab (el PDF
+  real del cliente NO se commitea).
+
 ## IA
 
 - Visión (tacómetro/tickets) usa el modelo de `ANTHROPIC_MODEL`. La lectura

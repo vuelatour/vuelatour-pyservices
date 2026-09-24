@@ -111,3 +111,36 @@ class CancelarResponse(BaseModel):
     estatus: str | None = None
     acuse_xml: str | None = None
     error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Lectura del PDF de una factura EMITIDA a mano (24-sep-2026).
+# `POST /facturacion/leer-pdf-emitida` — el API (`facturas-emitidas`) manda el
+# PDF que suelta Mari y prellena el formulario con lo que se lea. Nada se
+# guarda aquí. Todo con default (esquema ADITIVO: skew tolerante).
+# ---------------------------------------------------------------------------
+
+
+class LeerPdfEmitidaRequest(BaseModel):
+    # PDF en base64 (sin prefijo; si trae «data:…;base64,» se tolera).
+    pdf_b64: str
+
+
+class LeerPdfEmitidaResponse(BaseModel):
+    serie: str | None = None
+    folio: str | None = None
+    uuid: str | None = None  # 8-4-4-4-12 en MAYÚSCULAS
+    fecha_emision: str | None = None  # 'YYYY-MM-DD' (día de pared impreso)
+    emisor_rfc: str | None = None
+    emisor_nombre: str | None = None
+    receptor_rfc: str | None = None
+    receptor_nombre: str | None = None
+    subtotal: float | None = None
+    iva: float | None = None
+    total: float | None = None
+    moneda: str | None = None  # 'MXN' | 'USD' | None
+    metodo_pago: str | None = None  # 'PUE' | 'PPD' | None
+    forma_pago: str | None = None  # '99', '03' … (c_FormaPago, 2 dígitos)
+    texto_extraido: bool = False  # False = escaneado / protegido / ilegible
+    paginas: int = 0
+    avisos: list[str] = Field(default_factory=list)
