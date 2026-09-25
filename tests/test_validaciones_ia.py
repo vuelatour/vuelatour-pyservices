@@ -94,6 +94,16 @@ def test_num_acepta_texto_con_formato_de_dinero() -> None:
     assert num("abc") is None
 
 
+def test_num_y_confianza_rechazan_nan_e_infinito() -> None:
+    """`json.loads` acepta NaN/Infinity y `float("nan")` no falla: un
+    `"confianza": NaN` del modelo pasaba `min(max(nan, 0), 1)` intacto
+    (revisión 24-sep-2026)."""
+    for raro in (float("nan"), float("inf"), float("-inf"), "NaN", "Infinity"):
+        assert num(raro) is None
+    assert confianza_de(float("nan")) == 0.0
+    assert confianza_de("NaN", default=0.5) == 0.5
+
+
 def test_validar_suma_conceptos() -> None:
     conceptos = [{"concepto": "TUA", "monto": 810.0}, {"concepto": "IVA 16%", "monto": 129.6}]
     assert validar_suma_conceptos(conceptos, 939.60) is None

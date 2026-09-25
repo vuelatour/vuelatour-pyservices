@@ -19,6 +19,7 @@ POLÍTICA DE CONFIANZA (la misma en todos los endpoints):
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
@@ -95,15 +96,24 @@ def terminacion_de_referencia(
 
 
 def num(v: object) -> float | None:
-    """float de un valor del modelo; None si no es número (bool NO es número)."""
+    """float de un valor del modelo; None si no es número (bool NO es número).
+
+    NaN e infinito tampoco son números (revisión 24-sep-2026): `json.loads`
+    acepta los literales `NaN`/`Infinity` y `float("nan")` no falla, así que
+    un `"confianza": NaN` del modelo pasaba `min(max(nan, 0), 1)` INTACTO
+    (toda comparación con NaN es falsa) y reventaba la validación `ge/le`
+    del esquema de respuesta.
+    """
     if isinstance(v, bool) or v is None:
         return None
     if isinstance(v, (int, float)):
-        return float(v)
-    try:
-        return float(str(v).replace("$", "").replace(",", "").strip())
-    except (TypeError, ValueError):
-        return None
+        f = float(v)
+    else:
+        try:
+            f = float(str(v).replace("$", "").replace(",", "").strip())
+        except (TypeError, ValueError):
+            return None
+    return f if math.isfinite(f) else None
 
 
 def cuadra(a: float | None, b: float | None, tol: float = TOL_SUMA) -> bool:

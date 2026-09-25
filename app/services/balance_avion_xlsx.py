@@ -1268,7 +1268,8 @@ _NOTA_GASTOS_EMPRESA = (
     "de la hoja 'Gastos Indirectos' del libro individual del avión). Antes "
     "salían como "
     "'MOVIMIENTOS SIN AVIÓN / SIN VUELO' en 'otros movimientos' (allá "
-    "quedan solo 'gas sin avión' y 'tuas sin vuelo')."
+    "quedan 'gas sin avión', 'tuas sin vuelo' y los otros ingresos "
+    "registrados en Ingresos, clave ING-n)."
 )
 
 
@@ -1665,9 +1666,11 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
         "los estados del periodo (igual que la hoja maestra); los cancelados "
         "se marcan (clave · CANCELADO en rojo) y los demás estados no "
         "normales llevan su estado junto a la clave. Los MOVIMIENTOS SIN "
-        "AVIÓN / SIN VUELO de abajo son solo 'gas sin avión' y 'tuas sin "
-        "vuelo' (29-ago: los gastos de empresa viven en la hoja 'otros "
-        "gastos' — antes llamada 'gastos VuelaTour').",
+        "AVIÓN / SIN VUELO de abajo son 'gas sin avión', 'tuas sin vuelo' y "
+        "los OTROS INGRESOS registrados en Ingresos (clave ING-n: intereses, "
+        "reembolsos, ventas de activos…); los anticipos y las aportaciones NO "
+        "aparecen: no son resultado (29-ago: los gastos de empresa viven en "
+        "la hoja 'otros gastos' — antes llamada 'gastos VuelaTour').",
     ).font = Font(italic=True, size=9, color=MUTED)
     headers = [
         "clave", "fecha\nvuelo", "concepto", "egreso", "fecha", "concepto",

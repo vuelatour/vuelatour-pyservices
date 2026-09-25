@@ -338,6 +338,86 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `_advertencias_saldos` valida la cadena `saldo[i] = saldo[i−1] − cargo +
   abono` y avisa dónde faltan movimientos. Tests:
   `tests/test_estado_cuenta_banco.py`.
+- **Conciliación de INGRESOS con IA** (24-sep-2026, API 0.0.34, pedido «con
+  IA marcar los que sí empatan con los cobros de los vuelos»):
+  `POST /conciliacion/sugerir-abonos` (`X-Internal-Token`), servicio
+  `app/services/conciliacion_abonos.py` con su PROPIO `_client()`
+  (`claude_fake(conciliacion_abonos, …)` lo parchea), esquemas
+  `AbonoParaSugerir` / `CandidatoParaAbono` /
+  `ConciliacionSugerirAbonos{Request,Response}` / `SugerenciaAbono` en
+  `schemas/conciliacion.py` (todo con default; `folio` `str | int` → texto,
+  banderas `null` → False, `neto` null ⇒ monto − comisión). El API manda
+  lotes de ≤ 10 abonos (`max_length`, 11 ⇒ 422) con sus `candidato_ids`
+  PERMITIDOS (prefijo `COBRO_VUELO:` / `SOBRE_GRUPO:` / `INGRESO:`) y un pool
+  de ≤ 120 candidatos; aquí UNA llamada (`max_tokens` 6000, timeout 120 s
+  con `with_options`, `sistema_con_dominio`). **La IA propone, nada liga**:
+  el API revalida ids, calcula `monto_exacto` y registra `ia_uso`
+  (`CONCILIACION_ABONOS_SUGERIR`) con el `uso_ia` de la respuesta.
+  Errores: `stop_reason == max_tokens` ⇒ **502 `{detail: {error/code:
+  IA_RESPUESTA_TRUNCADA, message, uso_ia}}`** (jamás se «repara» un JSON
+  cortado; los créditos se gastaron y el API los registra); JSON ilegible ⇒
+  422 con `error: IA_RESPUESTA_ILEGIBLE` + `uso_ia`; `APIStatusError` o
+  conexión/timeout ⇒ 502 (nunca 500). Sin abonos ⇒ 200 sin llamar a Claude.
+  El payload del modelo va SIN campos vacíos, con los candidatos de OTRA
+  moneda ya fuera y con `exactos` por abono (ids que cuadran al centavo:
+  la aritmética la hace Python, no el modelo). **Post-validación
+  determinista** (`_evidencias_abono`, el tope final es el MÍNIMO):
+  monto — el abono contra el NETO y el BRUTO del candidato y, en pasarela,
+  `monto_bruto` contra el bruto — exacto (≤ 0.01) 0.95 · ≤ $1.00 y ≤ 1 %
+  0.85 · ≤ 1 % 0.7 «posible comisión» · ≤ 5 % 0.5 · si no 0.3; monto NO
+  exacto y SIN el nombre del cliente en la descripción ⇒ 0.4 (nombre =
+  ≥ 2 tokens de ≥ 3 letras en común tras `normalizar_texto_banco`, sin
+  «PAGO/VUELO/SPEI…»; es evidencia, no sube el tope); días (día de pared
+  Cancún, `dias_entre_cancun`) ≤ 3 libre · 4–15 0.8 · 16–45 0.6 · > 45 0.4;
+  `otra_cuenta` 0.5. `confianza = min(modelo, tope)`, también en las
+  alternativas. Candidato fuera de SU lista, inventado o de otra moneda ⇒
+  descartado (REVISAR, confianza 0); mismo candidato en dos abonos ⇒ gana
+  la confianza mayor y el otro pasa a REVISAR («Ese candidato se propuso
+  para otro abono con más confianza»); LIGAR sin candidato ⇒ REVISAR;
+  candidato + acción que no es LIGAR/REVISAR ⇒ REVISAR; acción desconocida
+  ⇒ REVISAR; `categoria_sugerida` fuera de `categorias` ⇒ None. **Anti
+  doble conteo** (caso real: abono «MARIA CRISTINA CHAVEZ BADIOLA» 19,380 =
+  cobro del vuelo #235, 20,400 − 1,020): REGISTRAR_INGRESO con un
+  COBRO_VUELO/SOBRE_GRUPO permitido EXACTO ⇒ REVISAR con «Hay un cobro de
+  vuelo con el monto exacto: revísalo antes de registrarlo como otro
+  ingreso» y ese cobro PRIMERO en `alternativas` (≤ 0.7); lo mismo con un
+  INGRESO ya registrado exacto («… vincúlalo en lugar de registrar otro»);
+  REGISTRAR_INGRESO como ANTICIPO_CLIENTE ⇒ REVISAR (quién es el cliente y
+  si su vuelo ya existe lo decide la persona). Evidencias ≤ 4 (las duras
+  primero), alternativas ≤ 2, textos ≤ 300; una sugerencia por abono en el
+  orden del request (sin respuesta del modelo ⇒ REVISAR); `advertencias`
+  cuenta las correcciones. `_dominio.py` (v2026-09-24) ganó los alias
+  «POCKET DE LATINOAMERICA» (BillPocket agrupado), «REV» (reverso) y «SPEI»
+  (trae el nombre del ordenante). Textos de hojas: la nota de «otros
+  movimientos» del balance, `_NOTA_GASTOS_EMPRESA` y las de «Otros
+  ingresos»/«utilidades» del Libro Dinero ya dicen que las filas `ING-n`
+  (otros ingresos sin vuelo, registrados en Ingresos) viven ahí y que los
+  anticipos/aportaciones NO — sin cambio de schema: el API las manda como
+  filas más (`filas_sueltas` / `otros_ingresos`). Tests:
+  `tests/test_sugerir_abonos.py`.
+  Revisión adversaria (24-sep-2026), trampas congeladas en tests: (1)
+  **`max_retries=0`** en el `with_options` (`MAX_REINTENTOS`): el cliente
+  compartido reintenta 2 veces y el SDK reintenta también los TIMEOUTS ⇒ una
+  generación lenta duraba 3 × 120 s, el API ya había abortado a los 130 s y
+  cada intento se cobraba sin llegar a `ia_uso`; (2) el JSON se lee con
+  `raw_decode` desde el primer valor completo — antes una nota después del
+  JSON con «}» o un «[» en la prosa de antes tiraban una respuesta buena como
+  422; un objeto roto sigue siendo 422 (jamás se rescatan pedazos: una lista
+  suelta solo vale si sus objetos traen `movimiento_id`); (3) `num()` de
+  `validaciones_ia` rechaza NaN/Infinity (`json.loads` los acepta y
+  `"confianza": NaN` tronaba el `le=1` del esquema ⇒ 422 SIN `uso_ia`) y
+  TODO fallo al post-validar sale como `IA_RESPUESTA_ILEGIBLE` CON `uso_ia`;
+  `stop_reason` `model_context_window_exceeded` también es truncado; el
+  resto de `anthropic.APIError` ⇒ 502; (4) ids del modelo con otra
+  capitalización o sin el prefijo `TIPO:` se resuelven al id CANÓNICO de la
+  lista del abono solo si el uuid es de exactamente un candidato
+  (`_resolver_id`; un pedazo de uuid sigue descartado), igual el
+  `movimiento_id`; (5) **el candidato que cuadra al centavo SIEMPRE queda a
+  la vista**: si el modelo no lo eligió (lo manda a «anticipo», clasifica,
+  elige otro no exacto o ni contesta por ese abono) va PRIMERO en
+  `alternativas` (≤ 0.7, o la confianza más baja del modelo si ya lo
+  listaba); (6) la evidencia «otra cuenta» va antes que la referencia: el
+  recorte a 4 nunca tira la que explica el tope.
 
 ## Lectura de facturas emitidas (PDF)
 

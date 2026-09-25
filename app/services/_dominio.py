@@ -23,7 +23,7 @@ from __future__ import annotations
 
 # Fecha de la última revisión del contenido (viaja en el prompt: si un día
 # una respuesta rara huele a contexto viejo, aquí se ve de qué fecha es).
-DOMINIO_VERSION = "2026-09-15"
+DOMINIO_VERSION = "2026-09-24"
 
 # Flota conocida (aviones chárter). Referencia para advertir matrículas
 # alucinadas; NO es un filtro que borre datos.
@@ -73,11 +73,18 @@ ALIAS_BANCO: tuple[tuple[str, str], ...] = (
     ("PINPE", "agregador de pago: el comercio real va después del asterisco"),
     ("CLIP", "agregador de pago (terminal): comercio real tras el asterisco"),
     ("BILLPOCKET", "agregador de pago (terminal)"),
+    (
+        "POCKET DE LATINOAMERICA",
+        "BillPocket: depósito AGRUPADO de la terminal de cobro (ABONO neto de comisión)",
+    ),
     ("PAYWISE", "pasarela de cobro de la empresa (deposita NETO, retiene comisión)"),
     ("SEL TRASPASO ENTRE CUENTAS", "traspaso interno: NO es gasto ni cobro"),
     ("COMISION", "comisión del banco (sin gasto capturado detrás)"),
     ("IVA COMISION", "IVA de la comisión del banco"),
     ("INTERES", "intereses del banco"),
+    # 24-sep-2026 (conciliación de INGRESOS): lo que se ve en los ABONOS.
+    ("REV", "reverso: el banco devolvió un cargo anterior (NO es ingreso ni gasto nuevo)"),
+    ("SPEI", "transferencia interbancaria: suele traer el nombre del ordenante"),
 )
 
 IVA_PCT = 16.0

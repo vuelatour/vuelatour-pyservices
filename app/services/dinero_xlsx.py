@@ -326,7 +326,10 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
         value="Ingreso de VuelaTour (no del avión): TUAs, extras, pernocta y "
         "comisión del vendedor cobrados (con su IVA) vs lo pagado. El pago de "
         "la comisión al vendedor va apareado en su fila como PROVISIÓN a la "
-        "fecha del vuelo mientras no exista el gasto real (regla 28-ago-2026).",
+        "fecha del vuelo mientras no exista el gasto real (regla 28-ago-2026). "
+        "Al final, los otros ingresos que no son de un vuelo (clave ING-n, "
+        "registrados en Ingresos). Los anticipos de clientes no están aquí: "
+        "cuentan como cobro del vuelo al aplicarse.",
     ).font = Font(italic=True, size=9, color="5B6470")
     headers = [
         "clave", "fecha\nvuelo", "concepto", "egreso", "fecha", "concepto",
@@ -550,8 +553,9 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
         column=1,
         value="OTROS INGRESOS = ingreso de VuelaTour (TUAs/extras/pernocta/"
         "comisión del vendedor + su IVA), no del avión (regla 28-ago-2026), "
-        "NETO de la provisión del pago al vendedor (comisión + su IVA): "
-        "ver hoja 'Otros ingresos'." + nota_provision,
+        "NETO de la provisión del pago al vendedor (comisión + su IVA), más "
+        "los ingresos sin vuelo registrados en Ingresos (ING-n), netos de su "
+        "comisión bancaria: ver hoja 'Otros ingresos'." + nota_provision,
     ).font = Font(italic=True, size=9, color="5B6470")
 
 

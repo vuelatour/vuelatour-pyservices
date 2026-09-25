@@ -179,3 +179,127 @@ class ConciliacionSugerirResponse(BaseModel):
         default=None,
         description="Por qué ningún candidato encaja (solo cuando el sugerido es null)",
     )
+
+
+# ---------------------------------------------------------------------------
+# Conciliación de INGRESOS (24-sep-2026): abonos del banco ↔ cobros de vuelo,
+# sobres de grupo e ingresos registrados. La IA PROPONE, la persona confirma:
+# nada de esto liga. Todo con default y tipos LIBERALES (el API serializa los
+# folios como número y los montos numeric como número o texto).
+# ---------------------------------------------------------------------------
+
+
+class AbonoParaSugerir(BaseModel):
+    """ABONO del banco sin conciliar que el auto-cruce no resolvió."""
+
+    id: str = Field(description="movimiento_bancario.id")
+    fecha: str | None = Field(default=None, description="Día del abono YYYY-MM-DD")
+    monto: float = Field(description="Lo depositado (en pasarela: el NETO)")
+    monto_bruto: float | None = Field(default=None, description="Bruto (solo pasarela)")
+    comision_monto: float | None = Field(default=None, description="Comisión (solo pasarela)")
+    descripcion: str | None = Field(default=None, description="Concepto LITERAL del banco")
+    referencia: str | None = Field(default=None)
+    cuenta_alias: str | None = Field(default=None)
+    cuenta_moneda: str | None = Field(default=None, description="MXN | USD")
+    cuenta_tipo: str | None = Field(default=None, description="BANCO | PASARELA")
+    candidato_ids: list[str] = Field(
+        default_factory=list,
+        description="ids (con prefijo TIPO:) de los candidatos PERMITIDOS para ESTE abono",
+    )
+
+    @field_validator("candidato_ids", mode="before")
+    @classmethod
+    def _ids_a_texto(cls, v):
+        if v is None:
+            return []
+        return [str(x) for x in v if x is not None] if isinstance(v, list) else v
+
+
+class CandidatoParaAbono(BaseModel):
+    """Cobro de vuelo, sobre de grupo o ingreso registrado, LIBRE (sin abono)."""
+
+    id: str = Field(description='"COBRO_VUELO:<uuid>" | "SOBRE_GRUPO:<uuid>" | "INGRESO:<uuid>"')
+    tipo: Literal["COBRO_VUELO", "SOBRE_GRUPO", "INGRESO"]
+    fecha: str | None = Field(default=None, description="Día (o instante ISO) del cobro/ingreso")
+    monto: float = Field(description="BRUTO registrado")
+    comision: float | None = Field(default=None, description="Comisión bancaria registrada")
+    # Lo manda el API (monto − comisión); si llegara null se deriva aquí —
+    # re-resta de dos campos del MISMO payload, no un cálculo de negocio.
+    neto: float = Field(description="Neto esperado en el banco (monto − comisión)")
+    moneda: str | None = Field(default=None, description="MXN | USD")
+    metodo: str | None = Field(default=None, description="TRANSFERENCIA/PAYWISE/…")
+    cliente: str | None = Field(default=None, description="Cliente del vuelo o pagador")
+    # El API manda el folio como NÚMERO (igual que `GastoCandidato.vuelo_folio`
+    # el 15-sep-2026, cuando un `str` estricto dejó muerta la IA con 422).
+    folio: str | int | None = Field(default=None, description="Folio del vuelo / G-n / ING-n")
+    referencia: str | None = Field(default=None)
+    categoria: str | None = Field(default=None, description="Solo INGRESO: su categoría")
+    es_anticipo: bool = Field(default=False, description="INGRESO que es anticipo de cliente")
+    descripcion: str | None = Field(default=None, description="Solo INGRESO: su descripción")
+    cuenta_alias: str | None = Field(default=None, description="Solo INGRESO: su cuenta")
+    otra_cuenta: bool = Field(
+        default=False, description="INGRESO registrado en una cuenta distinta a la del abono"
+    )
+
+    @field_validator("folio", mode="before")
+    @classmethod
+    def _folio_a_texto(cls, v):
+        return None if v is None else str(v)
+
+    @field_validator("es_anticipo", "otra_cuenta", mode="before")
+    @classmethod
+    def _bool_nulo(cls, v):
+        return False if v is None else v
+
+    @field_validator("neto", mode="before")
+    @classmethod
+    def _neto_derivado(cls, v, info):
+        if v is not None:
+            return v
+        monto = info.data.get("monto")
+        if monto is None:
+            return v
+        return float(monto) - float(info.data.get("comision") or 0)
+
+
+class ConciliacionSugerirAbonosRequest(BaseModel):
+    """Lote de ≤ 10 abonos + el pool deduplicado de ≤ 120 candidatos."""
+
+    abonos: list[AbonoParaSugerir] = Field(default_factory=list, max_length=10)
+    candidatos: list[CandidatoParaAbono] = Field(default_factory=list, max_length=120)
+    categorias: list[str] = Field(
+        default_factory=list, description="Códigos válidos para categoria_sugerida"
+    )
+
+    @field_validator("candidatos", "categorias", mode="before")
+    @classmethod
+    def _lista_nula(cls, v):
+        return [] if v is None else v
+
+
+class AlternativaAbono(BaseModel):
+    candidato_id: str
+    confianza: float = Field(ge=0, le=1, default=0.0)
+    razon: str = ""
+
+
+class SugerenciaAbono(BaseModel):
+    movimiento_id: str
+    candidato_id: str | None = None
+    candidato_tipo: str | None = None
+    confianza: float = Field(ge=0, le=1, default=0.0)
+    razon: str = ""
+    evidencias: list[str] = Field(default_factory=list)
+    alternativas: list[AlternativaAbono] = Field(default_factory=list)
+    accion: Literal[
+        "LIGAR", "REGISTRAR_INGRESO", "CLASIFICAR_TRASPASO", "CLASIFICAR_REVERSO", "REVISAR"
+    ] = "REVISAR"
+    categoria_sugerida: str | None = None
+    motivo_sin_match: str | None = None
+
+
+class ConciliacionSugerirAbonosResponse(BaseModel):
+    sugerencias: list[SugerenciaAbono] = Field(default_factory=list)
+    modelo: str
+    uso_ia: UsoIA | None = None
+    advertencias: list[str] = Field(default_factory=list)
