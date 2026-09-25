@@ -126,7 +126,9 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   la matrícula SIEMPRE se ve. Formato de administración: fecha protagonista
   = DÍA DEL VUELO; tabla de tramos RUTA («CUN–MID» desde el 22-sep-2026;
   antes el nombre largo «Cancun-Merida») · FECHA («26-jun»)
-  · DISTANCIA MILLAS · TIEMPO VUELO («01:18», incluye calzos) · COSTO POR
+  · DISTANCIA MILLAS · TIEMPO VUELO (HRS) («1.19» en horas decimales desde
+  el 24-sep-2026 —antes «01:18»—, incluye calzos; ver la entrada «Tiempo de
+  vuelo en horas decimales» más abajo) · COSTO POR
   HORA · TOTAL POR TRAMO + fila TOTAL; si `tramos_ajuste_usd` ≠ 0 una fila
   más con su motivo para que Σ tramos + ajuste == «Servicio aéreo» del
   desglose canónico; TUAS solo las COBRADAS (`tuas_cobradas`); comisión del
@@ -134,7 +136,7 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   notas internas. NO se pintan (aunque un API viejo los mande): tacómetros,
   horas voladas, avión operativo, traslados, partición, gastos, utilidad ni
   CFDI — eso vive en el reporte del vuelo. Todo llega calculado del API;
-  aquí solo se formatea («01:18», «26-jun») o se re-suma la columna
+  aquí solo se formatea («1.19», «26-jun») o se re-suma la columna
   informativa de millas. Aire (11-sep-2026, «todo muy junto»):
   cuerpo y tablas a 9.5 pt (encabezados/aclaraciones 8–8.5 pt, pie 7.5 pt;
   nada baja de ahí), celdas 3 px × 6 px, `@page` 9/12/10 mm. Presupuesto
@@ -178,6 +180,30 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   ⇒ **una hoja mientras filas ≲ 11** (antes ≲ 6). Con los payloads REALES de
   prod: #329 = 718 px y el folio con más tramos (8) = 808 px. Tests:
   `tests/test_cotizacion_interna_pdf.py`.
+- **Tiempo de vuelo en horas decimales (24-sep-2026, API 0.0.33)**. Pedido
+  del cliente con la captura de una CUN→PTU→CUN: «la parte de tiempo de
+  vuelo, lo podemos manejar solo en decimales por favor? … se nos hacen
+  raros los tiempos». Cada tramo valía 1.19166… h (125 nm / 120 kt + 0.15
+  de calzo) ⇒ «01:12», el total 2.38333 h ⇒ «02:23», y 01:12 + 01:12 ≠
+  02:23. Ahora la columna es **«TIEMPO VUELO (HRS)»** (`ENCABEZADO_TIEMPO`
+  = «Tiempo vuelo (hrs)»; el CSS pone las mayúsculas) con **2 decimales
+  FIJOS** por tramo, en la fila TOTAL y en la fila consolidada, y la nota
+  `NOTA_TRAMOS` = «Tiempo de vuelo en horas decimales (1.50 = 1 h 30 min) e
+  incluye calzos» (+ calzos, millas, consolidado como siempre). Se PINTAN
+  los campos ADITIVOS del API `tiempo_horas` (por tramo; `None` ⇒ «—») y
+  `tramos_tiempo_total_horas`, que el API reparte por **RESIDUO MAYOR**
+  (`repartirHorasDecimales`, `tramos-costeados.util.ts`) para que **Σ tramos
+  mostrados == total mostrado**. Si el payload no trae
+  `tramos_tiempo_total_horas` (API previo), `_tiempos_de_tabla` reparte aquí
+  con el espejo EXACTO `_repartir_horas_decimales` (`_horas_decimal` =
+  medio hacia arriba en ENTEROS con `floor(x + 0.5)` —el `Math.round` del
+  API—, jamás `round()`/`:.2f`, que fallan en 1.005). `tiempo_hhmm` /
+  `tramos_tiempo_total_hhmm` se siguen aceptando (compatibilidad) y se
+  IGNORAN; `_hhmm` se retiró. Solo presentación: ningún importe cambia.
+  Misma tabla de casos que el API y el panel (`CASOS_HORAS_DECIMALES` en
+  `tests/test_cotizacion_interna_pdf.py`). Tras tocar este armador, el panel
+  regenera sus fixtures con `npm run gen:hoja-interna-fixture` (5 escenarios,
+  `interna-ptu` = la captura del cliente).
 - **Conceptos SIN IVA debajo del IVA** (22-sep-2026, mismo pedido: «que se
   entienda visualmente que no lleva IVA»), en los TRES documentos y en la
   hoja WYSIWYG del panel. Fuente única: `cotizacion_pdf.particionar_por_iva`

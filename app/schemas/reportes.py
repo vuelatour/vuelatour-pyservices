@@ -473,7 +473,11 @@ class CotizacionInternaTramoCotizadoPdf(BaseModel):
     fecha: str | None = None  # YYYY-MM-DD (pared Cancún)
     millas: float | None = None  # millas náuticas del tramo
     tiempo_hr: float = 0  # horas cobrables CON calzo (4 dec.)
-    tiempo_hhmm: str | None = None  # "01:18" (si falta se formatea de tiempo_hr)
+    tiempo_hhmm: str | None = None  # LEGADO "01:18": ya no se pinta (API 0.0.33)
+    # «TIEMPO VUELO (HRS)» (API 0.0.33): "1.19", 2 decimales fijos y repartido
+    # por residuo mayor para que Σ tramos == `tramos_tiempo_total_horas`.
+    # None con el total presente = el tramo no trae tiempo («—»).
+    tiempo_horas: str | None = None
     tarifa_hora_usd: float | None = None  # única del vuelo salvo tarifa por tramo
     total_usd: float = 0
     pax: int | None = None  # 0 en ferry
@@ -606,7 +610,10 @@ class CotizacionInternaPdfRequest(BaseModel):
     # (2) Tramos cotizados y horas (snapshot.tramos / snapshot.tiempos)
     tramos_cotizados: list[CotizacionInternaTramoCotizadoPdf] = Field(default_factory=list)
     tramos_tiempo_total_hr: float = 0  # Σ tiempo_hr
-    tramos_tiempo_total_hhmm: str | None = None  # "02:36"
+    tramos_tiempo_total_hhmm: str | None = None  # LEGADO "02:36": ya no se pinta
+    # Fila TOTAL de «TIEMPO VUELO (HRS)» (API 0.0.33): "2.38" = Σ tiempo_horas.
+    # Ausente (API previo) ⇒ la tabla se reparte aquí con el MISMO criterio.
+    tramos_tiempo_total_horas: str | None = None
     tramos_total_usd: float = 0  # Σ total_usd (fila TOTAL)
     # Línea TIEMPO_VUELO canónica − Σ tramos (0 si cuadra): Σ tramos + ajuste
     # == «Servicio aéreo». Se pinta como fila aparte, nunca se reparte.

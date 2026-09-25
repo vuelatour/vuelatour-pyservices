@@ -4,7 +4,8 @@ Feedback de administración (8-sep, con la foto de su formato de siempre):
 SOLO lo de la COTIZACIÓN. La fecha protagonista es el DÍA DEL VUELO (la de
 cotización/confirmación va en pequeño); los tramos se desglosan como en su
 hoja — RUTA («Cancun-Merida») · FECHA («26-jun») · DISTANCIA MILLAS ·
-TIEMPO VUELO («01:18», incluye calzos) · COSTO POR HORA VUELO · TOTAL POR
+TIEMPO VUELO (HRS) («1.19» en horas decimales desde el 24-sep-2026, incluye
+calzos) · COSTO POR HORA VUELO · TOTAL POR
 TRAMO, con fila TOTAL en USD —; TUAS solo las que SE COBRARON; desglose
 canónico con comisión del vendedor, ajuste/redondeo, IVA y total USD/MXN;
 cobros compactos con su comisión bancaria; notas internas. NADA de operación
@@ -38,8 +39,17 @@ del snapshot: cada tramo trae su `tiempo_hr` (con calzo), su tarifa y su
 `tramos_ajuste_usd` con su motivo (hora mínima / sobrevuelo / horas pactadas
 / redondeo) y se pinta como una fila más para que Σ tramos + ajuste ==
 «Servicio aéreo». Nunca se recalcula dinero; a lo sumo se formatea
-(«01:18», «26-jun», «8.8570 % = $3,236.36») o se re-suma una columna
+(«1.19», «26-jun», «8.8570 % = $3,236.36») o se re-suma una columna
 informativa (millas).
+
+TIEMPO EN HORAS DECIMALES (24-sep-2026, API 0.0.33). Pedido del cliente:
+«la parte de tiempo de vuelo, lo podemos manejar solo en decimales por
+favor? … se nos hacen raros los tiempos». En hh:mm la CUN→PTU→CUN decía
+«01:12» + «01:12» y TOTAL «02:23» (cada tramo valía 1.19166… h = 71.5 min).
+Ahora la columna va con 2 decimales fijos y los tramos SUMAN el total: se
+pintan `tiempo_horas` / `tramos_tiempo_total_horas` del API, repartidos por
+residuo mayor (`repartirHorasDecimales`); con un payload viejo se reparte
+aquí con el espejo `_repartir_horas_decimales`. `tiempo_hhmm` se ignora.
 
 PODA de repeticiones (22-sep-2026, capturas del cliente sobre la #329, que
 salía en DOS hojas). Se quitó lo que ya estaba dicho en otro renglón:
@@ -104,6 +114,7 @@ en la vista previa y en el panel; jamás copiar CSS al panel ni renombrar las
 clases del marcado.
 """
 
+import math
 from datetime import UTC, datetime
 from functools import lru_cache
 from html import escape
@@ -142,7 +153,12 @@ BANDA_INTERNA = "Cotización interna · uso exclusivo de oficina · no enviar al
 # de ella. Hermana de `cotizacion_pdf.CLASE_RAIZ` ("cot-hoja", la del cliente).
 CLASE_RAIZ = "cot-interna"
 # Nota al pie de la tabla de tramos (regla del motor: 0.15 h por aterrizaje).
-NOTA_TRAMOS = "Tiempo de vuelo en hh:mm e incluye calzos"
+# Horas DECIMALES desde el 24-sep-2026 (API 0.0.33, pedido del cliente: «la
+# parte de tiempo de vuelo, lo podemos manejar solo en decimales»): con hh:mm
+# «01:12» + «01:12» no daba «02:23». Mismo texto en el panel (`NOTA_TRAMOS`).
+NOTA_TRAMOS = "Tiempo de vuelo en horas decimales (1.50 = 1 h 30 min) e incluye calzos"
+# Encabezado de la columna (el CSS lo pone en mayúsculas: «TIEMPO VUELO (HRS)»).
+ENCABEZADO_TIEMPO = "Tiempo vuelo (hrs)"
 
 # Truncado elegante de notas: prioridad a la cotización; las notas van al final.
 _NOTAS_MAX_CHARS = 280
@@ -210,13 +226,63 @@ def _dia_largo(s: str | None) -> str:
     return _fecha_dia(_dia_pared(s))
 
 
-def _hhmm(h: float | None) -> str:
-    """Horas decimales → 'hh:mm' (1.3 → '01:18', 0.4 → '00:24'). Misma regla
-    que `horasAHhmm` del API; solo se usa si el API no mandó `tiempo_hhmm`."""
-    if h is None:
-        return "—"
-    m = max(0, round(h * 60))
-    return f"{m // 60:02d}:{m % 60:02d}"
+_MICRO_POR_HORA = 1_000_000
+_MICRO_POR_CENTESIMA = _MICRO_POR_HORA // 100
+
+
+def _micro_horas(h: float) -> int:
+    """Horas → micro-horas ENTERAS (nunca negativo): se redondea sin flotantes.
+    `floor(x + 0.5)` y no `round()`: es el `Math.round` del API (Python
+    redondea los .5 al par) — el espejo tiene que ser exacto."""
+    return max(0, math.floor(h * _MICRO_POR_HORA + 0.5))
+
+
+def _centesimas_txt(c: int) -> str:
+    """Centésimas de hora → '1.19' (2 decimales FIJOS)."""
+    return f"{c // 100}.{c % 100:02d}"
+
+
+def _horas_decimal(h: float) -> str:
+    """Horas decimales → '1.19' con 2 decimales FIJOS, medio hacia arriba en
+    aritmética ENTERA (1.005 → '1.01'; `f"{1.005:.2f}"` daría '1.00').
+    Espejo EXACTO de `horasADecimal` del API (`tramos-costeados.util.ts`)."""
+    return _centesimas_txt(
+        (_micro_horas(h) + _MICRO_POR_CENTESIMA // 2) // _MICRO_POR_CENTESIMA
+    )
+
+
+def _repartir_horas_decimales(
+    tiempos: list[float | None],
+) -> tuple[list[str | None], str]:
+    """Columna «TIEMPO VUELO (HRS)» con la SUMA CUADRADA — RESPALDO para un
+    payload sin `tramos_tiempo_total_horas` (API previo al 0.0.33); con él,
+    manda lo que calculó el API.
+
+    Espejo EXACTO de `repartirHorasDecimales` del API: total =
+    `_horas_decimal(Σ)`; cada tramo baja a su centésima de piso y las que
+    faltan para el total se reparten de una en una al residuo MÁS GRANDE
+    (empate ⇒ orden del tramo). Así Σ tramos mostrados == total mostrado y
+    cada tramo queda a ≤ 0.01 de su propio redondeo. Un tiempo None es un
+    tramo sin tiempo: celda None («—») que no suma. Mismos casos congelados en
+    `tests/test_cotizacion_interna_pdf.py` y en los specs del API y el panel."""
+    micros = [None if h is None or not math.isfinite(h) else _micro_horas(h) for h in tiempos]
+    suma = sum(m for m in micros if m is not None)
+    total = (suma + _MICRO_POR_CENTESIMA // 2) // _MICRO_POR_CENTESIMA
+    cent: list[int | None] = [None if m is None else m // _MICRO_POR_CENTESIMA for m in micros]
+    faltan = total - sum(c for c in cent if c is not None)
+    candidatos = sorted(
+        (
+            (-(m % _MICRO_POR_CENTESIMA), i)
+            for i, m in enumerate(micros)
+            if m is not None and m % _MICRO_POR_CENTESIMA > 0
+        ),
+    )
+    for _, i in candidatos:
+        if faltan <= 0:
+            break
+        cent[i] = (cent[i] or 0) + 1
+        faltan -= 1
+    return [None if c is None else _centesimas_txt(c) for c in cent], _centesimas_txt(total)
 
 
 def _millas(v: float | None) -> str:
@@ -490,9 +556,13 @@ def _ficha_html(r: CotizacionInternaPdfRequest) -> str:
     )
 
 
-def _tramo_fila(t: CotizacionInternaTramoCotizadoPdf) -> str:
+def _tramo_fila(t: CotizacionInternaTramoCotizadoPdf, tiempo: str) -> str:
     """Una fila de la tabla de administración: RUTA · FECHA · MILLAS · TIEMPO ·
     COSTO/HR · TOTAL.
+
+    `tiempo` llega YA en horas decimales («1.19», de `_tiempos_de_tabla`): la
+    celda de un tramo depende de TODA la tabla (suma cuadrada), así que no se
+    formatea fila por fila.
 
     La celda RUTA abre con la ABREVIATURA «CUN–PCE» (22-sep-2026: el cliente
     marcó el nombre largo como repetido) y las marcas —ferry, pernocta— van
@@ -522,7 +592,6 @@ def _tramo_fila(t: CotizacionInternaTramoCotizadoPdf) -> str:
     if detalles:
         ruta_html += f'<span class="muted"> · {escape(" · ".join(detalles))}</span>'
     tarifa = "—" if t.tarifa_hora_usd is None else _money(t.tarifa_hora_usd)
-    tiempo = t.tiempo_hhmm or _hhmm(t.tiempo_hr)
     return (
         f'<tr><td class="ruta">{ruta_html}</td>'
         f"<td>{_dia_mes(t.fecha)}</td>"
@@ -531,6 +600,22 @@ def _tramo_fila(t: CotizacionInternaTramoCotizadoPdf) -> str:
         f'<td class="num">{tarifa}</td>'
         f'<td class="num">{_monto(t.total_usd)}</td></tr>'
     )
+
+
+def _tiempos_de_tabla(
+    r: CotizacionInternaPdfRequest, tramos: list[CotizacionInternaTramoCotizadoPdf]
+) -> tuple[list[str], str]:
+    """Celdas de «TIEMPO VUELO (HRS)» (en el orden de `tramos`) y su fila TOTAL.
+
+    API 0.0.33+ (viaja `tramos_tiempo_total_horas`): se PINTA lo que mandó el
+    API (`tiempo_horas` por tramo, ya cuadrado con el total; None ⇒ «—»).
+    Payload anterior: se reparte aquí con el MISMO criterio
+    (`_repartir_horas_decimales`) sobre `tiempo_hr`, para que la tabla también
+    cuadre durante el despliegue."""
+    if r.tramos_tiempo_total_horas:
+        return [t.tiempo_horas or "—" for t in tramos], r.tramos_tiempo_total_horas
+    celdas, total = _repartir_horas_decimales([t.tiempo_hr for t in tramos])
+    return [c or "—" for c in celdas], total
 
 
 def _tramos_html(r: CotizacionInternaPdfRequest) -> str:
@@ -544,14 +629,15 @@ def _tramos_html(r: CotizacionInternaPdfRequest) -> str:
             '<table class="grid tramos"><tbody><tr><td class="muted">'
             "Sin tramos cotizados.</td></tr></tbody></table>"
         )
-    filas = "".join(_tramo_fila(t) for t in tramos)
+    # TIEMPO en horas decimales con la suma cuadrada (Σ celdas == TOTAL).
+    tiempos, tiempo_total = _tiempos_de_tabla(r, tramos)
+    filas = "".join(_tramo_fila(t, tiempo) for t, tiempo in zip(tramos, tiempos, strict=True))
     # Millas: re-suma informativa de la columna (solo si todos los tramos las traen).
     millas = (
         _millas(sum(t.millas for t in tramos if t.millas is not None))
         if all(t.millas is not None for t in tramos)
         else ""
     )
-    tiempo_total = r.tramos_tiempo_total_hhmm or _hhmm(r.tramos_tiempo_total_hr)
     pie = (
         '<tr class="total"><td>TOTAL</td><td></td>'
         f'<td class="num">{millas}</td><td class="num">{escape(tiempo_total)}</td><td></td>'
@@ -574,7 +660,7 @@ def _tramos_html(r: CotizacionInternaPdfRequest) -> str:
   <h2>Tramos cotizados</h2>
   <table class="grid tramos"><thead><tr>
     <th>Ruta</th><th>Fecha</th><th class="num">Distancia millas</th>
-    <th class="num">Tiempo vuelo</th><th class="num">Costo por hora vuelo</th>
+    <th class="num">{ENCABEZADO_TIEMPO}</th><th class="num">Costo por hora vuelo</th>
     <th class="num">Total por tramo</th>
   </tr></thead><tbody>{filas}</tbody><tfoot>{pie}</tfoot></table>
   <div class="nota">{escape(" · ".join(notas))}.</div>"""

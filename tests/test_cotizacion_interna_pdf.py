@@ -1,7 +1,7 @@
 """PDF de la COTIZACIÓN INTERNA v2 (8-sep-2026), probado sobre el HTML (sin
 WeasyPrint, import perezoso): banda «interna», FECHA DEL VUELO protagonista,
 matrícula SIEMPRE visible, tabla de tramos como la hoja de administración
-(RUTA «Cancun-Merida» · FECHA «26-jun» · MILLAS · TIEMPO «01:18» con calzos ·
+(RUTA «Cancun-Merida» · FECHA «26-jun» · MILLAS · TIEMPO «1.30» con calzos ·
 COSTO POR HORA · TOTAL POR TRAMO + TOTAL), fila de ajuste SOLO si Σ tramos
 no cuadra con el servicio aéreo, TUAS solo cobradas, desglose con comisión
 del vendedor, cobros compactos con comisión bancaria (caso real de la foto:
@@ -35,6 +35,7 @@ from app.services import cotizacion_grupo_pdf, cotizacion_interna_pdf, cotizacio
 from app.services.cotizacion_interna_pdf import (
     BANDA_INTERNA,
     CLASE_RAIZ,
+    ENCABEZADO_TIEMPO,
     NOTA_TRAMOS,
     _build_html,
     _cuerpo_interno_html,
@@ -43,8 +44,9 @@ from app.services.cotizacion_interna_pdf import (
     _estilos_hoja_interna,
     _estilos_interno,
     _estilos_page_interno,
-    _hhmm,
+    _horas_decimal,
     _millas,
+    _repartir_horas_decimales,
     _truncar,
     render_cotizacion_interna_preview_html,
 )
@@ -63,7 +65,8 @@ def _tramo(orden: int, origen: str, destino: str, **extra) -> dict:
         "fecha": "2026-06-26",
         "millas": 157,
         "tiempo_hr": 1.3,  # 1.15 h de vuelo + 0.15 h de calzo
-        "tiempo_hhmm": "01:18",
+        "tiempo_hhmm": "01:18",  # LEGADO: viaja pero ya no se pinta
+        "tiempo_horas": "1.30",  # lo que PINTA la columna (API 0.0.33)
         "tarifa_hora_usd": 900.0,
         "total_usd": 1170.0,
         "pax": 4,
@@ -126,6 +129,7 @@ def _payload(**extra) -> dict:
         "tramos_cotizados": [_tramo(1, "CUN", "MID"), _tramo(2, "MID", "CUN")],
         "tramos_tiempo_total_hr": 2.6,
         "tramos_tiempo_total_hhmm": "02:36",
+        "tramos_tiempo_total_horas": "2.60",
         "tramos_total_usd": 2340.0,
         "tramos_ajuste_usd": 0,
         "tramos_ajuste_motivo": None,
@@ -381,9 +385,11 @@ def test_tabla_de_tramos_con_las_seis_columnas_y_total() -> None:
     assert (
         "<th>Ruta</th><th>Fecha</th>"
         '<th class="num">Distancia millas</th>\n'
-        '    <th class="num">Tiempo vuelo</th><th class="num">Costo por hora vuelo</th>\n'
+        '    <th class="num">Tiempo vuelo (hrs)</th><th class="num">Costo por hora vuelo</th>\n'
         '    <th class="num">Total por tramo</th>' in html
     )
+    # El CSS pone el encabezado en mayúsculas: «TIEMPO VUELO (HRS)».
+    assert ENCABEZADO_TIEMPO == "Tiempo vuelo (hrs)"
     # La celda RUTA es la ABREVIATURA y nada más (22-sep-2026): el nombre
     # largo «Cancun-Merida» era la repetición que el cliente marcó en rojo.
     fila = _fila_tramo(html, "CUN–MID")
@@ -392,7 +398,7 @@ def test_tabla_de_tramos_con_las_seis_columnas_y_total() -> None:
     assert (
         "<td>26-jun</td>"
         '<td class="num">157</td>'
-        '<td class="num">01:18</td>'
+        '<td class="num">1.30</td>'
         '<td class="num">$900.00</td>'
         '<td class="num">$1,170.00</td></tr>' in fila
     )
@@ -400,9 +406,14 @@ def test_tabla_de_tramos_con_las_seis_columnas_y_total() -> None:
     # Fila TOTAL en USD con Σ tiempo (del API) y Σ millas (columna informativa).
     assert (
         '<tr class="total"><td>TOTAL</td><td></td><td class="num">314</td>'
-        '<td class="num">02:36</td><td></td><td class="num">$2,340.00 USD</td></tr>' in html
+        '<td class="num">2.60</td><td></td><td class="num">$2,340.00 USD</td></tr>' in html
     )
+    # Nada de hh:mm en la tabla (el legado `tiempo_hhmm` viaja pero no se pinta).
+    assert "01:18" not in html and "02:36" not in html
     assert f"{NOTA_TRAMOS} (0.3 h en total) · distancia en millas náuticas." in html
+    assert NOTA_TRAMOS == (
+        "Tiempo de vuelo en horas decimales (1.50 = 1 h 30 min) e incluye calzos"
+    )
     # Sin ajuste: ni fila de ajuste ni «Servicio aéreo» repetido en la tabla.
     assert 'class="ajuste"' not in html
     assert html.count("Servicio aéreo") == 1  # solo en el desglose
@@ -414,10 +425,19 @@ def test_fila_de_ajuste_solo_si_no_cuadra_con_el_servicio_aereo() -> None:
     lineas[0].update(monto_usd=900.0, cantidad=1.0, unitario=900.0)
     html = _html(
         tramos_cotizados=[
-            _tramo(1, "CUN", "HOL", tiempo_hr=0.4, tiempo_hhmm="00:24", total_usd=360.0)
+            _tramo(
+                1,
+                "CUN",
+                "HOL",
+                tiempo_hr=0.4,
+                tiempo_hhmm="00:24",
+                tiempo_horas="0.40",
+                total_usd=360.0,
+            )
         ],
         tramos_tiempo_total_hr=0.4,
         tramos_tiempo_total_hhmm="00:24",
+        tramos_tiempo_total_horas="0.40",
         tramos_total_usd=360.0,
         tramos_ajuste_usd=540.0,
         tramos_ajuste_motivo="Hora mínima 1.0 h",
@@ -425,7 +445,7 @@ def test_fila_de_ajuste_solo_si_no_cuadra_con_el_servicio_aereo() -> None:
         hora_minima_aplicada=True,
         lineas=lineas,
     )
-    assert '<td class="num">00:24</td>' in html and "$360.00 USD" in html
+    assert '<td class="num">0.40</td>' in html and "$360.00 USD" in html
     assert (
         '<tr class="ajuste"><td colspan="5">Hora mínima 1.0 h'
         ' <span class="op">servicio aéreo cotizado − Σ tramos</span></td>'
@@ -451,25 +471,60 @@ def test_fila_de_ajuste_solo_si_no_cuadra_con_el_servicio_aereo() -> None:
     assert 'class="ajuste"' not in _html(tramos_ajuste_usd=0.004)
 
 
-def test_tramos_marcas_ferry_pernocta_hhmm_de_respaldo_y_consolidado() -> None:
+def test_tramos_marcas_ferry_pernocta_horas_de_respaldo_y_consolidado() -> None:
+    # Payload de un API PREVIO al 0.0.33: sin `tiempo_horas` ni
+    # `tramos_tiempo_total_horas` ⇒ la columna se reparte aquí desde tiempo_hr.
     tramos = [
-        _tramo(1, "CUN", "HOL", es_ferry=True, pax=0, tiempo_hhmm=None, tiempo_hr=0.4),
-        _tramo(2, "HOL", "MID", pernocta=True, pernocta_usd=150, fecha="2026-06-27", millas=98.6),
-        _tramo(3, "MID", "CUN", fecha=None, millas=None, tarifa_hora_usd=None, total_usd=0),
+        _tramo(
+            1,
+            "CUN",
+            "HOL",
+            es_ferry=True,
+            pax=0,
+            tiempo_hhmm=None,
+            tiempo_horas=None,
+            tiempo_hr=0.4,
+        ),
+        _tramo(
+            2,
+            "HOL",
+            "MID",
+            pernocta=True,
+            pernocta_usd=150,
+            fecha="2026-06-27",
+            millas=98.6,
+            tiempo_horas=None,
+        ),
+        _tramo(
+            3,
+            "MID",
+            "CUN",
+            fecha=None,
+            millas=None,
+            tarifa_hora_usd=None,
+            total_usd=0,
+            tiempo_horas=None,
+        ),
     ]
-    html = _html(tramos_cotizados=tramos, tramos_tiempo_total_hhmm=None, tramos_tiempo_total_hr=3.0)
+    html = _html(
+        tramos_cotizados=tramos,
+        tramos_tiempo_total_hhmm=None,
+        tramos_tiempo_total_horas=None,
+        tramos_tiempo_total_hr=3.0,
+    )
     # Abreviatura + marcas en la MISMA línea, sin <br> (una fila, no dos).
     f1 = _fila_tramo(html, "CUN–HOL")
     assert '<td class="ruta">CUN–HOL<span class="muted"> · ferry</span></td>' in f1
-    assert '<td class="num">00:24</td>' in f1  # hh:mm de tiempo_hr
+    assert '<td class="num">0.40</td>' in f1  # horas decimales de tiempo_hr
     assert "<br>" not in f1
     f2 = _fila_tramo(html, "HOL–MID")
     assert "pernocta $150.00" in f2 and "<td>27-jun</td>" in f2
     assert '<td class="num">98.6</td>' in f2
     f3 = _fila_tramo(html, "MID–CUN")
     assert "<td>—</td>" in f3 and f3.count('<td class="num">—</td>') == 2 and "$0.00" in f3
-    # Σ millas solo cuando todos los tramos las traen; Σ tiempo de respaldo.
-    assert '<td>TOTAL</td><td></td><td class="num"></td><td class="num">03:00</td>' in html
+    # Σ millas solo cuando todos los tramos las traen; Σ tiempo de respaldo
+    # (0.40 + 1.30 + 1.30 = 3.00: la columna cuadra también sin el API nuevo).
+    assert '<td>TOTAL</td><td></td><td class="num"></td><td class="num">3.00</td>' in html
     # Fila ÚNICA de respaldo (snapshot sin tramos): RESPALDO al nombre largo
     # (no hay abreviatura posible) y aviso.
     html = _html(
@@ -507,14 +562,179 @@ def test_tramo_sin_los_dos_iata_conserva_el_nombre_largo() -> None:
     assert '<td class="ruta">—</td>' in vacio
 
 
-def test_formatos_hhmm_dia_mes_y_millas() -> None:
-    assert _hhmm(1.3) == "01:18" and _hhmm(0.4) == "00:24" and _hhmm(2.6) == "02:36"
-    assert _hhmm(0) == "00:00" and _hhmm(None) == "—"
+def test_formatos_horas_decimales_dia_mes_y_millas() -> None:
+    assert _horas_decimal(1.3) == "1.30" and _horas_decimal(0.4) == "0.40"
+    assert _horas_decimal(1.1916666667) == "1.19" and _horas_decimal(2.3833333333) == "2.38"
+    assert _horas_decimal(0) == "0.00" and _horas_decimal(-3) == "0.00"
+    assert _horas_decimal(10.5) == "10.50"
+    # Donde el formato de Python falla por el binario del flotante (y el
+    # `round` de Python redondea el .5 al par): aquí manda la aritmética entera.
+    assert f"{1.005:.2f}" == "1.00" and _horas_decimal(1.005) == "1.01"
+    assert _horas_decimal(2.675) == "2.68"
     assert _dia_mes("2026-06-26") == "26-jun" and _dia_mes("2026-12-03") == "3-dic"
     assert _dia_mes("2026-06-27T03:00:00Z") == "26-jun"  # instante → día Cancún
     assert _dia_mes(None) == "—" and _dia_mes("") == "—"
     assert _millas(157) == "157" and _millas(157.34) == "157.3" and _millas(1000.0) == "1,000"
     assert _millas(None) == "—"
+
+
+# ===== TIEMPO VUELO (HRS): horas decimales con SUMA CUADRADA (24-sep-2026) =====
+
+# La MISMA tabla de casos que el API (`tramos-costeados.util.spec.ts`,
+# `CASOS_HORAS_DECIMALES`) y el panel (`quote-sheet-interna.test.ts`): el
+# respaldo de aquí tiene que decir EXACTAMENTE lo que diría el API.
+CASOS_HORAS_DECIMALES = [
+    ("captura CUN–PTU–CUN: 1.19166… × 2", [1.1916666667, 1.1916666667], ["1.19", "1.19"], "2.38"),
+    ("el mismo caso ya en round4", [1.1917, 1.1917], ["1.19", "1.19"], "2.38"),
+    (
+        "residuo mayor hacia ARRIBA: 3 × 0.335",
+        [0.335, 0.335, 0.335],
+        ["0.34", "0.34", "0.33"],
+        "1.01",
+    ),
+    (
+        "residuo mayor hacia ABAJO: gana el residuo más grande",
+        [0.333, 0.3349, 0.3349],
+        ["0.33", "0.34", "0.33"],
+        "1.00",
+    ),
+    ("empate: decide el orden", [0.005, 0.005], ["0.01", "0.00"], "0.01"),
+    ("un solo tramo", [1.1916666667], ["1.19"], "1.19"),
+    ("2 decimales fijos", [1.2, 1], ["1.20", "1.00"], "2.20"),
+    (
+        "ocho tramos que ya cuadran (#294)",
+        [1.6433, 0.35, 1.2567, 0.35, 1.6433, 0.35, 1.2567, 0.35],
+        ["1.64", "0.35", "1.26", "0.35", "1.64", "0.35", "1.26", "0.35"],
+        "7.20",
+    ),
+    ("tramo sin tiempo", [1.1917, None, 0.5], ["1.19", None, "0.50"], "1.69"),
+    ("ningún tramo con tiempo", [None, None], [None, None], "0.00"),
+    ("sin tramos", [], [], "0.00"),
+    ("nunca negativo", [-3, 0.5], ["0.00", "0.50"], "0.50"),
+]
+
+
+def test_repartir_horas_decimales_casos_de_paridad_con_el_api() -> None:
+    for caso, tiempos, tramos, total in CASOS_HORAS_DECIMALES:
+        celdas, tot = _repartir_horas_decimales(tiempos)
+        assert (celdas, tot) == (tramos, total), caso
+        # Σ de lo que se VE == el total que se VE.
+        assert sum(round(float(c) * 100) for c in celdas if c) == round(float(tot) * 100), caso
+
+
+def test_la_captura_del_cliente_en_horas_decimales_y_los_tramos_suman_el_total() -> None:
+    """La captura del 24-sep-2026 (CUN→PTU→CUN, 125 mi, $746/hr, horas
+    pactadas 2.4): antes «01:12 · 01:12 · TOTAL 02:23». Con el payload del API
+    0.0.33 la tabla dice «1.19 · 1.19 · TOTAL 2.38» y el dinero no cambia."""
+    nombres = {"CUN": "Cancun", "PTU": "Tulum"}
+
+    def tramo(orden: int, o: str, d: str) -> dict:
+        return {
+            "orden": orden,
+            "ruta": f"{nombres[o]}-{nombres[d]}",
+            "origen_iata": o,
+            "destino_iata": d,
+            "origen_nombre": nombres[o],
+            "destino_nombre": nombres[d],
+            "fecha": "2026-09-24",
+            "millas": 125,
+            "tiempo_hr": 1.1917,
+            "tiempo_hhmm": "01:12",
+            "tiempo_horas": "1.19",
+            "tarifa_hora_usd": 746.0,
+            "total_usd": 889.01,
+            "pax": 2,
+            "consolidado": False,
+        }
+
+    lineas = _payload()["lineas"]
+    lineas[0].update(monto_usd=1790.4, cantidad=2.4, unitario=746.0)
+    html = _html(
+        tramos_cotizados=[tramo(1, "CUN", "PTU"), tramo(2, "PTU", "CUN")],
+        tramos_tiempo_total_hr=2.3834,
+        tramos_tiempo_total_hhmm="02:23",
+        tramos_tiempo_total_horas="2.38",
+        tramos_total_usd=1778.02,
+        tramos_ajuste_usd=12.38,
+        tramos_ajuste_motivo="Horas pactadas 2.4 h",
+        tiempo_cobrable_hr=2.4,
+        cobrable_override=True,
+        lineas=lineas,
+    )
+    for ruta in ("CUN–PTU", "PTU–CUN"):
+        assert (
+            '<td class="num">125</td><td class="num">1.19</td>'
+            '<td class="num">$746.00</td><td class="num">$889.01</td>'
+        ) in _fila_tramo(html, ruta)
+    assert (
+        '<tr class="total"><td>TOTAL</td><td></td><td class="num">250</td>'
+        '<td class="num">2.38</td><td></td><td class="num">$1,778.02 USD</td></tr>'
+    ) in html
+    assert "$12.38" in html and "Horas pactadas 2.4 h" in html
+    # Lo que confundía a la oficina ya no aparece en ningún lado.
+    assert "01:12" not in html and "02:23" not in html
+
+
+def test_con_el_api_nuevo_se_pinta_lo_que_manda_y_un_tramo_sin_tiempo_dice_raya() -> None:
+    """Con `tramos_tiempo_total_horas` presente manda el API (ya cuadrado): un
+    `tiempo_horas` None es un tramo sin tiempo en el snapshot ⇒ «—», nunca un
+    «0.00» inventado ni un re-cálculo desde `tiempo_hr`."""
+    html = _html(
+        tramos_cotizados=[
+            _tramo(1, "CUN", "MID", tiempo_horas="1.30"),
+            _tramo(2, "MID", "CUN", tiempo_hr=0, tiempo_horas=None),
+        ],
+        tramos_tiempo_total_horas="1.30",
+    )
+    assert '<td class="num">1.30</td>' in _fila_tramo(html, "CUN–MID")
+    assert '<td class="num">—</td><td class="num">$900.00</td>' in _fila_tramo(html, "MID–CUN")
+    assert '<td class="num">314</td><td class="num">1.30</td>' in html
+
+
+def test_fila_consolidada_en_horas_decimales_con_y_sin_el_api_nuevo() -> None:
+    """Fila ÚNICA de respaldo (cotización sin desglose por tramo): su celda de
+    TIEMPO VUELO (HRS) ES el total, en horas decimales y con 2 decimales
+    fijos — lo mande el API 0.0.33 o lo reparta aquí el respaldo."""
+    consolidada = {
+        "ruta": "Cancun-Cozumel-Cancun",
+        "consolidado": True,
+        "millas": 240,
+        "tiempo_hr": 1.6,
+        "tiempo_hhmm": "01:36",
+    }
+    for con_api in (True, False):
+        extra_tramo = {"tiempo_horas": "1.60"} if con_api else {"tiempo_horas": None}
+        html = _html(
+            tramos_cotizados=[_tramo(1, "CUN", "CZM", **consolidada, **extra_tramo)],
+            tramos_tiempo_total_hr=1.6,
+            tramos_tiempo_total_hhmm="01:36",
+            tramos_tiempo_total_horas="1.60" if con_api else None,
+        )
+        fila = _fila_tramo(html, "Cancun-Cozumel-Cancun")
+        assert '<td class="num">240</td><td class="num">1.60</td>' in fila, con_api
+        assert '<td class="num">240</td><td class="num">1.60</td><td></td>' in html, con_api
+        assert "01:36" not in html, con_api
+        assert "cotización sin desglose por tramo" in html
+
+
+def test_respaldo_con_un_api_previo_tambien_cuadra_por_residuo_mayor() -> None:
+    """Payload SIN los campos del 0.0.33 (deploy de pyservices antes que el
+    API): el respaldo reparte igual que el API. Tres tramos de 0.335 h — cada
+    uno por su lado daría 0.34 × 3 = 1.02 contra un total de 1.01."""
+    tramos = [
+        _tramo(i, o, d, tiempo_hr=0.335, tiempo_hhmm="00:20", tiempo_horas=None)
+        for i, (o, d) in enumerate([("CUN", "HOL"), ("HOL", "CZM"), ("CZM", "CUN")], start=1)
+    ]
+    html = _html(
+        tramos_cotizados=tramos,
+        tramos_tiempo_total_hr=1.005,
+        tramos_tiempo_total_hhmm="01:00",
+        tramos_tiempo_total_horas=None,
+    )
+    assert '<td class="num">0.34</td>' in _fila_tramo(html, "CUN–HOL")
+    assert '<td class="num">0.34</td>' in _fila_tramo(html, "HOL–CZM")
+    assert '<td class="num">0.33</td>' in _fila_tramo(html, "CZM–CUN")
+    assert '<td>TOTAL</td><td></td><td class="num">471</td><td class="num">1.01</td>' in html
 
 
 # ===== Desglose =====
@@ -982,7 +1202,9 @@ def test_router_devuelve_pdf_con_nombre_de_archivo(monkeypatch) -> None:
     assert res.content == b"%PDF-1.4 fake"
     assert capturado["req"].aeronave_cotizada_matricula == "N4142R"
     assert len(capturado["req"].tramos_cotizados) == 2
-    assert capturado["req"].tramos_cotizados[0].tiempo_hhmm == "01:18"
+    assert capturado["req"].tramos_cotizados[0].tiempo_hhmm == "01:18"  # legado, aceptado
+    assert capturado["req"].tramos_cotizados[0].tiempo_horas == "1.30"
+    assert capturado["req"].tramos_tiempo_total_horas == "2.60"
     assert len(capturado["req"].cobros) == 1
 
 
