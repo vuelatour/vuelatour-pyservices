@@ -32,7 +32,8 @@ Ocho hojas en el orden del libro:
   8. pendientes de captura — lo que falta para que el libro quede completo.
 El Balance GENERAL comparte estas funciones con otro juego de hojas (ver
 render_balance_general_xlsx); ahí la hoja 'refacciones' fue sustituida por
-'inventario' (tiendita, 30-ago-2026: resumen por ítem + detalle de salidas)
+'inventario' (tiendita, 30-ago-2026: resumen por ítem + detalle de salidas;
+25-sep-2026: utilidad de la tienda también en DÓLARES, en columnas aparte)
 — el libro INDIVIDUAL conserva la suya.
 
 Los montos vienen YA calculados del API (aquí solo se pintan; jamás se
@@ -1255,6 +1256,15 @@ _NOTA_INVENTARIO_USD = (
     "capturar el tipo de cambio de esas entradas su valor pasa solo a la "
     "columna en pesos."
 )
+# Aclaración que se AÑADE a la nota cuando la hoja trae VENDIDO/UTILIDAD en
+# dólares (25-sep-2026, utilidad de la tienda: todas las ventas de prod son
+# USD sobre costo USD sin T.C. y antes su utilidad no aparecía en ninguna
+# columna). Misma invariante: jamás un USD sumado como MXN.
+_NOTA_INVENTARIO_VENTA_USD = (
+    " VENDIDO USD y UTILIDAD USD: salidas cobradas al avión en dólares sobre "
+    "costo en dólares; se muestran en su moneda y no se suman con las "
+    "columnas en pesos."
+)
 # Nota de la hoja 'otros gastos' del GENERAL (payload `gastos_empresa`;
 # 1-sep-2026: la pestaña se llamaba 'gastos VuelaTour' — solo cambió el
 # NOMBRE de la hoja, el campo del contrato sigue igual).
@@ -1324,6 +1334,64 @@ def _nota_sin_tc(n: int) -> str:
     )
 
 
+def _hay_venta_usd(inv: BalanceHojaInventario) -> bool:
+    """¿La hoja lleva VENDIDO USD / UTILIDAD USD? (25-sep-2026)
+
+    Solo si el API manda utilidad de la tienda en dólares: un API viejo (sin
+    los campos) o una tienda que solo vende en pesos dejan la hoja como
+    antes. Un 0.0 SÍ cuenta (es dato: vendido a costo en dólares); None no."""
+    if inv.total_utilidad_usd is not None or inv.total_vendido_usd is not None:
+        return True
+    return any(f.vendido_usd is not None or f.utilidad_usd is not None
+               for f in inv.filas)
+
+
+def _total_usd_de_columna(total: float | None, valores: list[float | None]
+                          ) -> float | None:
+    """Total de una columna en DÓLARES: el que manda el API; si faltara, la
+    re-suma de ESA MISMA columna (misma moneda — solo para mostrar). Sin
+    ningún valor ⇒ None (celda vacía, nunca un 0 falso)."""
+    if total is not None:
+        return total
+    vals = [v for v in valores if v is not None]
+    return round(sum(vals), 2) if vals else None
+
+
+def _cuenta_utilidad_incompleta(inv: BalanceHojaInventario) -> int:
+    """Productos con ventas cuya utilidad no se puede calcular. Manda el
+    número del API; si no viene se cuentan las filas (solo para el texto)."""
+    if inv.filas_utilidad_incompleta:
+        return inv.filas_utilidad_incompleta
+    return sum(1 for f in inv.filas if f.ventas_sin_utilidad > 0)
+
+
+def _nota_utilidad_incompleta(n: int) -> str:
+    """Nota roja bajo la tabla: venta en pesos sobre costo en dólares sin
+    T.C. ⇒ no hay utilidad que mostrar en ninguna moneda."""
+    plural = n != 1
+    return (
+        f"{n} producto{'s' if plural else ''} con ventas en pesos sobre costo "
+        "en dólares sin tipo de cambio: su utilidad no se puede calcular y no "
+        "aparece en ninguna columna."
+    )
+
+
+def _pct_txt(pct: float) -> str:
+    """25.0 → «25»; 12.5 → «12.5» (hasta 4 decimales, sin ceros de cola)."""
+    txt = f"{float(pct):.4f}".rstrip("0").rstrip(".")
+    return txt or "0"
+
+
+def _nota_margen(pct: float) -> str:
+    """Cómo se cobra hoy una salida sin precio (config del API
+    `inventario_margen_venta_pct`). Aquí solo se redacta: el número llega."""
+    if pct <= 0:
+        return (" Toda salida sin precio se cobra al avión a costo FIFO, sin "
+                "utilidad (margen de la tienda en 0 %).")
+    return (" Desde el 25-sep-2026 toda salida sin precio se cobra al avión a "
+            f"costo FIFO + {_pct_txt(pct)} % (utilidad de la tienda).")
+
+
 def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
                      refacciones: BalanceAvionHojaGastos | None,
                      req: BalanceAvionRequest) -> None:
@@ -1341,11 +1409,23 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
     manda el desglose nuevo, VALOR A COSTO MXN lleva solo pesos reales y a
     su derecha aparece VALOR A COSTO USD (sin T.C.) con lo comprado en
     dólares que aún no tiene tipo de cambio, con su propio total y una nota
-    bajo la tabla. Sin esos campos (API viejo) la hoja es la de siempre."""
+    bajo la tabla. Sin esos campos (API viejo) la hoja es la de siempre.
+
+    25-sep-2026 (utilidad de la tienda, costo FIFO + margen): cuando el API
+    manda ventas en DÓLARES entran VENDIDO USD y UTILIDAD USD entre UTILIDAD
+    MXN y MATRÍCULAS, con sus totales APARTE (jamás sumados con los de
+    pesos); nota roja si hay productos cuya utilidad no se puede calcular y,
+    al pie, el margen vigente. Es un segundo desplazamiento, independiente
+    del de VALOR A COSTO USD: las dos columnas en dólares conviven."""
     usd = _hay_usd_sin_tc(inv)
+    venta_usd = _hay_venta_usd(inv)
     # Desplazamiento de las columnas del periodo cuando entra la de dólares.
     off = 1 if usd else 0
-    n_cols = 9 + off
+    # VENDIDO USD + UTILIDAD USD (25-sep) van justo antes de MATRÍCULAS: solo
+    # esa columna corre (dos lugares) — las del periodo no se mueven.
+    off_venta = 2 if venta_usd else 0
+    col_matriculas = 9 + off + off_venta
+    n_cols = col_matriculas
     # Anchos para estimar el alto de las filas que envuelven texto (mismo
     # patrón que _hoja_gastos): ÍTEM del bloque 1 y detalle del bloque 2.
     ancho_item = 34
@@ -1360,6 +1440,7 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
         *(["VALOR A COSTO\nUSD (sin T.C.)"] if usd else []),
         "COMPRADAS\nCANT",
         "COMPRAS\nMXN", "SALIDAS\nCANT", "VENDIDO\nMXN", "UTILIDAD\nMXN",
+        *(["VENDIDO\nUSD", "UTILIDAD\nUSD"] if venta_usd else []),
         "MATRÍCULAS",
     ])
     row = 5
@@ -1377,7 +1458,12 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
             _num(ws, row, 6 + off, f.salidas_cant, "General").border = _border
             _num(ws, row, 7 + off, f.vendido_mxn).border = _border
             _num(ws, row, 8 + off, f.utilidad_mxn).border = _border
-            mc = ws.cell(row=row, column=9 + off, value=f.matriculas)
+            if venta_usd:
+                # Dólares en SU columna, con "$" (MONEY_USD); None = celda
+                # vacía (ese producto no vendió en dólares).
+                _num(ws, row, 9 + off, f.vendido_usd, MONEY_USD).border = _border
+                _num(ws, row, 10 + off, f.utilidad_usd, MONEY_USD).border = _border
+            mc = ws.cell(row=row, column=col_matriculas, value=f.matriculas)
             mc.border = _border
             mc.alignment = Alignment(wrap_text=True, vertical="top")
             lineas = max(
@@ -1397,15 +1483,20 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
             # Total en dólares APARTE. Lo manda el API; si faltara (solo
             # llegaron las filas) se re-suma la columna para mostrarla — es
             # la misma moneda, nunca se mezcla con pesos.
-            total_usd = inv.total_valor_usd
-            if total_usd is None:
-                vals = [f.valor_costo_usd for f in inv.filas
-                        if f.valor_costo_usd is not None]
-                total_usd = round(sum(vals), 2) if vals else None
+            total_usd = _total_usd_de_columna(
+                inv.total_valor_usd, [f.valor_costo_usd for f in inv.filas])
             _num(ws, row, 4, total_usd, MONEY_USD, bold=True)
         _num(ws, row, 5 + off, inv.total_compras_mxn, MONEY, bold=True)
         _num(ws, row, 7 + off, inv.total_vendido_mxn, MONEY, bold=True)
         _num(ws, row, 8 + off, inv.total_utilidad_mxn, MONEY, bold=True)
+        if venta_usd:
+            # Totales de la tienda en dólares, cada uno bajo SU columna.
+            _num(ws, row, 9 + off, _total_usd_de_columna(
+                inv.total_vendido_usd, [f.vendido_usd for f in inv.filas]),
+                MONEY_USD, bold=True)
+            _num(ws, row, 10 + off, _total_usd_de_columna(
+                inv.total_utilidad_usd, [f.utilidad_usd for f in inv.filas]),
+                MONEY_USD, bold=True)
         for c in range(1, n_cols + 1):
             cell = ws.cell(row=row, column=c)
             cell.fill = PatternFill("solid", fgColor=LIGHT)
@@ -1421,6 +1512,16 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
                 ws.merge_cells(start_row=row, start_column=1,
                                end_row=row, end_column=n_cols)
                 row += 1
+        # Ventas cuya utilidad no cabe en ninguna moneda (venta en pesos
+        # sobre costo en dólares sin T.C.): se dice, no se inventa un número.
+        n_incompletas = _cuenta_utilidad_incompleta(inv)
+        if n_incompletas > 0:
+            nc = ws.cell(row=row, column=1,
+                         value=_nota_utilidad_incompleta(n_incompletas))
+            nc.font = Font(color=RED, size=9, italic=True)
+            ws.merge_cells(start_row=row, start_column=1,
+                           end_row=row, end_column=n_cols)
+            row += 1
     else:
         ws.cell(
             row=row, column=1,
@@ -1499,7 +1600,13 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
         row += 1
 
     row += 1
-    nota = _NOTA_INVENTARIO + (_NOTA_INVENTARIO_USD if usd else "")
+    nota = (
+        _NOTA_INVENTARIO
+        + (_NOTA_INVENTARIO_USD if usd else "")
+        + (_NOTA_INVENTARIO_VENTA_USD if venta_usd else "")
+        + (_nota_margen(inv.margen_venta_pct)
+           if inv.margen_venta_pct is not None else "")
+    )
     ws.cell(row=row, column=1, value=nota).font = Font(
         color=MUTED, size=9, italic=True
     )
@@ -1508,9 +1615,10 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
     # Anchos compartidos entre los dos bloques (col 1 = ÍTEM/FECHA, col 2 =
     # números del bloque 1 y detalle del bloque 2 — por eso va ancha). Con
     # la columna en dólares (22-sep) se inserta su ancho en la posición 4 y
-    # las del periodo corren un lugar.
+    # las del periodo corren un lugar; con VENDIDO/UTILIDAD USD (25-sep) se
+    # insertan dos anchos antes del de MATRÍCULAS.
     anchos = [ancho_item, ancho_detalle, 16, *([18] if usd else []),
-              12, 14, 12, 14, 14, 24]
+              12, 14, 12, 14, 14, *([14, 14] if venta_usd else []), 24]
     for i, w in enumerate(anchos, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A5"

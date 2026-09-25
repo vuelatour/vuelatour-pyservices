@@ -48,6 +48,62 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   T.C. no hay peso que mostrar. Tests:
   `tests/test_balance_inventario_xlsx.py` (caso real, mixto MXN+USD, nota en
   singular/plural, payload viejo ⇒ hoja idéntica).
+- **Hoja 'inventario': UTILIDAD DE LA TIENDA en dólares** (25-sep-2026, API
+  0.0.35). Pedido: «la utilidad… de los productos que compramos, el precio
+  que le ponemos en el costo se le saca el 25 %… necesitamos ver las
+  ganancias». Desde ese día toda SALIDA a un avión sin precio se cobra a
+  costo FIFO × (1 + margen) (config del API `inventario_margen_venta_pct`,
+  25 %) y las 10 salidas del 01-sep se re-preciaron: TODAS las ventas de
+  prod son USD sobre costo USD sin T.C., cuya utilidad antes no cabía en
+  «UTILIDAD MXN» (celda vacía). Campos ADITIVOS: fila `vendido_usd`,
+  `utilidad_usd`, `ventas_sin_utilidad` (null ⇒ 0); hoja
+  `total_vendido_usd`, `total_utilidad_usd`, `filas_utilidad_incompleta`
+  (null ⇒ 0), `margen_venta_pct`. Una salida cuenta en UNA sola moneda (lo
+  decide `ventaDeSalida` del API); aquí jamás se convierte ni se suma USD
+  con MXN. Con ventas en dólares (`_hay_venta_usd`: alguna fila con
+  `vendido_usd`/`utilidad_usd` o un total USD no None — 0.0 sí cuenta)
+  entran **«VENDIDO\nUSD» y «UTILIDAD\nUSD»** (`MONEY_USD`) entre «UTILIDAD
+  MXN» y «MATRÍCULAS», con sus totales en la fila TOTALES (si el API no
+  manda el total, re-suma de ESA columna: `_total_usd_de_columna`). Es un
+  SEGUNDO desplazamiento (`off_venta` = 2, solo mueve MATRÍCULAS),
+  independiente del `off` de «VALOR A COSTO USD (sin T.C.)»: con los dos la
+  hoja tiene 12 columnas y `anchos` = `[34, 42, 16, 18, 12, 14, 12, 14, 14,
+  14, 14, 24]`; `n_cols` (título, notas y bloque 2) = `col_matriculas`.
+  Notas: `_NOTA_INVENTARIO_VENTA_USD` al pie cuando hay esas columnas;
+  `_nota_margen(pct)` al pie cuando llega `margen_venta_pct` (aunque todo
+  sea en pesos: «Desde el 25-sep-2026 toda salida sin precio se cobra al
+  avión a costo FIFO + 25 % (utilidad de la tienda).»; 0 ⇒ «…a costo FIFO,
+  sin utilidad»); y nota ROJA bajo la tabla con `filas_utilidad_incompleta`
+  > 0 (o, sin el conteo, filas con `ventas_sin_utilidad` > 0): «N
+  producto(s) con ventas en pesos sobre costo en dólares sin tipo de
+  cambio: su utilidad no se puede calcular y no aparece en ninguna
+  columna.». El BLOQUE 2 (detalle de salidas en pesos con el T.C. promedio
+  del libro) NO cambia. **Payload viejo ⇒ hoja idéntica**: verificado
+  byte a byte (todos los miembros del .xlsx salvo `docProps/core.xml`) y
+  congelado con `_firma_hoja` (huella del layout calculada con el código
+  del 24-sep; si cambia, un API 0.0.34 ya no ve su hoja). El **Excel del
+  inventario** (panel → `GET /v1/inventory/items/export`) NO tiene código
+  aquí: lo arma el export genérico `/pdf/tabla-xlsx` con las columnas que
+  manda el API (Ubicación, «Utilidad (MXN)» y «Utilidad (USD)» separadas);
+  un test congela que cada moneda cae en su columna. **Anchos del genérico
+  (revisión adversaria 25-sep-2026)**: medía cada columna por su ENCABEZADO
+  (mínimo 12) y «Ubicación» salía de 13 — «Bodega Cancún (anterior)» se
+  cortaba JUSTO en la marca «(anterior)», igual que tres de las cinco
+  ubicaciones del catálogo y casi todo nombre de producto (la celda vecina
+  siempre trae número: el texto no se desborda, se corta). Hoy
+  `tabla_xlsx._ancho_columna`: una columna de TEXTO crece a su celda más
+  larga + 2 (tope `ANCHO_TEXTO_MAX` = 40); las numéricas y las de texto
+  corto quedan EXACTAMENTE como antes y ninguna se angosta. Aplica a todos
+  los exports del genérico (solo anchos: valores, formatos y totales no
+  cambian). **Plantilla de alta masiva** (`inventario_masivo.py`): la fila
+  de ejemplo decía «Bodega Cancún» —ya no es del catálogo: quien la copiaba
+  daba de alta productos «(anterior)»— y hoy dice «Oficina nueva»; las
+  instrucciones explican la columna (vacío = sin ubicación; lo que no está
+  en el catálogo queda «(anterior)»). `_es_ejemplo_intacto` acepta TAMBIÉN
+  el ejemplo viejo: una plantilla descargada antes y subida con el ejemplo
+  intacto daba de alta el aceite del ejemplo con 12 piezas. Tests:
+  `tests/test_balance_inventario_xlsx.py`, `tests/test_tabla_xlsx.py`,
+  `tests/test_inventario_masivo_ubicacion.py`.
 - **Excel de la REPOSICIÓN de caja chica** (24-sep-2026,
   `POST /reportes/caja-chica-reposicion.xlsx`, `CajaChicaReposicionRequest`
   todo con default y `extra="ignore"`, servicio `caja_chica_xlsx.py`).

@@ -1078,6 +1078,17 @@ class BalanceInventarioItemFila(BaseModel):
     # utilidad (venta − costo FIFO consumido).
     vendido_mxn: float | None = None
     utilidad_mxn: float | None = None
+    # Utilidad de la TIENDA en DÓLARES (25-sep-2026, API 0.0.35): salidas
+    # cobradas al avión en USD sobre costo FIFO en USD sin T.C. (hoy TODAS
+    # las ventas de prod). Antes esa utilidad no se podía expresar en pesos
+    # y la celda quedaba vacía; ahora viaja en su moneda. Jamás se convierte
+    # ni se suma con `vendido_mxn`/`utilidad_mxn`: una salida cuenta en UNA
+    # sola moneda (`ventaDeSalida` del API). None = sin ventas en dólares.
+    vendido_usd: float | None = None
+    utilidad_usd: float | None = None
+    # Salidas CON venta cuya utilidad no se puede expresar en ninguna moneda
+    # (venta en pesos sobre costo en USD sin T.C.). 0 = ninguna.
+    ventas_sin_utilidad: int = 0
     # Matrículas a las que se aplicó en el periodo (únicas, ' + ').
     matriculas: str | None = None
 
@@ -1087,6 +1098,11 @@ class BalanceInventarioItemFila(BaseModel):
         """Liberal con lo que manda NestJS: null ⇒ False (nunca un 422 que
         tumbe el libro entero por una bandera ausente)."""
         return False if v is None else v
+
+    @field_validator("ventas_sin_utilidad", mode="before")
+    @classmethod
+    def _ventas_sin_utilidad_num(cls, v: Any) -> Any:
+        return 0 if v is None else v
 
 
 class BalanceHojaInventario(BaseModel):
@@ -1105,10 +1121,21 @@ class BalanceHojaInventario(BaseModel):
     # Cuántas filas traen costo en USD sin T.C. (para la nota al pie de la
     # tabla). 0 / ausente = no se pinta la nota.
     filas_sin_tc: int = 0
+    # Utilidad de la tienda en DÓLARES (25-sep-2026): Σ de `vendido_usd` /
+    # `utilidad_usd` de las filas, APARTE de los totales en pesos. None = API
+    # viejo o ninguna venta en dólares ⇒ la hoja sale sin esas columnas.
+    total_vendido_usd: float | None = None
+    total_utilidad_usd: float | None = None
+    # Cuántas filas tienen ventas cuya utilidad no se puede calcular (venta
+    # en pesos sobre costo en USD sin T.C.): nota roja bajo la tabla.
+    filas_utilidad_incompleta: int = 0
+    # Margen de la tienda VIGENTE (% sobre el costo FIFO; config
+    # `inventario_margen_venta_pct`, 25 por default). Solo texto de la nota.
+    margen_venta_pct: float | None = None
 
-    @field_validator("filas_sin_tc", mode="before")
+    @field_validator("filas_sin_tc", "filas_utilidad_incompleta", mode="before")
     @classmethod
-    def _filas_sin_tc_num(cls, v: Any) -> Any:
+    def _conteos_num(cls, v: Any) -> Any:
         return 0 if v is None else v
 
 

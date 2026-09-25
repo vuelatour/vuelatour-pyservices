@@ -106,3 +106,36 @@ def test_tabla_varias_hojas() -> None:
     # Sin subtítulo: encabezado en fila 3, primera fila en 4.
     assert ws2.cell(row=3, column=1).value == "Ref"
     assert ws2.cell(row=4, column=1).value == "PW-9"
+
+
+def test_ancho_de_columnas_de_texto_crece_con_su_contenido() -> None:
+    """Revisión adversaria 25-sep-2026 (Excel del inventario): una columna de
+    TEXTO mide lo de su celda más larga (+2, tope 40) — antes medía lo de su
+    encabezado y «Bodega Cancún (anterior)» se cortaba en «(anterior)». Las
+    numéricas y las de texto corto quedan EXACTAMENTE como antes; ninguna
+    columna se angosta."""
+    req = TablaXlsxRequest(
+        titulo="Inventario valorizado",
+        columnas=[
+            {"label": "Ítem"},
+            {"label": "Ubicación"},
+            {"label": "Código"},
+            {"label": "Notas"},
+            {"label": "Valor USD (sin T.C.)", "tipo": "money"},
+        ],
+        filas=[
+            ["Aceite multigrado semisintético 15W-50", "Bodega Cancún (anterior)",
+             "A1", "x" * 300, 123456789.25],
+            ["Filtro", "Bodega del taller de Cozumel", None, "dos\nlíneas", None],
+        ],
+        totales=["TOTAL", None, None, None, 123456789.25],
+    )
+    ws = _hoja(render_tabla_xlsx(req))
+    anchos = {k: ws.column_dimensions[k].width for k in "ABCDE"}
+    assert anchos == {
+        "A": len("Aceite multigrado semisintético 15W-50") + 2,  # 40
+        "B": len("Bodega del taller de Cozumel") + 2,  # 30 > «(anterior)» 26
+        "C": 12,  # texto corto: el mínimo de siempre
+        "D": 40,  # tope: 300 caracteres no vuelven la hoja kilométrica
+        "E": len("Valor USD (sin T.C.)") + 4,  # numérica: la regla de siempre
+    }

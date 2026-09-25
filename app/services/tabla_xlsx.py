@@ -12,7 +12,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from app.schemas.tabla import TablaHoja, TablaXlsxRequest
+from app.schemas.tabla import TablaColumna, TablaHoja, TablaXlsxRequest
 
 # Excel prohíbe estos caracteres en el NOMBRE de la hoja (no en las celdas):
 # un titulo como "Gastos por avión / categoría" tronaba el export completo.
@@ -42,6 +42,33 @@ def _fmt_for(tipo: str) -> str | None:
         "entero": "#,##0",
         "pct": "0.00%",
     }.get(tipo)
+
+
+# Tope del ancho automático de una columna de TEXTO (caracteres): una nota de
+# 300 caracteres no debe volver la hoja kilométrica.
+ANCHO_TEXTO_MAX = 40
+
+
+def _ancho_columna(c: TablaColumna, col_idx: int,
+                   req: TablaHoja | TablaXlsxRequest) -> float:
+    """Ancho de una columna: el de su ENCABEZADO (mínimo 12, como siempre) y,
+    si es de TEXTO, además el de su celda más larga (+2, tope
+    `ANCHO_TEXTO_MAX`). Solo CRECE: ninguna columna queda más angosta que
+    antes. Revisión adversaria 25-sep-2026: con el ancho del encabezado la
+    columna «Ubicación» del Excel del inventario medía 13 y «Bodega Cancún
+    (anterior)» se cortaba justo en «(anterior)» —la marca de que falta
+    elegir la ubicación nueva—, igual que tres de las cinco ubicaciones del
+    catálogo y casi todos los nombres de producto (la columna vecina siempre
+    trae número, así que el texto no se desborda: se corta)."""
+    ancho = max(12, len(c.label) + 4)
+    if c.tipo != "texto":
+        return ancho
+    largo = 0
+    for fila in [*req.filas, *([req.totales] if req.totales else [])]:
+        if col_idx < len(fila) and fila[col_idx] is not None:
+            texto = str(fila[col_idx])
+            largo = max(largo, *(len(linea) for linea in texto.split("\n")))
+    return max(ancho, min(largo + 2, ANCHO_TEXTO_MAX))
 
 
 def render_tabla_xlsx(req: TablaXlsxRequest) -> bytes:
@@ -119,7 +146,7 @@ def _render_hoja(ws, req: TablaHoja | TablaXlsxRequest) -> None:
         cell.fill = PatternFill("solid", fgColor=BRAND)
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = _border
-        ws.column_dimensions[get_column_letter(col)].width = max(12, len(c.label) + 4)
+        ws.column_dimensions[get_column_letter(col)].width = _ancho_columna(c, col - 1, req)
 
     # Filas.
     r = hrow + 1

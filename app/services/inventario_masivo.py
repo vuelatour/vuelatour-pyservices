@@ -106,7 +106,10 @@ EJEMPLO: list[object] = [
     "021400062153",
     "botella",
     "Aceite semisintético para motores de pistón, 1 qt (946 mL)",
-    "Bodega Cancún",
+    # Una ubicación del CATÁLOGO (25-sep-2026, `inventario_ubicacion`): el API
+    # liga el texto que coincide con él y el que no queda como ubicación
+    # «(anterior)». Antes decía «Bodega Cancún», que ya no es del catálogo.
+    "Oficina nueva",
     6,
     12,
     350,
@@ -132,6 +135,11 @@ INSTRUCCIONES = [
     "Existencia inicial: unidades que hay hoy en bodega; con ella se genera la ENTRADA "
     "inicial del cardex usando Costo unitario, Moneda y Tipo de cambio (MXN por USD).",
     "Stock mínimo: al bajar de esa cantidad el sistema avisa para reabastecer.",
+    "Ubicación: escribe el nombre de una ubicación de la bodega tal como aparece en el "
+    "botón «Ubicaciones» de la página de Inventario (ej. Oficina nueva; no importan "
+    "acentos ni mayúsculas). Vacío = sin ubicación. Un nombre que no esté en esa lista "
+    "se guarda como ubicación «(anterior)» y después hay que elegir la correcta con "
+    "«Mover a…».",
     "Categoría, Unidad de medida y Moneda tienen lista desplegable (hoja Catálogos). "
     "Si necesitas una categoría o unidad nueva, escríbela y acepta el aviso.",
     "Borra la fila de ejemplo (en gris) antes de subir el archivo.",
@@ -474,10 +482,17 @@ _CAMPOS_COMPARABLES = {"fila", "avisos"}
 _FILA_EJEMPLO = _construye_fila(0, _EJEMPLO_POR_CAMPO.get).model_dump(
     exclude=_CAMPOS_COMPARABLES
 )
+# Ubicación que traía la fila de ejemplo ANTES del catálogo (hasta el
+# 25-sep-2026): una plantilla descargada antes y subida después con el
+# ejemplo intacto también se descarta — si no, daría de alta el aceite del
+# ejemplo con 12 piezas de existencia.
+_UBICACIONES_EJEMPLO = {_FILA_EJEMPLO["ubicacion"], "Bodega Cancún"}
 
 
 def _es_ejemplo_intacto(fila: FilaInventario) -> bool:
-    return fila.model_dump(exclude=_CAMPOS_COMPARABLES) == _FILA_EJEMPLO
+    datos = fila.model_dump(exclude=_CAMPOS_COMPARABLES)
+    return datos.get("ubicacion") in _UBICACIONES_EJEMPLO and {
+        **datos, "ubicacion": _FILA_EJEMPLO["ubicacion"]} == _FILA_EJEMPLO
 
 
 def parse_inventario(req: ParseInventarioRequest) -> ParseInventarioResponse:
