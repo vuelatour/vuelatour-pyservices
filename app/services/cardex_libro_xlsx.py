@@ -4,6 +4,12 @@ Un solo sheet con dos bloques lado a lado — ENTRADAS | SALIDAS — cada uno
 con sus columnas (venta, remanente y ganancia del lado de salidas). Todo
 viene YA calculado del API: aquí solo se pinta el libro con los estilos
 BRAND de la casa (tabla_xlsx).
+
+25-sep-2026 (API 0.0.36): costo = último precio de compra y montos en pesos
+con el T.C. oficial de su día. Lo único que cambia aquí es el SUBTÍTULO:
+la `nota` del API va tras «Montos en MXN» para que quien lea el libro sepa
+con qué T.C. se convirtió cada lado. Sin `nota` (API previo) el libro sale
+idéntico.
 """
 
 from __future__ import annotations
@@ -75,6 +81,13 @@ def render_cardex_libro_xlsx(req: CardexLibroRequest) -> bytes:
     if req.unidad:
         partes.append(f"Unidad: {req.unidad}")
     partes.append(f"Montos en {req.moneda or 'MXN'}")
+    # Nota del API (ADITIVA): con qué T.C. se convirtieron compras y ventas y
+    # de dónde sale el costo. Tal cual (solo sin el punto final: en el
+    # subtítulo los tramos van separados por « · »); aquí no se redacta
+    # negocio.
+    nota = (req.nota or "").strip().rstrip(".").rstrip()
+    if nota:
+        partes.append(nota)
     if req.generado:
         partes.append(f"Generado {req.generado}")
     s = ws.cell(row=2, column=1, value=" · ".join(partes))

@@ -33,8 +33,10 @@ Ocho hojas en el orden del libro:
 El Balance GENERAL comparte estas funciones con otro juego de hojas (ver
 render_balance_general_xlsx); ahí la hoja 'refacciones' fue sustituida por
 'inventario' (tiendita, 30-ago-2026: resumen por ítem + detalle de salidas;
-25-sep-2026: utilidad de la tienda también en DÓLARES, en columnas aparte)
-— el libro INDIVIDUAL conserva la suya.
+25-sep-2026: utilidad de la tienda también en DÓLARES, en columnas aparte;
+y, con el API 0.0.36, costo = último precio de compra y pesos al T.C.
+oficial del día — `regla_costo`, solo cambian los textos) — el libro
+INDIVIDUAL conserva la suya.
 
 Los montos vienen YA calculados del API (aquí solo se pintan; jamás se
 recalcula dinero). None = celda vacía — nunca un 0 falso.
@@ -53,6 +55,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.schemas.reportes import (
+    REGLA_COSTO_ULTIMO_PRECIO,
     BalanceAvionCobro,
     BalanceAvionHojaCombustible,
     BalanceAvionHojaGastos,
@@ -63,7 +66,9 @@ from app.schemas.reportes import (
     BalanceHojaInventario,
     BalanceHojaOtrosMovimientos,
     BalanceOtroMovimientoFila,
+    TcHoy,
 )
+from app.services._formato import _tc_txt
 from app.services.tabla_xlsx import sheet_title
 
 BRAND = "0F4C81"
@@ -1220,6 +1225,10 @@ _NOTA_REFACCIONES = (
     "El dinero salió del banco al COMPRAR la pieza, no al consumirla — la "
     "conciliación bancaria no las cruza."
 )
+# Solo se pinta en el FALLBACK del general (payload SIN `inventario`, API
+# anterior al 30-ago-2026, que costeaba FIFO): por eso conserva «costo FIFO».
+# Con el API 0.0.36 (último precio) el general siempre trae `inventario` y
+# esta hoja ya no existe.
 _NOTA_REFACCIONES_GENERAL = (
     _NOTA_REFACCIONES
     + " En este Balance general cada fila trae además COSTO VUELATOUR "
@@ -1265,6 +1274,114 @@ _NOTA_INVENTARIO_VENTA_USD = (
     "costo en dólares; se muestran en su moneda y no se suman con las "
     "columnas en pesos."
 )
+
+# ---------------------------------------------------------------------------
+# Regla ÚLTIMO PRECIO DE COMPRA + T.C. OFICIAL DEL DÍA (25-sep-2026, API
+# 0.0.36, payload con `regla_costo='ULTIMO_PRECIO'`). Pedido del cliente:
+# «que los precios se ajusten en automático al último registrado» y «en el
+# tipo de cambio, que sea los mismos que usan en las cotizaciones (tipo de
+# cambio del día de la venta)». Los NÚMEROS los manda el API ya convertidos;
+# aquí solo cambian los TEXTOS (ninguna nota dice «FIFO»). Payload previo
+# (sin `regla_costo`) ⇒ textos de siempre y hoja idéntica (huellas
+# congeladas en tests/test_balance_inventario_xlsx.py).
+# ---------------------------------------------------------------------------
+_NOTA_INVENTARIO_ULTIMO_PRECIO = (
+    "INVENTARIO (tiendita) — BLOQUE POR ÍTEM: EXISTENCIA y VALOR A COSTO son "
+    "A HOY (todo el cardex), NO una foto al corte del periodo. {valor} Las "
+    "compras y ventas en dólares se convierten con el T.C. oficial de su día "
+    "(el mismo de las cotizaciones): la compra con el del día de la compra; "
+    "la venta y el costo de esa pieza con el del día de la venta. COMPRAS = "
+    "solo ENTRADAs del periodo (una devolución o un ajuste regresan stock "
+    "pero no son compra); VENDIDO = lo cargado a los aviones en salidas CON "
+    "precio de venta y UTILIDAD = vendido − costo de la pieza (el último "
+    "precio de compra vigente el día de la salida; las salidas a costo no "
+    "llevan venta ni utilidad). DETALLE DE SALIDAS (bloque 2) = las salidas "
+    "de bodega cargadas a aviones en el periodo: gasto REFACCION medio BODEGA "
+    "ligado al cardex, con GANANCIA = venta − costo (0 si la salida se cargó "
+    "a costo); antes era la hoja 'refacciones' de este libro (el libro "
+    "INDIVIDUAL de cada avión la conserva). El dinero salió del banco al "
+    "COMPRAR la pieza, no al consumirla — la conciliación bancaria no cruza "
+    "estos cargos."
+)
+# Con la regla nueva el valorizado usa el T.C. de HOY: una columna en
+# dólares solo aparece si algún producto con último precio en USD no se pudo
+# pasar a pesos. No se afirma la causa (revisión adversaria del contrato:
+# «sin T.C.» puede venir de más de un lado).
+_NOTA_INVENTARIO_USD_ULTIMO_PRECIO = (
+    " VALOR A COSTO USD (sin T.C.): productos cuyo último precio de compra "
+    "es en dólares y que no se pudieron pasar a pesos por falta de tipo de "
+    "cambio; se muestran aparte, EN DÓLARES, y no entran al total en pesos."
+)
+# Con la regla nueva VENDIDO/UTILIDAD USD son SOLO el respaldo de ventas que
+# siguen sin T.C.; las demás ya cuentan en pesos (jamás las dos a la vez).
+_NOTA_INVENTARIO_VENTA_USD_ULTIMO_PRECIO = (
+    " VENDIDO USD y UTILIDAD USD: ventas en dólares que todavía no tienen "
+    "tipo de cambio; se muestran en su moneda y no se suman con las columnas "
+    "en pesos (las que sí lo tienen ya cuentan en pesos)."
+)
+# Nota bajo el BLOQUE 2 (solo con la regla nueva y si hay salidas): el
+# detalle de salidas sale de los GASTOS del balance (T.C. de cada gasto o el
+# promedio del libro, igual que la hoja 'balance') y la utilidad por ítem
+# del bloque 1 del T.C. oficial del día de la venta. En las 10 salidas del
+# 01-sep-2026 (gastos sin T.C., convertidos al T.C. promedio del libro) las
+# dos utilidades en pesos difieren unos pesos (≈ $63 MXN en septiembre): la
+# propia hoja lo explica en vez de que el cliente lo descubra. «Del
+# periodo», no «del mes» (revisión adversaria 25-sep-2026): el respaldo es
+# el TC PROMEDIO del libro (`tc_promedio`) para el rango pedido, que no
+# siempre es un mes.
+_NOTA_BLOQUE2_TC = (
+    "El detalle de salidas convierte con el T.C. de cada gasto (o el T.C. "
+    "promedio del periodo si el gasto no lo trae), igual que la hoja balance; "
+    "la utilidad por ítem de arriba usa el T.C. oficial del día de la venta. "
+    "En salidas registradas antes del 25-sep-2026 pueden diferir unos pesos."
+)
+
+
+def _es_ultimo_precio(inv: BalanceHojaInventario | None) -> bool:
+    """¿El API mandó la regla de costo nueva (último precio de compra)?
+    Ausente / otro valor = API previo (FIFO) ⇒ textos de siempre."""
+    if inv is None or not inv.regla_costo:
+        return False
+    return inv.regla_costo.strip().upper() == REGLA_COSTO_ULTIMO_PRECIO
+
+
+def _frase_valor_a_costo(tc_hoy: TcHoy | None) -> str:
+    """Cómo se valorizó la bodega: existencia × último precio de compra al
+    T.C. oficial de HOY. Cita el T.C. y la fecha de SU dato tal como los
+    mandó el API (el T.C. con `_tc_txt`, fuente única del texto de un T.C.;
+    la fecha con `_fecha`, el dd/mm/aaaa de todo este libro). Sin dato no
+    se inventa un número."""
+    tc = tc_hoy.tc if tc_hoy is not None else None
+    if tc is None or tc <= 0:
+        return ("VALOR A COSTO = existencia × último precio de compra, en "
+                "pesos al T.C. oficial de hoy.")
+    fecha = _fecha(tc_hoy.fecha_dato) if tc_hoy is not None else None
+    cita = _tc_txt(tc) + (f", {fecha}" if fecha else "")
+    return ("VALOR A COSTO = existencia × último precio de compra, al T.C. "
+            f"oficial de hoy ({cita}).")
+
+
+def _alto_nota(texto: str, ancho_total: float) -> float | None:
+    """Alto de fila para una nota ENVUELTA (letra 9) que abarca columnas de
+    `ancho_total` caracteres: mismo patrón de estimación que DETALLE en
+    _hoja_gastos (renglones × alto de renglón). Un renglón ⇒ None (alto por
+    omisión). Estima de más, nunca de menos: sobra aire, no se corta."""
+    lineas = max(1, math.ceil(len(texto) / max(ancho_total, 1)))
+    return 12 * lineas + 4 if lineas > 1 else None
+
+
+def _pinta_nota_envuelta(ws: Worksheet, row: int, texto: str, n_cols: int,
+                         ancho_total: float) -> None:
+    """Nota tenue (gris, cursiva, 9) combinada en `n_cols` columnas y
+    ENVUELTA, con el alto de fila estimado — sin el wrap, una nota combinada
+    se corta al ancho de las celdas (lo importante suele ir al final)."""
+    c = ws.cell(row=row, column=1, value=texto)
+    c.font = Font(color=MUTED, size=9, italic=True)
+    c.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
+    alto = _alto_nota(texto, ancho_total)
+    if alto:
+        ws.row_dimensions[row].height = alto
 # Nota de la hoja 'otros gastos' del GENERAL (payload `gastos_empresa`;
 # 1-sep-2026: la pestaña se llamaba 'gastos VuelaTour' — solo cambió el
 # NOMBRE de la hoja, el campo del contrato sigue igual).
@@ -1382,14 +1499,17 @@ def _pct_txt(pct: float) -> str:
     return txt or "0"
 
 
-def _nota_margen(pct: float) -> str:
+def _nota_margen(pct: float, *, ultimo_precio: bool = False) -> str:
     """Cómo se cobra hoy una salida sin precio (config del API
-    `inventario_margen_venta_pct`). Aquí solo se redacta: el número llega."""
+    `inventario_margen_venta_pct`). Aquí solo se redacta: el número llega.
+    `ultimo_precio` (API 0.0.36): la base es el último precio de compra;
+    sin él, el texto de siempre (costo FIFO del API previo)."""
+    base = "al último precio de compra" if ultimo_precio else "a costo FIFO"
     if pct <= 0:
-        return (" Toda salida sin precio se cobra al avión a costo FIFO, sin "
+        return (f" Toda salida sin precio se cobra al avión {base}, sin "
                 "utilidad (margen de la tienda en 0 %).")
-    return (" Desde el 25-sep-2026 toda salida sin precio se cobra al avión a "
-            f"costo FIFO + {_pct_txt(pct)} % (utilidad de la tienda).")
+    return (" Desde el 25-sep-2026 toda salida sin precio se cobra al avión "
+            f"{base} + {_pct_txt(pct)} % (utilidad de la tienda).")
 
 
 def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
@@ -1411,14 +1531,25 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
     dólares que aún no tiene tipo de cambio, con su propio total y una nota
     bajo la tabla. Sin esos campos (API viejo) la hoja es la de siempre.
 
-    25-sep-2026 (utilidad de la tienda, costo FIFO + margen): cuando el API
+    25-sep-2026 (utilidad de la tienda, costo + margen): cuando el API
     manda ventas en DÓLARES entran VENDIDO USD y UTILIDAD USD entre UTILIDAD
     MXN y MATRÍCULAS, con sus totales APARTE (jamás sumados con los de
     pesos); nota roja si hay productos cuya utilidad no se puede calcular y,
     al pie, el margen vigente. Es un segundo desplazamiento, independiente
-    del de VALOR A COSTO USD: las dos columnas en dólares conviven."""
+    del de VALOR A COSTO USD: las dos columnas en dólares conviven.
+
+    25-sep-2026, API 0.0.36 (`regla_costo='ULTIMO_PRECIO'`): costo = último
+    precio de compra y todo en PESOS con el T.C. oficial del día (lo
+    convierte el API). Aquí cambian SOLO los textos: nota al pie sin «FIFO»
+    que cita el T.C. de hoy (`tc_hoy`), nota bajo el bloque 2 (el detalle
+    de salidas usa el T.C. de cada gasto, la utilidad por ítem el del día
+    de la venta) y las dos notas ENVUELTAS con su alto de fila. Las columnas
+    en dólares siguen la misma regla de siempre: tras la migración de T.C.
+    no llega ningún USD sin T.C. y se apagan solas. Sin `regla_costo` la
+    hoja es byte a byte la de antes."""
     usd = _hay_usd_sin_tc(inv)
     venta_usd = _hay_venta_usd(inv)
+    ultimo_precio = _es_ultimo_precio(inv)
     # Desplazamiento de las columnas del periodo cuando entra la de dólares.
     off = 1 if usd else 0
     # VENDIDO USD + UTILIDAD USD (25-sep) van justo antes de MATRÍCULAS: solo
@@ -1430,6 +1561,14 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
     # patrón que _hoja_gastos): ÍTEM del bloque 1 y detalle del bloque 2.
     ancho_item = 34
     ancho_detalle = 42
+    # Anchos compartidos entre los dos bloques (col 1 = ÍTEM/FECHA, col 2 =
+    # números del bloque 1 y detalle del bloque 2 — por eso va ancha). Con
+    # la columna en dólares (22-sep) se inserta su ancho en la posición 4 y
+    # las del periodo corren un lugar; con VENDIDO/UTILIDAD USD (25-sep) se
+    # insertan dos anchos antes del de MATRÍCULAS. Se calculan aquí (se
+    # aplican al final) porque las notas envueltas estiman su alto con ellos.
+    anchos = [ancho_item, ancho_detalle, 16, *([18] if usd else []),
+              12, 14, 12, 14, 14, *([14, 14] if venta_usd else []), 24]
     _title(ws, f"Inventario (tiendita) — {req.matricula}".strip(" —"), 1, n_cols)
     periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'}"
     ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
@@ -1591,6 +1730,13 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
             cell.fill = PatternFill("solid", fgColor=LIGHT)
             cell.border = _border
         row += 1
+        if ultimo_precio:
+            # Por qué la GANANCIA de aquí y la UTILIDAD del bloque 1 pueden
+            # no coincidir al peso (T.C. del gasto vs T.C. del día de la
+            # venta): dicho en la hoja, no descubierto por el cliente.
+            _pinta_nota_envuelta(ws, row, _NOTA_BLOQUE2_TC, n_cols,
+                                 sum(anchos[:n_cols]))
+            row += 1
     else:
         ws.cell(
             row=row, column=1,
@@ -1600,25 +1746,34 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
         row += 1
 
     row += 1
-    nota = (
-        _NOTA_INVENTARIO
-        + (_NOTA_INVENTARIO_USD if usd else "")
-        + (_NOTA_INVENTARIO_VENTA_USD if venta_usd else "")
-        + (_nota_margen(inv.margen_venta_pct)
-           if inv.margen_venta_pct is not None else "")
-    )
-    ws.cell(row=row, column=1, value=nota).font = Font(
-        color=MUTED, size=9, italic=True
-    )
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
+    if ultimo_precio:
+        # Regla nueva: mismas piezas de la nota, sin «FIFO», citando el T.C.
+        # de hoy con que el API valorizó; ENVUELTA (la de siempre se corta
+        # al ancho de la hoja — se conserva así solo para el payload previo,
+        # cuya hoja no debe moverse ni un estilo).
+        nota = (
+            _NOTA_INVENTARIO_ULTIMO_PRECIO.format(
+                valor=_frase_valor_a_costo(inv.tc_hoy))
+            + (_NOTA_INVENTARIO_USD_ULTIMO_PRECIO if usd else "")
+            + (_NOTA_INVENTARIO_VENTA_USD_ULTIMO_PRECIO if venta_usd else "")
+            + (_nota_margen(inv.margen_venta_pct, ultimo_precio=True)
+               if inv.margen_venta_pct is not None else "")
+        )
+        _pinta_nota_envuelta(ws, row, nota, n_cols, sum(anchos[:n_cols]))
+    else:
+        nota = (
+            _NOTA_INVENTARIO
+            + (_NOTA_INVENTARIO_USD if usd else "")
+            + (_NOTA_INVENTARIO_VENTA_USD if venta_usd else "")
+            + (_nota_margen(inv.margen_venta_pct)
+               if inv.margen_venta_pct is not None else "")
+        )
+        ws.cell(row=row, column=1, value=nota).font = Font(
+            color=MUTED, size=9, italic=True
+        )
+        ws.merge_cells(start_row=row, start_column=1, end_row=row,
+                       end_column=n_cols)
 
-    # Anchos compartidos entre los dos bloques (col 1 = ÍTEM/FECHA, col 2 =
-    # números del bloque 1 y detalle del bloque 2 — por eso va ancha). Con
-    # la columna en dólares (22-sep) se inserta su ancho en la posición 4 y
-    # las del periodo corren un lugar; con VENDIDO/UTILIDAD USD (25-sep) se
-    # insertan dos anchos antes del de MATRÍCULAS.
-    anchos = [ancho_item, ancho_detalle, 16, *([18] if usd else []),
-              12, 14, 12, 14, 14, *([14, 14] if venta_usd else []), 24]
     for i, w in enumerate(anchos, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A5"
@@ -1702,6 +1857,13 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
         _fila_resumen(ws, row, req.resumen_totales, bold=True)
         row += 1
     row += 1
+    # Cómo se nombra el costo de las salidas en el índice de hojas: con el
+    # API 0.0.36 (`regla_costo`) es el último precio de compra; con uno
+    # previo, el costo FIFO de siempre (texto intacto).
+    costo_salidas = (
+        "costo al último precio de compra"
+        if _es_ultimo_precio(req.inventario) else "costo FIFO"
+    )
     for nota in (
         "VENTA = tiempo de vuelo + ajuste + IVA proporcional (sin TUAs/extras/"
         "pernocta/comisión del vendedor: ver 'otros movimientos'). GANANCIA = "
@@ -1728,7 +1890,7 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
         "restan igual en la hoja 'balance' (indirectos y reparto manual en "
         "una sola fila). Hojas propias de este libro: 'inventario' "
         "(tiendita: resumen por ítem del periodo + detalle de salidas con "
-        "costo FIFO vs venta al avión), 'otros gastos' (gastos de la EMPRESA "
+        f"{costo_salidas} vs venta al avión), 'otros gastos' (gastos de la EMPRESA "
         "sin avión ni vuelo, fuera de toda cascada por avión) y 'repartidos "
         "a aviones' (la parte de esos gastos asignada a mano a cada avión; "
         "en el libro individual va dentro de su hoja 'Gastos Indirectos').",
@@ -1874,7 +2036,7 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
     avión, payload `gastos_empresa`), 1 repartidos a aviones (parte de esos
     gastos repartida a mano a cada avión, payload `otros_gastos`; sin
     TUAs), 1 inventario (tiendita, 30-ago: resumen por ítem del periodo +
-    detalle de salidas con costo FIFO vs venta al avión — sustituye a la
+    detalle de salidas con su costo vs venta al avión — sustituye a la
     hoja 'refacciones' del general, que solo se pinta como fallback de un
     API viejo), 1 balance (bloques por avión: los socios son por avión;
     indirectos + reparto manual en UNA fila, 2-sep) y 1 pendientes.

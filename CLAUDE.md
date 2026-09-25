@@ -104,6 +104,52 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   intacto daba de alta el aceite del ejemplo con 12 piezas. Tests:
   `tests/test_balance_inventario_xlsx.py`, `tests/test_tabla_xlsx.py`,
   `tests/test_inventario_masivo_ubicacion.py`.
+- **Inventario: ÚLTIMO PRECIO DE COMPRA + T.C. oficial del día** (25-sep-2026,
+  API 0.0.36). Pedido: «que los precios se ajusten en automático al último
+  registrado… el remanente de agosto ahora igual su costo de 30 DLS» y «en el
+  tipo de cambio, que sea los mismos que usan en las cotizaciones (del día de
+  la venta)». El API deja el FIFO: costo = último precio de compra (congelado
+  en cada salida al registrarla), valorizado = existencia × último precio ×
+  T.C. oficial de HOY, y compras/ventas en dólares LLEGAN YA EN PESOS con el
+  T.C. oficial de su día (misma función que la cotización). **Aquí no se
+  convierte nada: solo cambian textos.** Campos ADITIVOS:
+  `BalanceHojaInventario.regla_costo` (`'ULTIMO_PRECIO'`,
+  `REGLA_COSTO_ULTIMO_PRECIO`) y `tc_hoy` (`TcHoy`: `tc`, `fecha_dato`,
+  `fuente`, todo opcional — un `tc` null no tumba el libro; revisión
+  adversaria: el API usa el MISMO nombre `tc_hoy` como NÚMERO suelto en el
+  PATCH de costo, así que `_tc_hoy_liberal` acepta un número —o texto
+  numérico— como `{tc}` y cualquier otra cosa como None, y `_tc_liberal`
+  vuelve None un `tc` ilegible/NaN: antes cualquiera de esos era un 422 del
+  Balance general ENTERO por una nota), fila
+  `vendido_usd_original`/`utilidad_usd_original` (NO se pintan: ya cuentan
+  en pesos, sumarlos contaría doble) y `CardexLibroRequest.nota` (se pinta
+  tal cual en el subtítulo tras «Montos en MXN», sin su punto final). Con
+  `regla_costo` (`_es_ultimo_precio`; otro valor o null ⇒ API previo):
+  nota al pie `_NOTA_INVENTARIO_ULTIMO_PRECIO` sin «FIFO» con
+  `_frase_valor_a_costo` («… al T.C. oficial de hoy (17.6729,
+  25/09/2026)», T.C. con `_tc_txt` y fecha del DATO con `_fecha`; sin dato
+  no cita número), `_NOTA_INVENTARIO_USD_ULTIMO_PRECIO` /
+  `_NOTA_INVENTARIO_VENTA_USD_ULTIMO_PRECIO` (las columnas en dólares ya
+  solo son respaldo de filas sin T.C.; tras la migración de datos no llega
+  ninguna y se apagan solas con la MISMA lógica de siempre),
+  `_nota_margen(pct, ultimo_precio=True)` («al último precio de compra +
+  25 %»), el índice del Balance general («detalle de salidas con costo al
+  último precio de compra») y **nota bajo el BLOQUE 2** (`_NOTA_BLOQUE2_TC`,
+  solo si hay salidas): el detalle de salidas convierte con el T.C. de cada
+  GASTO (o el promedio del libro) y la utilidad por ítem con el del día de la
+  venta — en las 10 salidas del 01-sep los gastos no traen T.C. y las dos
+  utilidades en pesos difieren ≈ $63 MXN en septiembre; la hoja lo explica.
+  Esas dos notas van ENVUELTAS con alto estimado (`_pinta_nota_envuelta`,
+  `_alto_nota`; los `anchos` se calculan al inicio de `_hoja_inventario`):
+  la nota de siempre, combinada sin wrap, se corta al ancho de la hoja.
+  `_NOTA_REFACCIONES_GENERAL` conserva «costo FIFO»: solo se pinta sin
+  `inventario` (API anterior al 30-ago, que costeaba FIFO). **Payload previo
+  ⇒ hoja idéntica** (las dos huellas `_FIRMA_*` siguen iguales; también con
+  `regla_costo`/`tc_hoy` en null). El Excel del inventario sigue sin código
+  aquí (export genérico): un test congela las columnas del API 0.0.36
+  («Último precio de compra» número + «Moneda» + Valor/Vendido/Utilidad en
+  MXN). Tests: `tests/test_balance_inventario_xlsx.py` (sección «ÚLTIMO
+  PRECIO»), `tests/test_cardex_libro_xlsx.py`.
 - **Excel de la REPOSICIÓN de caja chica** (24-sep-2026,
   `POST /reportes/caja-chica-reposicion.xlsx`, `CajaChicaReposicionRequest`
   todo con default y `extra="ignore"`, servicio `caja_chica_xlsx.py`).

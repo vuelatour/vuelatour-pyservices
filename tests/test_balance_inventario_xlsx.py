@@ -723,3 +723,416 @@ def test_excel_del_inventario_ubicacion_y_utilidad_por_moneda():
         "Aceite multigrado semisintético 15W-50")
     # Las de dinero conservan su regla (encabezado + 4).
     assert ws.column_dimensions["M"].width == len("Utilidad (USD)") + 4
+
+
+# ---------------------------------------------------------------------------
+# ÚLTIMO PRECIO DE COMPRA + T.C. OFICIAL DEL DÍA (25-sep-2026, API 0.0.36,
+# `regla_costo='ULTIMO_PRECIO'`). Pedido: «que los precios se ajusten en
+# automático al último registrado» y «el tipo de cambio… el mismo de las
+# cotizaciones (del día de la venta)». Los números llegan YA en pesos del API;
+# aquí solo cambian los TEXTOS (ninguno dice «FIFO») y aparece la nota bajo
+# el bloque 2. Tras la migración de T.C. no llega ningún USD sin T.C. ⇒ las
+# columnas en dólares se apagan solas (hoja de 9 columnas).
+# ---------------------------------------------------------------------------
+
+_TC_HOY = {"tc": 17.6729, "fecha_dato": "2026-09-25", "fuente": "OPEN_ER_API"}
+
+# Las 10 salidas del 01-sep-2026 con el T.C. oficial de ese día (17.0077),
+# tabla §1.2 del contrato: venta y utilidad en PESOS por producto; el USD
+# original viaja aparte (`*_usd_original`) y esta hoja NO lo pinta. El aceite
+# lleva su existencia real (84 × 21.25 USD) valorizada al T.C. de HOY:
+# round2(1,785.00 × 17.6729) = 31,546.13.
+_TIENDA_SEP26_0036 = {
+    "filas": [
+        {"nombre": "Aceite multigrado semisintético 15W-50", "existencia": 84,
+         "valor_costo_mxn": 31546.13, "valor_costo_usd": None, "sin_tc": False,
+         "salidas_cant": 36, "vendido_mxn": 16263.61, "utilidad_mxn": 3252.72,
+         "vendido_usd": None, "utilidad_usd": None,
+         "vendido_usd_original": 956.25, "utilidad_usd_original": 191.25,
+         "matriculas": "XA-VGV + N4142R"},
+        {"nombre": "Filtro CH48108", "salidas_cant": 2, "vendido_mxn": 1958.44,
+         "utilidad_mxn": 391.69, "vendido_usd_original": 115.15,
+         "utilidad_usd_original": 23.03, "matriculas": "N4142R"},
+        {"nombre": "Filtro CH48110", "salidas_cant": 1, "vendido_mxn": 979.30,
+         "utilidad_mxn": 195.93, "matriculas": "XA-VGV"},
+        {"nombre": "Cámara 6.00-6", "salidas_cant": 1, "vendido_mxn": 3315.31,
+         "utilidad_mxn": 663.13, "matriculas": "N4142R"},
+        {"nombre": "Cámara 8.00-6", "salidas_cant": 1, "vendido_mxn": 4085.93,
+         "utilidad_mxn": 817.22, "matriculas": "XA-VGV"},
+        {"nombre": "Llanta 6.00-6", "salidas_cant": 2, "vendido_mxn": 15891.66,
+         "utilidad_mxn": 3178.40, "matriculas": "XA-VGV + N4142R"},
+        {"nombre": "Balata 66-105", "salidas_cant": 4, "vendido_mxn": 1966.94,
+         "utilidad_mxn": 393.39, "matriculas": "XA-VGV"},
+        {"nombre": "Cubre pitot", "salidas_cant": 1, "vendido_mxn": 1062.98,
+         "utilidad_mxn": 212.59, "matriculas": "N4142R"},
+    ],
+    "total_piezas": 84,
+    "total_valor_mxn": 31546.13,
+    "total_valor_usd": 0.0,
+    "filas_sin_tc": 0,
+    "total_compras_mxn": None,
+    "total_vendido_mxn": 45524.17,
+    "total_utilidad_mxn": 9105.07,
+    "total_vendido_usd": None,
+    "total_utilidad_usd": None,
+    "filas_utilidad_incompleta": 0,
+    "margen_venta_pct": 25,
+    "regla_costo": "ULTIMO_PRECIO",
+    "tc_hoy": _TC_HOY,
+}
+
+# Bloque 2 del API 0.0.36: la etiqueta del gasto ya dice «último precio + 25 %».
+_REFACCIONES_0036 = {
+    "filas": [
+        {"fecha": "2026-09-01", "categoria": "Refacción",
+         "detalle": "N4142R · Salida de bodega: 24 × Aceite (último precio + 25 %)",
+         "monto_mxn": 10964.98, "moneda_original": "USD", "monto_original": 637.5,
+         "matricula": "N4142R", "costo_mxn": 8771.98, "venta_mxn": 10964.98},
+    ],
+    "total_mxn": 10964.98,
+}
+
+# «T.C. promedio del periodo» (no «del mes»): el respaldo del balance es el
+# TC PROMEDIO del libro para el rango pedido — el mismo nombre que le da el
+# API (`gastoMxn`: «tc_gasto ?? Z del vuelo ?? TC promedio del periodo»).
+_NOTA_BLOQUE2 = (
+    "El detalle de salidas convierte con el T.C. de cada gasto (o el T.C. "
+    "promedio del periodo si el gasto no lo trae), igual que la hoja balance; "
+    "la utilidad por ítem de arriba usa el T.C. oficial del día de la venta. "
+    "En salidas registradas antes del 25-sep-2026 pueden diferir unos pesos.")
+
+
+def _general_0036(inventario, refacciones=_REFACCIONES_0036):
+    return BalanceGeneralRequest(
+        periodo_desde="2026-09-01",
+        periodo_hasta="2026-09-30",
+        consolidado=BalanceAvionRequest(
+            matricula="FLOTA", periodo_desde="2026-09-01",
+            periodo_hasta="2026-09-30", refacciones=refacciones),
+        inventario=inventario,
+    )
+
+
+def _todos_los_textos(data: bytes) -> list[str]:
+    wb = load_workbook(BytesIO(data))
+    return [t for ws in wb.worksheets for t in _textos(ws)]
+
+
+def test_ultimo_precio_septiembre_todo_en_pesos_y_sin_fifo():
+    """Tras la migración: 45,524.17 vendidos y 9,105.07 de utilidad EN
+    PESOS; sin columnas en dólares (nada sin T.C.) y ni un «FIFO» en todo el
+    libro (hoja, notas e índice)."""
+    data = render_balance_general_xlsx(_general_0036(_TIENDA_SEP26_0036))
+    ws = _sheet(data, "inventario")
+    assert [ws.cell(row=4, column=c).value for c in range(1, 10)] == _ENCABEZADOS_HOY
+    assert ws.cell(row=4, column=10).value is None
+    # Aceite: valor al último precio × T.C. de hoy; venta/utilidad en pesos.
+    assert [ws.cell(row=5, column=c).value for c in (1, 2, 3, 6, 7, 8, 9)] == [
+        "Aceite multigrado semisintético 15W-50", 84, 31546.13, 36,
+        16263.61, 3252.72, "XA-VGV + N4142R"]
+    fila_tot = _fila_de(ws, "TOTALES")
+    assert fila_tot == 13
+    assert [ws.cell(row=fila_tot, column=c).value for c in (2, 3, 7, 8)] == [
+        84, 31546.13, 45524.17, 9105.07]
+    # El USD original NO se pinta (contaría doble con los pesos).
+    valores = {c.value for fila in ws.iter_rows() for c in fila
+               if isinstance(c.value, (int, float))}
+    assert not valores & {956.25, 191.25, 535.35, 2676.68}
+    assert not any("USD" in t for t in _textos(ws))
+    assert not any("FIFO" in t for t in _todos_los_textos(data))
+
+
+def test_ultimo_precio_nota_al_pie_cita_el_tc_de_hoy_y_va_envuelta():
+    ws = _sheet(render_balance_general_xlsx(_general_0036(_TIENDA_SEP26_0036)),
+                "inventario")
+    nota = _nota_pie(ws)
+    assert ("VALOR A COSTO = existencia × último precio de compra, al T.C. "
+            "oficial de hoy (17.6729, 25/09/2026).") in nota
+    assert ("Las compras y ventas en dólares se convierten con el T.C. oficial "
+            "de su día (el mismo de las cotizaciones)") in nota
+    assert ("UTILIDAD = vendido − costo de la pieza (el último precio de compra "
+            "vigente el día de la salida") in nota
+    assert nota.endswith(
+        "Desde el 25-sep-2026 toda salida sin precio se cobra al avión al "
+        "último precio de compra + 25 % (utilidad de la tienda).")
+    # Envuelta y con su alto: combinada a lo ancho de la hoja (9 columnas).
+    fila = _fila_de(ws, nota)
+    celda = ws.cell(row=fila, column=1)
+    assert celda.alignment.wrap_text
+    assert f"A{fila}:I{fila}" in {str(r) for r in ws.merged_cells.ranges}
+    assert ws.row_dimensions[fila].height and ws.row_dimensions[fila].height > 30
+
+
+def test_ultimo_precio_nota_bajo_el_bloque_2():
+    """R2 del contrato: el bloque 2 usa el T.C. de cada gasto y el bloque 1
+    el del día de la venta ⇒ la hoja lo dice justo bajo los TOTALES del
+    detalle de salidas."""
+    ws = _sheet(render_balance_general_xlsx(_general_0036(_TIENDA_SEP26_0036)),
+                "inventario")
+    fila_det = _fila_de(ws, "DETALLE DE SALIDAS DEL PERIODO (cargos a aviones)")
+    # encabezado + 1 salida + TOTALES ⇒ la nota va en la fila siguiente.
+    assert ws.cell(row=fila_det + 2, column=2).value == (
+        "Salida de bodega: 24 × Aceite (último precio + 25 %)")
+    assert ws.cell(row=fila_det + 3, column=1).value == "TOTALES"
+    assert ws.cell(row=fila_det + 3, column=6).value == 2193.0
+    fila_nota = fila_det + 4
+    assert ws.cell(row=fila_nota, column=1).value == _NOTA_BLOQUE2
+    assert ws.cell(row=fila_nota, column=1).alignment.wrap_text
+    assert f"A{fila_nota}:I{fila_nota}" in {str(r) for r in ws.merged_cells.ranges}
+
+
+def test_nota_bajo_el_bloque_2_solo_con_salidas_y_solo_con_la_regla_nueva():
+    # Sin salidas en el periodo: no hay nada que explicar.
+    sin_salidas = {"filas": [], "total_mxn": 0.0}
+    ws = _sheet(render_balance_general_xlsx(
+        _general_0036(_TIENDA_SEP26_0036, refacciones=sin_salidas)), "inventario")
+    assert _NOTA_BLOQUE2 not in _textos(ws)
+    assert "Sin salidas de inventario cargadas a aviones en el periodo." in _textos(ws)
+    # Payload previo (sin regla_costo): ni la nota ni textos nuevos.
+    ws = _sheet(render_balance_general_xlsx(_general(inventario=_INVENTARIO)),
+                "inventario")
+    assert _NOTA_BLOQUE2 not in _textos(ws)
+    assert "(todo el cardex FIFO)" in _nota_pie(ws)
+
+
+def test_campos_nuevos_en_null_siguen_dando_la_hoja_de_siempre():
+    """NestJS manda null en `regla_costo`/`tc_hoy` y en los USD originales
+    ⇒ misma huella que el payload de siempre (skew del API)."""
+    inv = {
+        **_INVENTARIO,
+        "filas": [{**f, "vendido_usd_original": None, "utilidad_usd_original": None}
+                  for f in _INVENTARIO["filas"]],
+        "regla_costo": None,
+        "tc_hoy": None,
+    }
+    data = render_balance_general_xlsx(_general(inventario=inv))
+    assert _firma_hoja(data) == _FIRMA_PAYLOAD_VIEJO
+    # Una regla desconocida tampoco cambia textos (solo 'ULTIMO_PRECIO').
+    data = render_balance_general_xlsx(_general(inventario={**_INVENTARIO,
+                                                            "regla_costo": "FIFO"}))
+    assert _firma_hoja(data) == _FIRMA_PAYLOAD_VIEJO
+
+
+def test_ultimo_precio_sin_tc_de_hoy_no_inventa_numero():
+    """Sin T.C. oficial hoy (tc_hoy null o con tc null — liberal, sin 422):
+    la nota no cita ningún número y la columna en dólares, si llega, se
+    explica sin la vieja historia de «capas» ni de «capturar el T.C.»."""
+    inv = {
+        "filas": [{"nombre": "Aceite 15W-50", "existencia": 84,
+                   "valor_costo_mxn": 0.0, "valor_costo_usd": 1785.0,
+                   "sin_tc": True}],
+        "total_piezas": 84, "total_valor_mxn": 0.0, "total_valor_usd": 1785.0,
+        "filas_sin_tc": 1, "regla_costo": "ULTIMO_PRECIO",
+        "tc_hoy": {"tc": None, "fecha_dato": None, "fuente": None},
+    }
+    assert BalanceHojaInventario.model_validate(inv).tc_hoy.tc is None
+    for tc_hoy in (inv["tc_hoy"], None):
+        ws = _sheet(render_balance_general_xlsx(
+            _general_0036({**inv, "tc_hoy": tc_hoy})), "inventario")
+        nota = _nota_pie(ws)
+        assert ("VALOR A COSTO = existencia × último precio de compra, en pesos "
+                "al T.C. oficial de hoy.") in nota
+        assert "(17." not in nota
+        assert ("VALOR A COSTO USD (sin T.C.): productos cuyo último precio de "
+                "compra es en dólares y que no se pudieron pasar a pesos por "
+                "falta de tipo de cambio; se muestran aparte, EN DÓLARES, y no "
+                "entran al total en pesos.") in nota
+        assert "capas" not in nota
+        assert ws.cell(row=4, column=4).value == "VALOR A COSTO\nUSD (sin T.C.)"
+        assert ws.cell(row=5, column=4).value == 1785.0
+
+
+def test_tc_hoy_suelto_o_ilegible_no_tumba_el_balance_general():
+    """Revisión adversaria (25-sep-2026): el API usa el MISMO nombre
+    `tc_hoy` como NÚMERO suelto en otra respuesta (PATCH de costo de una
+    entrada: `stats.tc_hoy`) y como objeto en esta hoja. Si el shape suelto
+    llegara aquí, antes era un 422 del Balance general ENTERO por una nota:
+    hoy un número se cita igual y algo ilegible deja la nota sin número."""
+    casos = [
+        (17.6729, "al T.C. oficial de hoy (17.6729)."),
+        ("17.6729", "al T.C. oficial de hoy (17.6729)."),
+        ({"tc": "17.6729", "fecha_dato": "2026-09-25"},
+         "al T.C. oficial de hoy (17.6729, 25/09/2026)."),
+        ({"tc": "N/D"}, "en pesos al T.C. oficial de hoy."),
+        ({"tc": True}, "en pesos al T.C. oficial de hoy."),
+        ({"tc": float("nan")}, "en pesos al T.C. oficial de hoy."),
+        ("N/D", "en pesos al T.C. oficial de hoy."),
+        (True, "en pesos al T.C. oficial de hoy."),
+        ([17.6729], "en pesos al T.C. oficial de hoy."),
+    ]
+    for tc_hoy, esperado in casos:
+        inv = BalanceHojaInventario.model_validate(
+            {**_TIENDA_SEP26_0036, "tc_hoy": tc_hoy})
+        nota = _nota_pie(_sheet(render_balance_general_xlsx(_general_0036(inv)),
+                                "inventario"))
+        assert esperado in nota, (tc_hoy, nota)
+        assert "(nan" not in nota.lower()
+
+
+def test_ultimo_precio_tc_de_hoy_con_todos_sus_decimales_y_fecha_de_su_dato():
+    """El T.C. se escribe con `_tc_txt` (hasta 6 decimales, sin ceros de
+    cola) y la fecha es la del DATO que usó el API (si open.er-api no
+    publicó hoy, el oficial vigente es el de ayer: se dice cuál)."""
+    inv = {**_TIENDA_SEP26_0036,
+           "tc_hoy": {"tc": 17.67291, "fecha_dato": "2026-09-24", "fuente": "OPEN_ER_API"}}
+    nota = _nota_pie(_sheet(render_balance_general_xlsx(_general_0036(inv)),
+                            "inventario"))
+    assert "al T.C. oficial de hoy (17.67291, 24/09/2026)." in nota
+    inv = {**_TIENDA_SEP26_0036, "tc_hoy": {"tc": 17.5}}
+    nota = _nota_pie(_sheet(render_balance_general_xlsx(_general_0036(inv)),
+                            "inventario"))
+    assert "al T.C. oficial de hoy (17.5)." in nota
+
+
+def test_ultimo_precio_respaldo_en_dolares_antes_de_la_migracion():
+    """Entre el deploy del API 0.0.36 y la migración de T.C., las 10 ventas
+    del 01-sep siguen sin T.C.: su utilidad llega en DÓLARES (respaldo) y la
+    nota lo explica con el texto nuevo, no con el de «costo en dólares»."""
+    inv = {**_TIENDA_SEP26, "filas_sin_tc": 0, "total_valor_usd": 0.0,
+           "filas": [{**f, "valor_costo_usd": None, "sin_tc": False,
+                      "valor_costo_mxn": 31546.13 if f.get("existencia") else None}
+                     for f in _TIENDA_SEP26["filas"]],
+           "total_valor_mxn": 31546.13,
+           "regla_costo": "ULTIMO_PRECIO", "tc_hoy": _TC_HOY}
+    ws = _sheet(render_balance_general_xlsx(_general_0036(inv)), "inventario")
+    # Sin VALOR A COSTO USD (el valorizado ya es en pesos), con VENDIDO/UTILIDAD USD.
+    assert [ws.cell(row=4, column=c).value for c in range(1, 12)] == [
+        *_ENCABEZADOS_HOY[:8], "VENDIDO\nUSD", "UTILIDAD\nUSD", "MATRÍCULAS"]
+    fila_tot = _fila_de(ws, "TOTALES")
+    assert [ws.cell(row=fila_tot, column=c).value for c in (3, 9, 10)] == [
+        31546.13, 2676.68, 535.35]
+    nota = _nota_pie(ws)
+    assert ("VENDIDO USD y UTILIDAD USD: ventas en dólares que todavía no "
+            "tienen tipo de cambio; se muestran en su moneda y no se suman con "
+            "las columnas en pesos (las que sí lo tienen ya cuentan en pesos).") in nota
+    assert "sobre costo en dólares" not in nota
+    assert "FIFO" not in nota
+
+
+def test_nota_del_margen_con_la_regla_nueva():
+    def nota(pct):
+        inv = {**_TIENDA_SEP26_0036, "margen_venta_pct": pct}
+        return _nota_pie(_sheet(render_balance_general_xlsx(_general_0036(inv)),
+                                "inventario"))
+
+    assert nota(12.5).endswith(
+        "al último precio de compra + 12.5 % (utilidad de la tienda).")
+    assert nota(0).endswith(
+        "Toda salida sin precio se cobra al avión al último precio de compra, "
+        "sin utilidad (margen de la tienda en 0 %).")
+    # Sin margen en el payload no se inventa la frase.
+    assert "utilidad de la tienda" not in nota(None)
+
+
+def test_indice_del_balance_general_nombra_el_costo_segun_la_regla():
+    def indice(inventario):
+        wb = load_workbook(BytesIO(render_balance_general_xlsx(
+            _general_0036(inventario))))
+        return next(t for t in _textos(wb["RESUMEN flota"])
+                    if "Hojas propias de este libro" in t)
+
+    assert ("detalle de salidas con costo al último precio de compra vs venta "
+            "al avión") in indice(_TIENDA_SEP26_0036)
+    assert "FIFO" not in indice(_TIENDA_SEP26_0036)
+    # API previo: el texto de siempre, intacto.
+    assert "detalle de salidas con costo FIFO vs venta al avión" in indice(_INVENTARIO)
+
+
+# ---------------------------------------------------------------------------
+# Excel del INVENTARIO con la regla nueva (contrato §6.5; lo arma el export
+# GENÉRICO con las columnas del API). Se congela que el último precio viaja
+# como NÚMERO con su moneda en la columna de al lado (jamás un USD en una
+# columna «MXN»), que el valor/vendido/utilidad son pesos y que las columnas
+# en dólares sin T.C. no existen cuando no hay nada que mostrar.
+# ---------------------------------------------------------------------------
+
+_COLUMNAS_EXPORT_0036 = [
+    {"label": "Ítem"}, {"label": "Código"}, {"label": "No. parte"},
+    {"label": "Categoría"}, {"label": "Ubicación"},
+    {"label": "Stock", "tipo": "numero"}, {"label": "Unidad"},
+    {"label": "Mínimo", "tipo": "numero"},
+    {"label": "Último precio de compra", "tipo": "numero"},
+    {"label": "Moneda"},
+    {"label": "Valor (MXN)", "tipo": "money"},
+    {"label": "Vendido (MXN)", "tipo": "money"},
+    {"label": "Utilidad (MXN)", "tipo": "money"},
+]
+
+
+def test_excel_del_inventario_ultimo_precio_con_su_moneda_y_pesos():
+    req = TablaXlsxRequest(
+        titulo="Inventario valorizado",
+        subtitulo=("Generado 2026-09-25 · valorizado al último precio de compra "
+                   "con el T.C. oficial de hoy 17.6729 (open.er-api, "
+                   "25-sep-2026) · utilidad: todo el historial · margen "
+                   "vigente 25 %"),
+        columnas=_COLUMNAS_EXPORT_0036,
+        filas=[
+            ["Aceite multigrado semisintético 15W-50", "ACE-1550", "", "Aceites",
+             "Bodega", 84, "cuarto", 12, 21.25, "USD", 31546.13, 16263.61,
+             3252.72],
+            ["Aceite 15W-50 (pesos)", "", "", "Aceites", "", 10, "cuarto", None,
+             1658.33, "MXN", 16583.30, None, None],
+        ],
+        totales=["TOTAL", None, None, None, None, None, None, None, None, None,
+                 48129.43, 16263.61, 3252.72],
+    )
+    ws = load_workbook(BytesIO(render_tabla_xlsx(req))).active
+    assert [ws.cell(row=4, column=c).value for c in range(1, 14)] == [
+        c["label"] for c in _COLUMNAS_EXPORT_0036]
+    assert ws.cell(row=4, column=14).value is None
+    # Último precio: número con 2 decimales y su moneda al lado.
+    assert ws.cell(row=5, column=9).value == 21.25
+    assert ws.cell(row=5, column=9).number_format == "#,##0.00"
+    assert ws.cell(row=5, column=10).value == "USD"
+    assert ws.cell(row=6, column=9).value == 1658.33
+    assert ws.cell(row=6, column=10).value == "MXN"
+    # Pesos: valor al T.C. de hoy, vendido y utilidad; None = celda vacía.
+    assert [ws.cell(row=5, column=c).value for c in (11, 12, 13)] == [
+        31546.13, 16263.61, 3252.72]
+    assert ws.cell(row=6, column=12).value is None
+    assert [ws.cell(row=7, column=c).value for c in (1, 11, 12, 13)] == [
+        "TOTAL", 48129.43, 16263.61, 3252.72]
+    textos = [c.value for fila in ws.iter_rows() for c in fila
+              if isinstance(c.value, str)]
+    assert not any("FIFO" in t for t in textos)
+
+
+def test_rutas_aceptan_el_payload_del_api_0036_con_nulls(monkeypatch, request):
+    """Por HTTP, como lo serializa NestJS (nulls incluidos): ni el Balance
+    general ni el cardex libro responden 422 con los campos nuevos."""
+    from fastapi.testclient import TestClient
+
+    from app.config import get_settings
+    from app.main import app
+
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", "secreto-de-prueba")
+    get_settings.cache_clear()
+    # Que el token de prueba no quede en caché para los demás archivos.
+    request.addfinalizer(get_settings.cache_clear)
+    client = TestClient(app)
+    headers = {"X-Internal-Token": "secreto-de-prueba"}
+
+    general = _general_0036(_TIENDA_SEP26_0036).model_dump(mode="json")
+    general["inventario"]["tc_hoy"] = {"tc": None, "fecha_dato": None, "fuente": None}
+    general["inventario"]["filas"][1]["vendido_usd_original"] = None
+    res = client.post("/pdf/balance-general-xlsx", json=general, headers=headers)
+    assert res.status_code == 200, res.text
+    ws = load_workbook(BytesIO(res.content))["inventario"]
+    assert "en pesos al T.C. oficial de hoy." in _nota_pie(ws)
+
+    libro = {
+        "titulo": "Cardex — Aceite", "item_nombre": "Aceite", "numero_parte": None,
+        "unidad": None, "generado": "2026-09-25", "moneda": "MXN",
+        "nota": ("Compras al T.C. oficial del día de la compra; ventas al del "
+                 "día de la venta. Costo = último precio de compra vigente ese día."),
+        "entradas": [], "salidas": [], "total_compra": 0, "total_venta": 0,
+        "total_ganancia": 0,
+    }
+    res = client.post("/pdf/cardex-libro-xlsx", json=libro, headers=headers)
+    assert res.status_code == 200, res.text
+    ws = load_workbook(BytesIO(res.content)).active
+    assert ws.cell(row=2, column=1).value == (
+        "Montos en MXN · Compras al T.C. oficial del día de la compra; ventas "
+        "al del día de la venta. Costo = último precio de compra vigente ese "
+        "día · Generado 2026-09-25")

@@ -1,3 +1,4 @@
+import math
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -908,8 +909,10 @@ class BalanceAvionGastoFila(BaseModel):
     # se agrupa en SECCIONES por matrícula con subtotal. None = libro
     # individual (una sola matrícula: req.matricula).
     matricula: str | None = None
-    # Solo hoja "refacciones" del GENERAL (29-ago): costo FIFO de la salida
-    # de inventario y VENTA al avión (= monto del gasto). Cuando vienen, la
+    # Solo hoja "refacciones" del GENERAL (29-ago): costo de la salida de
+    # inventario (el que se GUARDÓ en la fila al registrarla: costo FIFO
+    # hasta el API 0.0.35, último precio de compra desde el 0.0.36 —
+    # 25-sep-2026) y VENTA al avión (= monto del gasto). Cuando vienen, la
     # hoja agrega columnas COSTO VUELATOUR / VENTA AL AVIÓN / GANANCIA
     # (ganancia = venta − costo, solo para mostrar; 0 mientras la salida se
     # cargue a costo). None = sin columnas extra.
@@ -1055,8 +1058,15 @@ class BalanceGeneralResumenFila(BaseModel):
 class BalanceInventarioItemFila(BaseModel):
     """Fila del bloque POR ÍTEM de la hoja 'inventario' del Balance GENERAL
     (tiendita, 30-ago-2026). EXISTENCIA y VALOR A COSTO son A HOY (todo el
-    cardex FIFO), no una foto al corte; el resto es del periodo. None =
-    celda vacía (sin actividad de ese tipo), nunca un 0 falso."""
+    cardex), no una foto al corte; el resto es del periodo. None = celda
+    vacía (sin actividad de ese tipo), nunca un 0 falso.
+
+    Regla de costo (25-sep-2026, API 0.0.36, `regla_costo='ULTIMO_PRECIO'`
+    en la hoja): VALOR A COSTO = existencia × ÚLTIMO PRECIO DE COMPRA al
+    T.C. oficial de HOY; las compras y ventas en dólares llegan YA en pesos
+    con el T.C. oficial de su día. Hasta el 0.0.35 era el costo FIFO de las
+    capas vivas. Aquí no cambia nada del render por eso: los números
+    llegan hechos."""
 
     nombre: str = ""  # nombre del ítem (+ ' · nº de parte' cuando lo tiene)
     existencia: float | None = None
@@ -1075,17 +1085,27 @@ class BalanceInventarioItemFila(BaseModel):
     compradas_costo_mxn: float | None = None
     salidas_cant: float | None = None
     # Σ venta de las salidas CON precio (lo cargado a los aviones) y su
-    # utilidad (venta − costo FIFO consumido).
+    # utilidad (venta − costo de la pieza). Desde el API 0.0.36 incluye las
+    # ventas en dólares CONVERTIDAS por el API con el T.C. oficial del día
+    # de la venta (venta y costo con el mismo T.C.).
     vendido_mxn: float | None = None
     utilidad_mxn: float | None = None
     # Utilidad de la TIENDA en DÓLARES (25-sep-2026, API 0.0.35): salidas
-    # cobradas al avión en USD sobre costo FIFO en USD sin T.C. (hoy TODAS
-    # las ventas de prod). Antes esa utilidad no se podía expresar en pesos
-    # y la celda quedaba vacía; ahora viaja en su moneda. Jamás se convierte
-    # ni se suma con `vendido_mxn`/`utilidad_mxn`: una salida cuenta en UNA
-    # sola moneda (`ventaDeSalida` del API). None = sin ventas en dólares.
+    # cobradas al avión en USD sobre costo en USD sin T.C. Antes esa
+    # utilidad no se podía expresar en pesos y la celda quedaba vacía;
+    # ahora viaja en su moneda. Desde el API 0.0.36 SOLO es el RESPALDO de
+    # filas que siguen sin T.C. (tras la migración de datos del 25-sep no
+    # queda ninguna ⇒ None y las columnas USD se apagan solas). Jamás se
+    # convierte ni se suma con `vendido_mxn`/`utilidad_mxn`: una salida
+    # cuenta en UNA sola moneda (`ventaDeSalida` del API). None = sin
+    # ventas en dólares sin T.C.
     vendido_usd: float | None = None
     utilidad_usd: float | None = None
+    # ADITIVOS (API 0.0.36): el USD ORIGINAL de las ventas dólar-sobre-dólar
+    # que ya cuentan en pesos arriba. Dato secundario del panel; esta hoja
+    # NO los pinta (sumarlos a VENDIDO/UTILIDAD USD contaría doble).
+    vendido_usd_original: float | None = None
+    utilidad_usd_original: float | None = None
     # Salidas CON venta cuya utilidad no se puede expresar en ninguna moneda
     # (venta en pesos sobre costo en USD sin T.C.). 0 = ninguna.
     ventas_sin_utilidad: int = 0
@@ -1103,6 +1123,41 @@ class BalanceInventarioItemFila(BaseModel):
     @classmethod
     def _ventas_sin_utilidad_num(cls, v: Any) -> Any:
         return 0 if v is None else v
+
+
+class TcHoy(BaseModel):
+    """T.C. oficial de HOY con el que el API valorizó la bodega (25-sep-2026,
+    API 0.0.36): la MISMA fuente que las cotizaciones
+    (`TipoCambioService.oficialDetallePara`). Solo se REDACTA en la nota de
+    la hoja: aquí jamás se multiplica. `tc` None = sin dato (liberal: un
+    null no debe tumbar el libro con un 422)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    tc: float | None = None
+    fecha_dato: str | None = None
+    fuente: str | None = None
+
+    @field_validator("tc", mode="before")
+    @classmethod
+    def _tc_liberal(cls, v: Any) -> Any:
+        """Un T.C. ilegible («N/D», booleano, NaN) ⇒ None: la nota no cita
+        número. Solo es texto de una nota — jamás un 422 que tumbe el libro
+        (revisión adversaria 25-sep-2026)."""
+        if v is None or isinstance(v, bool):
+            return None
+        try:
+            tc = float(v)
+        except (TypeError, ValueError):
+            return None
+        return tc if math.isfinite(tc) else None
+
+
+# Valor de `regla_costo` del API 0.0.36 (25-sep-2026): costo = último precio
+# de compra (congelado en cada salida al registrarla) y montos en pesos con
+# el T.C. oficial del día. Ausente = API previo (costo FIFO) ⇒ textos de
+# siempre, hoja idéntica.
+REGLA_COSTO_ULTIMO_PRECIO = "ULTIMO_PRECIO"
 
 
 class BalanceHojaInventario(BaseModel):
@@ -1129,14 +1184,38 @@ class BalanceHojaInventario(BaseModel):
     # Cuántas filas tienen ventas cuya utilidad no se puede calcular (venta
     # en pesos sobre costo en USD sin T.C.): nota roja bajo la tabla.
     filas_utilidad_incompleta: int = 0
-    # Margen de la tienda VIGENTE (% sobre el costo FIFO; config
+    # Margen de la tienda VIGENTE (% sobre el costo de la pieza —costo FIFO
+    # hasta el API 0.0.35, último precio de compra desde el 0.0.36—; config
     # `inventario_margen_venta_pct`, 25 por default). Solo texto de la nota.
     margen_venta_pct: float | None = None
+    # ADITIVOS (25-sep-2026, API 0.0.36). `regla_costo` = 'ULTIMO_PRECIO'
+    # cambia SOLO los textos (notas, portada): ninguna nota dice «FIFO».
+    # `tc_hoy` = T.C. oficial con el que se valorizó (se cita en la nota).
+    # None = API previo ⇒ hoja idéntica a la de siempre.
+    regla_costo: str | None = None
+    tc_hoy: TcHoy | None = None
 
     @field_validator("filas_sin_tc", "filas_utilidad_incompleta", mode="before")
     @classmethod
     def _conteos_num(cls, v: Any) -> Any:
         return 0 if v is None else v
+
+    @field_validator("tc_hoy", mode="before")
+    @classmethod
+    def _tc_hoy_liberal(cls, v: Any) -> Any:
+        """Liberal con lo que manda NestJS (revisión adversaria 25-sep-2026):
+        el API usa el MISMO nombre `tc_hoy` como NÚMERO suelto en otra
+        respuesta (PATCH de costo de una entrada: `stats.tc_hoy`) y como
+        objeto aquí. Un número ⇒ `{tc}`; algo que no es objeto ⇒ None. Es
+        solo el texto de una nota: jamás un 422 que tumbe el Balance general
+        entero."""
+        if v is None or isinstance(v, dict | TcHoy):
+            return v
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, int | float | str):
+            return {"tc": v}
+        return None
 
 
 class BalanceGeneralRequest(BaseModel):
