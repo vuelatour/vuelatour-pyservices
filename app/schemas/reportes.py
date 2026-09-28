@@ -970,7 +970,11 @@ class BalanceOtroMovimientoFila(BaseModel):
     Desde el 28-ago-2026 tarde (regla A) incluye la comisión del vendedor
     como INGRESO de VuelaTour y su pago al vendedor como EGRESO apareado
     (PROVISIÓN a la fecha del vuelo mientras no exista gasto real; la nota
-    de la celda lo dice)."""
+    de la celda lo dice). Desde el 28-sep-2026 (API 0.0.39, invariante 31)
+    el gasto real con categoría «Comisión del vendedor» ligado al vuelo
+    REEMPLAZA a la provisión: el concepto llega hecho del API («pago
+    comisión vendedor (X) · gasto real», con «· parcial: faltan $… MXN» o
+    «· excede $… MXN») y aquí se pinta tal cual."""
 
     clave: str = ""
     avion_color: str | None = None
@@ -997,6 +1001,14 @@ class BalanceHojaOtrosMovimientos(BaseModel):
     filas: list[BalanceOtroMovimientoFila] = Field(default_factory=list)
     # Movimientos SIN avión y SIN vuelo (dinero de empresa).
     filas_sueltas: list[BalanceOtroMovimientoFila] = Field(default_factory=list)
+    # Comisión del vendedor como GASTO (28-sep-2026, API 0.0.39, invariante
+    # 31 del API): el API manda `true` SOLO si algún vuelo del periodo tiene
+    # un gasto real «Comisión del vendedor» (que reemplaza a su provisión);
+    # si no, la clave NO viaja. Con `true` las 3 leyendas del Balance general
+    # que hablan de la PROVISIÓN mencionan también el gasto real; sin ella
+    # (None/False, o un API viejo) el Excel es byte-idéntico al de antes —
+    # esas leyendas siguen siendo verdaderas mientras no haya gasto real.
+    hay_pago_vendedor_real: bool | None = None
 
 
 class BalanceAvionRequest(BaseModel):
@@ -1449,7 +1461,15 @@ class DineroXlsxRequest(BaseModel):
     utilidades_otros_ingresos_mxn: float | None = None
     # Provisión del pago al vendedor (comisión + IVA) ya restada de
     # utilidades_otros_ingresos_mxn (regla 28-ago); informativa para la nota.
+    # Desde el 28-sep-2026 son SOLO las provisiones VIVAS (vuelos sin gasto
+    # real «Comisión del vendedor»).
     utilidades_comision_vendedor_provisionada_mxn: float | None = None
+    # Pagado al vendedor con GASTO REAL (categoría «Comisión del vendedor»
+    # ligada al vuelo; 28-sep-2026, API 0.0.39, invariante 31 del API), ya
+    # restado de utilidades_otros_ingresos_mxn en lugar de la provisión de
+    # esos vuelos (nunca los dos). El API lo manda SOLO si algún vuelo del
+    # periodo tiene pago real: None ⇒ leyendas de siempre (byte-idéntico).
+    utilidades_comision_vendedor_pagada_mxn: float | None = None
     utilidades_otros_gastos_mxn: float | None = None
     utilidades_tc: float | None = None
     utilidades_aviones: list[DineroUtilidadAvion] = Field(default_factory=list)

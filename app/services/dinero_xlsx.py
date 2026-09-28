@@ -17,8 +17,10 @@
                       al STATUS DE COBROS como informativo.
   2. Otros ingresos — TUAs/extras/pernocta y comisión del vendedor (+ su IVA)
                       por vuelo: ingreso de VuelaTour, no del avión (ingreso
-                      vs egreso; el pago de la comisión al vendedor apareado
-                      como PROVISIÓN a la fecha del vuelo).
+                      vs egreso; el pago de la comisión al vendedor apareado:
+                      el gasto real «Comisión del vendedor» ligado al vuelo
+                      o, mientras no se capture, la PROVISIÓN a la fecha del
+                      vuelo — 28-sep-2026, invariante 31 del API).
   3. otros gastos   — gastos del mes sin vuelo, con acumulado.
   4. utilidades     — resumen del periodo (lo computable hoy).
 
@@ -316,6 +318,31 @@ def _hoja_vuelos(ws: Worksheet, req: DineroXlsxRequest) -> None:
     ws.freeze_panes = ws.cell(row=5, column=4)
 
 
+# Comisión del vendedor como GASTO (28-sep-2026, API 0.0.39, invariante 31
+# del API): el gasto real «Comisión del vendedor» ligado al vuelo REEMPLAZA a
+# la provisión en su fila (el concepto y la nota de la celda llegan hechos del
+# API). La leyenda de la hoja cambia SOLO cuando el API manda
+# `utilidades_comision_vendedor_pagada_mxn` (lo manda solo si algún vuelo del
+# periodo tiene pago real): sin él, el texto de siempre —que sigue siendo
+# verdadero— y el libro sale byte-idéntico.
+_LEYENDA_PAGO_VENDEDOR_PROVISION = (
+    "El pago de la comisión al vendedor va apareado en su fila como PROVISIÓN "
+    "a la fecha del vuelo mientras no exista el gasto real (regla 28-ago-2026). "
+)
+_LEYENDA_PAGO_VENDEDOR_REAL = (
+    "El pago de la comisión al vendedor va apareado en su fila: el gasto real "
+    "(categoría «Comisión del vendedor» ligada al vuelo) o, mientras no se "
+    "capture, una PROVISIÓN por el mismo monto a la fecha del vuelo (regla "
+    "28-ago-2026). "
+)
+
+
+def _hay_pago_vendedor_real(req: DineroXlsxRequest) -> bool:
+    """El API manda `utilidades_comision_vendedor_pagada_mxn` solo cuando
+    algún vuelo del periodo tiene gasto real «Comisión del vendedor»."""
+    return req.utilidades_comision_vendedor_pagada_mxn is not None
+
+
 def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
     ws.title = "Otros ingresos"
     ws.cell(row=1, column=1, value="RELACION DE OTROS INGRESOS VUELATOUR").font = Font(
@@ -324,10 +351,13 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
     ws.cell(
         row=2, column=1,
         value="Ingreso de VuelaTour (no del avión): TUAs, extras, pernocta y "
-        "comisión del vendedor cobrados (con su IVA) vs lo pagado. El pago de "
-        "la comisión al vendedor va apareado en su fila como PROVISIÓN a la "
-        "fecha del vuelo mientras no exista el gasto real (regla 28-ago-2026). "
-        "Al final, los otros ingresos que no son de un vuelo (clave ING-n, "
+        "comisión del vendedor cobrados (con su IVA) vs lo pagado. "
+        + (
+            _LEYENDA_PAGO_VENDEDOR_REAL
+            if _hay_pago_vendedor_real(req)
+            else _LEYENDA_PAGO_VENDEDOR_PROVISION
+        )
+        + "Al final, los otros ingresos que no son de un vuelo (clave ING-n, "
         "registrados en Ingresos). Los anticipos de clientes no están aquí: "
         "cuentan como cobro del vuelo al aplicarse.",
     ).font = Font(italic=True, size=9, color="5B6470")
@@ -358,8 +388,9 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
             if isinstance(v, (int, float)):
                 cell.number_format = MONEY
         # El detalle del egreso (p. ej. la provisión del pago al vendedor =
-        # comisión + IVA) va como COMENTARIO de su celda, igual que en el
-        # Balance general.
+        # comisión + IVA, o la nota del gasto real «Comisión del vendedor»
+        # que la reemplaza) va como COMENTARIO de su celda, igual que en el
+        # Balance general. El texto llega hecho del API.
         if f.nota_egreso:
             lineas = f.nota_egreso.count("\n") + 1
             com = Comment(f.nota_egreso, "VuelaTour")
@@ -548,6 +579,15 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
         if provision is not None and provision > 0
         else ""
     )
+    # Pagos REALES al vendedor (28-sep-2026): ya restados en lugar de la
+    # provisión de sus vuelos (nunca los dos). Sin el campo, o en 0, la fila
+    # es la de siempre.
+    pagada = req.utilidades_comision_vendedor_pagada_mxn
+    nota_pagada = (
+        f" Pagado al vendedor con gasto real en este periodo: ${pagada:,.2f} MXN."
+        if pagada is not None and pagada > 0
+        else ""
+    )
     ws.cell(
         row=9,
         column=1,
@@ -555,7 +595,8 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
         "comisión del vendedor + su IVA), no del avión (regla 28-ago-2026), "
         "NETO de la provisión del pago al vendedor (comisión + su IVA), más "
         "los ingresos sin vuelo registrados en Ingresos (ING-n), netos de su "
-        "comisión bancaria: ver hoja 'Otros ingresos'." + nota_provision,
+        "comisión bancaria: ver hoja 'Otros ingresos'." + nota_provision
+        + nota_pagada,
     ).font = Font(italic=True, size=9, color="5B6470")
 
 

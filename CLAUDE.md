@@ -172,6 +172,35 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   esta guarda — hoy no hay notas así en prod, pero el folio de la factura y
   las notas son texto libre.
   Tests: `tests/test_caja_chica_xlsx.py`.
+- **Comisión del vendedor como GASTO** (28-sep-2026, API 0.0.39, invariante
+  31 del API). Pedido: «¿cómo registro el pago de la comisión a Saab para que
+  aparezca en otros movimientos? Si lo capturo como "Otros gastos VuelaTour"
+  queda duplicado». El API agrega la categoría `COMISION_VENDEDOR` («Comisión
+  del vendedor») y el gasto real ligado al vuelo REEMPLAZA a la PROVISIÓN en
+  su fila de «otros movimientos» (Balance general) y de «Otros ingresos»
+  (Libro Dinero). **Aquí no se calcula nada**: concepto («pago comisión
+  vendedor (X) · gasto real», «· parcial: faltan $… MXN», «· excede $… MXN»,
+  filas de solo-egreso «· sin comisión cobrada en la cotización»), monto,
+  fecha, remanente y nota de la celda llegan hechos y se pintan tal cual.
+  Lo único que cambia son 5 LEYENDAS, y **solo con banderas ADITIVAS** que
+  el API manda cuando hay pagos reales: `BalanceHojaOtrosMovimientos.
+  hay_pago_vendedor_real: bool | None` (fila 2 de 'otros movimientos', nota
+  del RESUMEN y nota de la hoja maestra del GENERAL; `_hay_pago_vendedor_real`
+  exige `is True`) y `DineroXlsxRequest.utilidades_comision_vendedor_pagada_mxn:
+  float | None` (fila 2 de 'Otros ingresos' con el campo presente; la frase
+  «Pagado al vendedor con gasto real en este periodo: $X MXN.» al final de la
+  fila 9 de 'utilidades' solo con monto > 0). **Sin bandera el Excel es
+  BYTE-IDÉNTICO** al de antes (verificado miembro a miembro del .xlsx salvo
+  `docProps/core.xml`, con la bandera ausente, null y false): las leyendas de
+  hoy («PROVISIÓN … mientras no exista el gasto real») siguen siendo
+  verdaderas mientras no haya gasto real. El libro INDIVIDUAL no trae 'otros
+  movimientos' y su nota de la hoja maestra no cambia nunca (`general=True`
+  es condición). Visión (IA de tickets) SIN cambio: `valid_cats` descarta la
+  categoría y la IA nunca la sugiere; todos los demás esquemas leen
+  `categoria` como `str` (un código nuevo no da 422). Tests:
+  `tests/test_comision_vendedor_notas.py` (textos viejos LITERALES sin
+  bandera, textos nuevos con ella, individual, concepto y nota tal cual,
+  rutas con el payload nuevo).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

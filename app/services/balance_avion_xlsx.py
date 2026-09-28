@@ -321,6 +321,51 @@ def _nota_tc_oficial(v: BalanceAvionVuelo) -> str:
     )
 
 
+# Comisión del vendedor como GASTO (28-sep-2026, API 0.0.39, invariante 31
+# del API): el gasto real «Comisión del vendedor» ligado al vuelo REEMPLAZA a
+# la PROVISIÓN en 'otros movimientos' (concepto y nota llegan hechos del API).
+# Las 3 leyendas del Balance GENERAL que hablan de la provisión (fila 2 de
+# 'otros movimientos', nota del RESUMEN y nota de la hoja maestra) cambian
+# SOLO con `otros_movimientos.hay_pago_vendedor_real` (el API la manda solo si
+# algún vuelo del periodo tiene pago real). Sin ella el texto de siempre
+# —verdadero mientras no haya gasto real— y el libro sale byte-idéntico. El
+# libro INDIVIDUAL no trae 'otros movimientos': su nota no cambia nunca.
+_OM_PAGO_VENDEDOR_PROVISION = (
+    "el pago de la comisión al vendedor va apareado en la "
+    "misma fila como PROVISIÓN a la fecha del vuelo mientras no exista el "
+    "gasto real (lo dice la nota de la celda)."
+)
+_OM_PAGO_VENDEDOR_REAL = (
+    "el pago de la comisión al vendedor va apareado en la misma fila: el "
+    "GASTO REAL cuando se captura en Gastos con la categoría «Comisión del "
+    "vendedor» ligado al vuelo (con «faltan $…» o «excede $…» si no cuadra "
+    "con lo cobrado) o, mientras no se capture, una PROVISIÓN por el mismo "
+    "monto a la fecha del vuelo (lo dice la nota de la celda). Ese pago NO se "
+    "captura como «Otros gastos VuelaTour»: quedaría duplicado en la hoja "
+    "'otros gastos'."
+)
+_RESUMEN_PAGO_VENDEDOR_PROVISION = (
+    "(ingreso cobrado y pago apareado como PROVISIÓN a la fecha del vuelo)."
+)
+_RESUMEN_PAGO_VENDEDOR_REAL = (
+    "(ingreso cobrado y pago apareado: el gasto real «Comisión del vendedor» "
+    "o, mientras no se capture, la PROVISIÓN a la fecha del vuelo)."
+)
+_MAESTRA_PAGO_VENDEDOR_PROVISION = (
+    "(el pago apareado como PROVISIÓN a la fecha del vuelo)."
+)
+_MAESTRA_PAGO_VENDEDOR_REAL = (
+    "(el pago apareado: el gasto real «Comisión del vendedor» o, mientras no "
+    "se capture, la PROVISIÓN a la fecha del vuelo)."
+)
+
+
+def _hay_pago_vendedor_real(om: BalanceHojaOtrosMovimientos | None) -> bool:
+    """True solo si el API marcó la hoja con `hay_pago_vendedor_real: true`
+    (None/False/ausente ⇒ leyendas de siempre)."""
+    return om is not None and om.hay_pago_vendedor_real is True
+
+
 def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
                   general: bool = False) -> None:
     # `general` solo ajusta las notas al pie (29-ago): en el Balance general
@@ -551,9 +596,14 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
         "COMISIÓN VENDEDOR MXN va vacía a propósito (regla 28-ago-2026): la "
         "comisión del vendedor ya no es venta ni costo del avión — es "
         "ingreso de VuelaTour y su pago al vendedor sale de VuelaTour; "
-        "ambos viven en 'otros movimientos' (el pago apareado como "
-        "PROVISIÓN a la fecha del vuelo). GANANCIA de la fila = REMANENTE "
-        "(VENTA − COSTO TOTAL), ya sin comisión.",
+        "ambos viven en 'otros movimientos' "
+        + (
+            _MAESTRA_PAGO_VENDEDOR_REAL
+            if general and _hay_pago_vendedor_real(req.otros_movimientos)
+            else _MAESTRA_PAGO_VENDEDOR_PROVISION
+        )
+        + " GANANCIA de la fila = REMANENTE (VENTA − COSTO TOTAL), ya sin "
+        "comisión.",
         "**** COBRADO REAL = Σ de los depósitos tal cual entraron (COBRO "
         "1..4). COBRADO AVIÓN = depósitos reales × (venta avión ÷ total "
         "cotización): la parte de los cobros que corresponde a TUAs/extras/"
@@ -1874,8 +1924,13 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
         "COMISIONES VENDEDOR va vacía a propósito (regla 28-ago-2026): la "
         "comisión del vendedor ya no es venta ni costo de ningún avión — es "
         "INGRESO de VuelaTour y su pago al vendedor sale de VuelaTour; los "
-        "dos viven en 'otros movimientos' (ingreso cobrado y pago apareado "
-        "como PROVISIÓN a la fecha del vuelo).",
+        "dos viven en 'otros movimientos' "
+        + (
+            _RESUMEN_PAGO_VENDEDOR_REAL
+            if req.consolidado is not None
+            and _hay_pago_vendedor_real(req.consolidado.otros_movimientos)
+            else _RESUMEN_PAGO_VENDEDOR_PROVISION
+        ),
         "Vuelos multi-avión (regla 28-ago-2026): la VENTA se reparte entre "
         "las matrículas del vuelo en partes iguales por tramo vendido — los "
         "ferries/tramos operativos no reparten — (cada fila COMPARTIDO "
@@ -1926,9 +1981,13 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
         row=2, column=1,
         value="Ingreso de VuelaTour (no del avión): TUAs, extras, viáticos de "
         "pernocta y comisión del vendedor cobrados al cliente (con su IVA) vs "
-        "lo pagado — el pago de la comisión al vendedor va apareado en la "
-        "misma fila como PROVISIÓN a la fecha del vuelo mientras no exista el "
-        "gasto real (lo dice la nota de la celda). UNA FILA POR "
+        "lo pagado — "
+        + (
+            _OM_PAGO_VENDEDOR_REAL
+            if _hay_pago_vendedor_real(hoja)
+            else _OM_PAGO_VENDEDOR_PROVISION
+        )
+        + " UNA FILA POR "
         "VUELO: los ingresos van sumados en una celda y los egresos en otra; "
         "el desglose concepto por concepto está en el COMENTARIO de cada "
         "celda (pasa el cursor sobre el triángulo rojo). Una fila puede traer "
