@@ -469,6 +469,70 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `_advertencias_saldos` valida la cadena `saldo[i] = saldo[i−1] − cargo +
   abono` y avisa dónde faltan movimientos. Tests:
   `tests/test_estado_cuenta_banco.py`.
+- **Estado de cuenta PDF por BLOQUES de páginas** (29-sep-2026). El
+  Scotiabank mensual (1.18 MB, impreso del portal) daba 422 «demasiados
+  movimientos»: el PDF completo iba en UNA llamada y la respuesta se
+  truncaba a 16k tokens; aunque cupiera, generarla rebasaba los topes de la
+  cadena (240 s por llamada aquí, el API aborta a 270 s, Vercel Hobby mata a
+  300 s). `_parse_pdf` ahora abre el PDF con pypdf (`_abrir_pdf`) y lo parte
+  en bloques de N páginas consecutivas (`estado_cuenta_paginas_por_bloque`,
+  env `ESTADO_CUENTA_PAGINAS_POR_BLOQUE`, default 3) escritos con
+  `PdfWriter`; los bloques se piden EN PARALELO
+  (`ThreadPoolExecutor(max_workers=4)`, mismo `with_options(timeout=240.0)`,
+  mismo modelo, `max_tokens` y `system`) y el resultado se ordena por
+  página, no por llegada. Invariantes congelados en
+  `tests/test_estado_cuenta_pdf_bloques.py`:
+  (1) **≤ N páginas = UNA llamada BYTE-IDÉNTICA a la de siempre** (documento
+  ORIGINAL + `_prompt_pdf`; `_PlanPdf.contenido` devuelve
+  `_contenido_completo` cuando el bloque es el PDF entero); pypdf ausente,
+  PDF corrupto, cifrado con contraseña de usuario o un bloque inicial que
+  no se puede escribir ⇒ el camino de siempre (`_leer_completo`) + warning
+  en el log `estado_cuenta`; (2) cada bloque lleva el prompt de siempre +
+  «Este bloque contiene las páginas X–Y de N; transcribe SOLO…; las claves
+  del resumen … déjalas en null…», y el que NO trae la página 1 recibe
+  además el CONTEXTO DEL ENCABEZADO (primeros 1,500 caracteres de
+  `extract_text()` de la página 1, para el año/periodo/cuenta/moneda) con la
+  orden de NO transcribir movimientos de ese texto; (3) `stop_reason ==
+  max_tokens` en un bloque ⇒ se re-parte a la mitad (recursivo; el primer
+  pedazo lleva la página extra) y el consumo de la llamada truncada SÍ se
+  suma; una página sola truncada ⇒ el error de siempre, mismo texto; (4)
+  cualquier excepción de un bloque (Claude, JSON ilegible) se propaga tal
+  cual y tumba TODA la lectura — jamás se importan parciales — y
+  `pool.shutdown(wait=False, cancel_futures=True)` no espera a los bloques
+  en vuelo; (5) tope TOTAL `_TOPE_TOTAL_PDF_S` = 260 s (el API aborta a
+  270): pasado, 422 «tardó más de 4 minutos» en vez de un corte a ciegas;
+  (6) fusión (`_fusionar`, también con 1 bloque): movimientos concatenados
+  SIN deduplicar (dos cargos iguales el mismo día son legítimos), resumen =
+  primer valor no nulo EN ORDEN de bloque, `advertencias` de la IA
+  concatenadas y `_advertencias_pdf` sobre el total (la cadena de saldos y
+  los totales impresos cruzan bloques); `uso_ia` = SUMA de todas las
+  llamadas (`_sumar_usos`); `notas` dice «PDF de P páginas leído en K
+  bloques.» cuando K > 1. Si un estado de cuenta futuro sigue truncando con
+  3 páginas, bajar N por env antes de tocar código.
+  Revisión adversaria (29-sep-2026), congelada en el mismo archivo: (a) el
+  tope de (5) aplica también a un PDF de ≤ N páginas que pypdf sí abre (va
+  por el mismo orquestador con un solo bloque); solo `_leer_completo` no lo
+  tiene — la llamada y el resultado exitoso no cambian, solo el error a
+  los 260 s; (b) el encabezado es `_PlanPdf.encabezado` PEREZOSO
+  (`cached_property`): un PDF de ≤ N páginas que no se trunca ni lo extrae
+  y un PDF grande lo extrae una vez; (c) si el periodo quedó DESPUÉS de los
+  1,500 caracteres (un PDF impreso del portal abre con el menú del sitio),
+  `_texto_encabezado` rescata hasta 3 renglones con «periodo»/«fecha de
+  corte» — sin él los bloques 2+ no saben el AÑO de «07 SEP» — y nunca un
+  renglón de movimiento; (d) la nota de páginas aclara que el documento
+  adjunto trae SOLO esas páginas y que eso NO va en `advertencias` (si no,
+  cada bloque avisaba «faltan páginas») y el contexto repite «transcribe
+  únicamente los renglones del documento PDF adjunto»; (e) una lectura por
+  bloques que falla deja en el log `estado_cuenta` el consumo YA cobrado de
+  los bloques terminados (el API solo registra `ia_uso` con un 200); (f) un
+  PDF cifrado solo con contraseña de DUEÑO (lo usual en bancos) se abre con
+  "" y se parte normal (AES-256 probado). Riesgos abiertos: 4 llamadas
+  simultáneas de `max_tokens` 16384 pueden toparse con el rate limit de
+  salida de la cuenta (el SDK reintenta 429 dos veces; si no alcanza, 502
+  «Claude no disponible (429)»); con > 12 páginas hacen falta 2 tandas y
+  un bloque truncado se re-lee completo antes de partirse, así que el tope
+  de 260 s puede cortar; los hilos en vuelo siguen (y cobran) tras un error
+  o el tope, y el SDK reintenta también los timeouts.
 - **Conciliación de INGRESOS con IA** (24-sep-2026, API 0.0.34, pedido «con
   IA marcar los que sí empatan con los cobros de los vuelos»):
   `POST /conciliacion/sugerir-abonos` (`X-Internal-Token`), servicio
@@ -646,7 +710,10 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   íntegra, `saldo_posterior`, el periodo y los totales del resumen, y
   `advertencias`; `_advertencias_pdf` valida cadena de saldos, totales
   impresos vs transcritos y fechas dentro del periodo (una extracción
-  incompleta que no truncó no se detecta con `stop_reason`).
+  incompleta que no truncó no se detecta con `stop_reason`). Desde el
+  29-sep-2026 un PDF de más de N páginas se lee por bloques (ver
+  «Conciliación»): el `_SYSTEM` es el mismo; la nota de páginas y el
+  contexto del encabezado viajan en el mensaje del usuario.
 - **Sugerencias (conciliación y gasto→vuelo)**: la IA PROPONE, la persona
   confirma. El payload ya lleva el contexto que antes se tiraba (movimiento:
   `tipo`, `referencia`, `cuenta_moneda`, `terminacion_tarjeta_detectada`;

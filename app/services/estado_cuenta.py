@@ -2,10 +2,14 @@ import base64
 import csv
 import io
 import json
+import logging
 import re
+import time
 import unicodedata
 from collections import Counter
-from functools import lru_cache
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import dataclass
+from functools import cached_property, lru_cache
 
 from app.config import get_settings
 from app.schemas.conciliacion import (
@@ -19,6 +23,7 @@ from app.schemas.conciliacion import (
     MovimientoSinConciliar,
     SugerenciaAlternativa,
 )
+from app.schemas.uso_ia import UsoIA
 from app.services._dominio import TC_USD_MXN_MAX, TC_USD_MXN_MIN, sistema_con_dominio
 from app.services.ia_usage import uso_ia_de
 from app.services.validaciones_ia import (
@@ -28,6 +33,13 @@ from app.services.validaciones_ia import (
     terminacion_4,
     terminacion_de_referencia,
 )
+
+try:  # sin pypdf el PDF se lee como siempre: completo, en UNA llamada
+    from pypdf import PdfReader, PdfWriter
+except ImportError:  # pragma: no cover — pypdf está en requirements.txt
+    PdfReader = PdfWriter = None  # type: ignore[assignment,misc]
+
+logger = logging.getLogger("estado_cuenta")
 
 
 def _norm(s: str) -> str:
@@ -666,51 +678,345 @@ def _prompt_pdf(req: ConciliacionParseRequest) -> str:
     return " ".join(partes)
 
 
-def _parse_pdf(req: ConciliacionParseRequest) -> ConciliacionParseResponse:
+# --- PDF por bloques de páginas (29-sep-2026) ------------------------------
+# El Scotiabank mensual (1.18 MB, impreso desde el portal) ya no cabía en UNA
+# llamada: la respuesta se truncaba a 16k tokens (422 «demasiados
+# movimientos») y, aunque cupiera, generarla tardaba más que los topes de la
+# cadena (240 s aquí, 270 s el API, 300 s Vercel). Ahora el PDF se parte con
+# pypdf en bloques de N páginas consecutivas (setting
+# `estado_cuenta_paginas_por_bloque`, default 3) que se leen EN PARALELO y se
+# fusionan en orden. Un PDF de ≤ N páginas sigue siendo UNA llamada
+# BYTE-IDÉNTICA a la de siempre (mismo system, mismo prompt, mismo
+# documento), y si pypdf no puede abrir el PDF (cifrado/corrupto) se lee como
+# siempre: completo, en una llamada.
+
+_MAX_HILOS_PDF = 4
+# Tope TOTAL de la lectura por bloques. El API aborta a los 270 s: pasado este
+# tope se responde 422 con instrucciones (en vez de que el API corte a ciegas)
+# y ya no se piden bloques que nadie va a recibir.
+_TOPE_TOTAL_PDF_S = 260.0
+# De la página 1 solo interesa el encabezado (periodo, cuenta, moneda).
+_ENCABEZADO_CHARS = 1500
+# Si el PERIODO quedó fuera de esos caracteres (un PDF impreso del portal
+# abre con el menú del sitio), se rescatan sus renglones: sin él, los
+# bloques 2+ no saben el AÑO de fechas como «07 SEP».
+_RE_RENGLON_PERIODO = re.compile(r"per[ií]odo|fecha\s+de\s+corte", re.IGNORECASE)
+_RENGLONES_PERIODO_MAX = 3
+# Claves del resumen: en la fusión gana el primer valor no nulo entre bloques.
+_CLAVES_RESUMEN = (
+    "periodo_inicio",
+    "periodo_fin",
+    "saldo_inicial",
+    "saldo_final",
+    "total_cargos",
+    "total_abonos",
+)
+_MSG_TRUNCADO = f"El PDF tiene demasiados movimientos para leerse completo con IA. {_USA_CSV}"
+_MSG_TARDADO = (
+    "La lectura del PDF con IA tardó más de 4 minutos y se detuvo para no importar "
+    f"una lista incompleta. Reintenta, o mejor: {_USA_CSV}"
+)
+
+
+def _doc_pdf(data_b64: str) -> dict:
+    return {
+        "type": "document",
+        "source": {
+            "type": "base64",
+            "media_type": "application/pdf",
+            "data": data_b64,
+        },
+    }
+
+
+def _contenido_completo(req: ConciliacionParseRequest) -> list[dict]:
+    """El mensaje de SIEMPRE: el PDF original completo + el prompt de siempre."""
+    return [_doc_pdf(req.file_base64), {"type": "text", "text": _prompt_pdf(req)}]
+
+
+def _llamar_claude(cliente, contenido: list[dict]):
+    """UNA llamada de lectura. Mismos parámetros para el PDF completo y para
+    cada bloque: solo cambia el contenido del mensaje del usuario."""
     s = get_settings()
     # Timeout propio: generar cientos de movimientos tarda más que el timeout
     # global (90s) — la importación es manual y el operador espera.
-    resp = _client().with_options(timeout=240.0).messages.create(
+    return cliente.with_options(timeout=240.0).messages.create(
         model=s.anthropic_model,
         # Un estado de cuenta mensual trae cientos de movimientos: con 4096 la
         # respuesta se TRUNCABA a media estructura y el json.loads reventaba
         # con un error críptico ("Expecting ',' delimiter...").
         max_tokens=16384,
         system=sistema_con_dominio(_SYSTEM),
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": req.file_base64,
-                        },
-                    },
-                    {"type": "text", "text": _prompt_pdf(req)},
-                ],
-            }
-        ],
+        messages=[{"role": "user", "content": contenido}],
     )
-    uso = uso_ia_de(resp)
-    # Truncado por límite de salida: la conciliación exige el universo COMPLETO
-    # de movimientos — importar una lista parcial en silencio es peor que
-    # fallar con instrucciones claras.
-    if resp.stop_reason == "max_tokens":
-        raise ValueError(
-            f"El PDF tiene demasiados movimientos para leerse completo con IA. {_USA_CSV}"
-        )
+
+
+def _datos_de_respuesta(resp) -> dict:
     text = next((b.text for b in resp.content if b.type == "text"), "")
     try:
-        data = _extract_json(text)
+        return _extract_json(text)
     except (json.JSONDecodeError, ValueError) as e:
         raise ValueError(
             "La IA no devolvió una respuesta interpretable al leer el PDF. "
             f"Reintenta, o mejor: {_USA_CSV}"
         ) from e
 
+
+def _abrir_pdf(file_base64: str):
+    """PdfReader listo para partir, o None ⇒ se lee como siempre (completo)."""
+    if PdfReader is None or PdfWriter is None:
+        logger.warning("pypdf no está instalado: el estado de cuenta PDF va completo")
+        return None
+    try:
+        lector = PdfReader(io.BytesIO(base64.b64decode(file_base64)), strict=False)
+        # Cifrado solo con contraseña de DUEÑO (restringe imprimir/copiar): se
+        # abre con "". Con contraseña de usuario real, no hay cómo partirlo.
+        if lector.is_encrypted and not lector.decrypt(""):
+            raise ValueError("PDF protegido con contraseña")
+        if len(lector.pages) < 1:
+            raise ValueError("PDF sin páginas")
+        return lector
+    except Exception as e:  # noqa: BLE001 — cifrado/corrupto: camino de siempre
+        logger.warning(
+            "pypdf no pudo abrir el estado de cuenta PDF (%r): se lee completo en una llamada",
+            e,
+        )
+        return None
+
+
+def _bloque_b64(lector, inicio: int, fin: int) -> str:
+    """Páginas [inicio, fin) (base 0) como un PDF nuevo, en base64."""
+    escritor = PdfWriter()
+    for i in range(inicio, fin):
+        escritor.add_page(lector.pages[i])
+    buf = io.BytesIO()
+    escritor.write(buf)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _texto_encabezado(lector) -> str:
+    """Primeros ~1,500 caracteres del texto de la página 1 (periodo, cuenta,
+    moneda) + hasta 3 renglones del PERIODO si quedaron después del corte.
+    Un PDF escaneado o una fuente rara ⇒ "" (el bloque va sin él)."""
+    try:
+        texto = lector.pages[0].extract_text() or ""
+    except Exception as e:  # noqa: BLE001 — sin encabezado no se rompe la lectura
+        logger.warning("No se pudo extraer el encabezado del estado de cuenta: %r", e)
+        return ""
+    texto = texto.strip()
+    encabezado = texto[:_ENCABEZADO_CHARS]
+    if _RE_RENGLON_PERIODO.search(encabezado):
+        return encabezado
+    rescatados = [
+        r.strip()[:200] for r in texto[_ENCABEZADO_CHARS:].splitlines()
+        if _RE_RENGLON_PERIODO.search(r)
+    ][:_RENGLONES_PERIODO_MAX]
+    return "\n…\n".join([encabezado, *rescatados]) if rescatados else encabezado
+
+
+def _nota_paginas(inicio: int, fin: int, total: int) -> str:
+    rango = (
+        f"la página {inicio + 1}" if fin - inicio == 1 else f"las páginas {inicio + 1}–{fin}"
+    )
+    return (
+        f"Este bloque contiene {rango} de {total}; transcribe SOLO los movimientos "
+        "impresos en estas páginas; las claves del resumen (saldo_inicial, "
+        "saldo_final, total_cargos, total_abonos, periodo_inicio, periodo_fin) "
+        "déjalas en null si no están impresas en estas páginas. El documento "
+        "adjunto trae SOLO esas páginas: que no veas las demás es normal (las "
+        "leen otros bloques) y NO va en advertencias."
+    )
+
+
+def _contexto_encabezado(encabezado: str) -> str:
+    return (
+        "CONTEXTO DEL ENCABEZADO: texto de la página 1 del estado de cuenta, SOLO "
+        "para que sepas el periodo (el AÑO de las fechas), la cuenta y la moneda. "
+        "NO transcribas movimientos de este texto: la página 1 la lee otro bloque "
+        "y aquí saldrían DUPLICADOS. Transcribe únicamente los renglones del "
+        "documento PDF adjunto.\n<<<\n"
+        f"{encabezado}\n>>>"
+    )
+
+
+@dataclass
+class _PlanPdf:
+    """El PDF abierto con pypdf y lo que cada bloque necesita para pedirse."""
+
+    req: ConciliacionParseRequest
+    lector: object
+    paginas: int
+
+    @cached_property
+    def encabezado(self) -> str:
+        """Se extrae SOLO cuando un bloque sin la página 1 lo necesita (y una
+        sola vez): un PDF de ≤ N páginas que no se trunca ni lo calcula."""
+        return _texto_encabezado(self.lector)
+
+    def contenido(self, inicio: int, fin: int) -> list[dict]:
+        """Mensaje del bloque [inicio, fin). El PDF completo va BYTE-IDÉNTICO
+        a como iba siempre; un bloque parcial lleva sus páginas, la nota de
+        páginas y —si no trae la página 1— el contexto del encabezado."""
+        if inicio == 0 and fin == self.paginas:
+            return _contenido_completo(self.req)
+        contenido = [_doc_pdf(_bloque_b64(self.lector, inicio, fin))]
+        if inicio > 0 and self.encabezado:
+            contenido.append({"type": "text", "text": _contexto_encabezado(self.encabezado)})
+        prompt = f"{_prompt_pdf(self.req)} {_nota_paginas(inicio, fin, self.paginas)}"
+        contenido.append({"type": "text", "text": prompt})
+        return contenido
+
+
+def _leer_completo(req: ConciliacionParseRequest) -> tuple[list[dict], list[UsoIA]]:
+    """Camino de siempre: el PDF completo en UNA llamada (pypdf no pudo abrirlo)."""
+    resp = _llamar_claude(_client(), _contenido_completo(req))
+    uso = uso_ia_de(resp)
+    # Truncado por límite de salida: la conciliación exige el universo COMPLETO
+    # de movimientos — importar una lista parcial en silencio es peor que
+    # fallar con instrucciones claras.
+    if resp.stop_reason == "max_tokens":
+        raise ValueError(_MSG_TRUNCADO)
+    return [_datos_de_respuesta(resp)], [uso]
+
+
+def _leer_por_bloques(
+    req: ConciliacionParseRequest, lector
+) -> tuple[list[dict], list[UsoIA], int] | None:
+    """Lee el PDF por bloques de páginas EN PARALELO.
+
+    Devuelve el JSON de cada bloque EN ORDEN de páginas, el consumo de CADA
+    llamada (también el de las truncadas que se re-partieron: se cobraron) y
+    el total de páginas; None si pypdf no pudo cortar los bloques iniciales
+    (antes de gastar una sola llamada ⇒ el llamador lee como siempre).
+
+    Un bloque truncado por `max_tokens` se parte a la mitad (hasta 1 página);
+    una página sola truncada, cualquier excepción de un bloque o el tope total
+    tumban la lectura COMPLETA: jamás se importan parciales."""
+    s = get_settings()
+    paginas = len(lector.pages)
+    n = max(1, int(s.estado_cuenta_paginas_por_bloque))
+    plan = _PlanPdf(req=req, lector=lector, paginas=paginas)
+    try:
+        iniciales = [
+            (inicio, min(inicio + n, paginas), plan.contenido(inicio, min(inicio + n, paginas)))
+            for inicio in range(0, paginas, n)
+        ]
+    except Exception as e:  # noqa: BLE001 — pypdf no pudo escribir un bloque
+        logger.warning(
+            "pypdf no pudo partir el estado de cuenta PDF (%r): se lee completo en una llamada",
+            e,
+        )
+        return None
+
+    cliente = _client()
+    limite = time.monotonic() + _TOPE_TOTAL_PDF_S
+    pendientes: dict[Future, tuple[int, int]] = {}
+    leidos: dict[int, dict] = {}  # página inicial del bloque → JSON del bloque
+    usos: list[UsoIA] = []
+    pool = ThreadPoolExecutor(max_workers=_MAX_HILOS_PDF, thread_name_prefix="estado-cuenta-pdf")
+
+    def enviar(inicio: int, fin: int, contenido: list[dict]) -> None:
+        pendientes[pool.submit(_llamar_claude, cliente, contenido)] = (inicio, fin)
+
+    try:
+        for inicio, fin, contenido in iniciales:
+            enviar(inicio, fin, contenido)
+        while pendientes:
+            restante = limite - time.monotonic()
+            if restante <= 0:
+                raise ValueError(_MSG_TARDADO)
+            hechos, _ = wait(pendientes, timeout=restante, return_when=FIRST_COMPLETED)
+            for fut in hechos:
+                inicio, fin = pendientes.pop(fut)
+                resp = fut.result()  # la excepción de un bloque se propaga tal cual
+                usos.append(uso_ia_de(resp))
+                if resp.stop_reason != "max_tokens":
+                    leidos[inicio] = _datos_de_respuesta(resp)
+                    continue
+                # Truncado: la mitad de páginas cabe; una página sola que no
+                # cabe es el error de siempre (mejor fallar que importar a medias).
+                if fin - inicio <= 1:
+                    raise ValueError(_MSG_TRUNCADO)
+                medio = inicio + (fin - inicio + 1) // 2
+                logger.info(
+                    "Bloque %d–%d del estado de cuenta truncado: se re-parte en %d–%d y %d–%d",
+                    inicio + 1,
+                    fin,
+                    inicio + 1,
+                    medio,
+                    medio + 1,
+                    fin,
+                )
+                try:
+                    mitades = [
+                        (a, b, plan.contenido(a, b)) for a, b in ((inicio, medio), (medio, fin))
+                    ]
+                except Exception as e:  # noqa: BLE001 — sin re-partir no hay lectura completa
+                    logger.warning("pypdf no pudo re-partir el bloque truncado: %r", e)
+                    raise ValueError(_MSG_TRUNCADO) from e
+                for a, b, contenido in mitades:
+                    enviar(a, b, contenido)
+    except Exception:
+        # El API solo registra `ia_uso` con una respuesta 200: lo que ya se
+        # cobró en los bloques terminados de una lectura fallida se perdería
+        # sin rastro. Al menos queda en el log.
+        gastado = _sumar_usos(usos)
+        if gastado is not None:
+            logger.warning(
+                "Lectura del PDF por bloques fallida tras %d llamada(s) cobrada(s) "
+                "(%s: input=%d output=%d cache_w=%d cache_r=%d, sin registrar en ia_uso)",
+                len(usos),
+                gastado.modelo,
+                gastado.input_tokens,
+                gastado.output_tokens,
+                gastado.cache_creation_input_tokens,
+                gastado.cache_read_input_tokens,
+            )
+        raise
+    finally:
+        # Éxito: no queda nada pendiente. Error: se cancela lo que no arrancó y
+        # NO se espera a lo que sigue en vuelo (el error sale ya; esos
+        # resultados se tiran).
+        pool.shutdown(wait=False, cancel_futures=True)
+    return [leidos[k] for k in sorted(leidos)], usos, paginas
+
+
+def _fusionar(datos: list[dict]) -> dict:
+    """Un solo JSON a partir de los bloques, EN ORDEN.
+
+    Movimientos concatenados SIN deduplicar (dos cargos iguales el mismo día
+    son legítimos; cada página la leyó un solo bloque), advertencias de la IA
+    concatenadas y, en el resumen, el primer valor no nulo entre bloques."""
+    fusion: dict = {"movimientos": [], "advertencias": []}
+    for d in datos:
+        movs = d.get("movimientos")
+        if isinstance(movs, list):
+            fusion["movimientos"].extend(movs)
+        avisos = d.get("advertencias")
+        if isinstance(avisos, list):
+            fusion["advertencias"].extend(avisos)
+        elif avisos:
+            fusion["advertencias"].append(avisos)
+        for clave in _CLAVES_RESUMEN:
+            if fusion.get(clave) is None and d.get(clave) not in (None, ""):
+                fusion[clave] = d[clave]
+    return fusion
+
+
+def _sumar_usos(usos: list[UsoIA]) -> UsoIA | None:
+    """Consumo TOTAL de la lectura: la suma de todas las llamadas."""
+    if not usos:
+        return None
+    return UsoIA(
+        modelo=next((u.modelo for u in usos if u.modelo), ""),
+        input_tokens=sum(u.input_tokens for u in usos),
+        output_tokens=sum(u.output_tokens for u in usos),
+        cache_creation_input_tokens=sum(u.cache_creation_input_tokens for u in usos),
+        cache_read_input_tokens=sum(u.cache_read_input_tokens for u in usos),
+    )
+
+
+def _movimientos_de(data: dict) -> list[MovimientoParseado]:
     movimientos: list[MovimientoParseado] = []
     for raw in data.get("movimientos", []):
         if not isinstance(raw, dict):
@@ -729,18 +1035,36 @@ def _parse_pdf(req: ConciliacionParseRequest) -> ConciliacionParseResponse:
                 saldo_posterior=_to_float(raw.get("saldo_posterior")),
             )
         )
+    return movimientos
+
+
+def _parse_pdf(req: ConciliacionParseRequest) -> ConciliacionParseResponse:
+    s = get_settings()
+    lector = _abrir_pdf(req.file_base64)
+    leido = _leer_por_bloques(req, lector) if lector is not None else None
+    if leido is None:
+        datos, usos = _leer_completo(req)
+        paginas = 0
+    else:
+        datos, usos, paginas = leido
+
+    # Una sola fusión para 1 o K bloques: `_advertencias_pdf` corre sobre el
+    # resultado COMPLETO (la cadena de saldos y los totales cruzan bloques).
+    data = _fusionar(datos)
+    movimientos = _movimientos_de(data)
     advertencias = _advertencias_pdf(data, movimientos)
+    notas: list[str] = []
+    if len(datos) > 1:
+        notas.append(f"PDF de {paginas} páginas leído en {len(datos)} bloques.")
+    if advertencias:
+        notas.append("La IA leyó el PDF: revisa las advertencias antes de conciliar.")
     return ConciliacionParseResponse(
         movimientos=movimientos,
         total=len(movimientos),
         formato="pdf",
         modelo=s.anthropic_model,
-        uso_ia=uso,
-        notas=(
-            "La IA leyó el PDF: revisa las advertencias antes de conciliar."
-            if advertencias
-            else ""
-        ),
+        uso_ia=_sumar_usos(usos),
+        notas=" ".join(notas),
         advertencias=advertencias,
     )
 

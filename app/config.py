@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # Si la var ANTHROPIC_TIMEOUT_S existe en el entorno, debe ser >= 90.
     anthropic_timeout_s: float = 90.0
     anthropic_max_retries: int = 2
+    # Estado de cuenta en PDF (29-sep-2026): se parte en bloques de N páginas
+    # que se leen EN PARALELO (una llamada por bloque). Una sola llamada con el
+    # PDF completo truncaba la respuesta a 16k tokens en el Scotiabank mensual
+    # y tardaba más que los topes de la cadena (240 s / 270 s / 300 s).
+    # Un PDF de ≤ N páginas sigue yendo completo en UNA llamada, como antes.
+    estado_cuenta_paginas_por_bloque: int = 3
 
     # Token compartido pyservices <-> NestJS (header X-Internal-Token).
     internal_shared_token: str = ""
