@@ -170,7 +170,12 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   al inicio y una nota de gasto «= 3 taxis» daba un libro que Excel abre con
   error. Ojo: los DEMÁS libros (Libro Dinero, balances) todavía no tienen
   esta guarda — hoy no hay notas así en prod, pero el folio de la factura y
-  las notas son texto libre.
+  las notas son texto libre. Excepción (30-sep-2026): las dos columnas de
+  la etiqueta de factura de los BALANCES la importan (`from
+  app.services.caja_chica_xlsx import _texto_literal`): FACTURA VUELATOUR
+  de la hoja maestra y «factura vuelatour» de 'otros movimientos' (si solo
+  una la tuviera, el Balance general seguiría abriendo con error). La
+  «FACTURA VUELATOUR» del Libro Dinero sigue sin ella.
   Tests: `tests/test_caja_chica_xlsx.py`.
 - **Comisión del vendedor como GASTO** (28-sep-2026, API 0.0.39, invariante
   31 del API). Pedido: «¿cómo registro el pago de la comisión a Saab para que
@@ -201,6 +206,41 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `tests/test_comision_vendedor_notas.py` (textos viejos LITERALES sin
   bandera, textos nuevos con ella, individual, concepto y nota tal cual,
   rutas con el payload nuevo).
+- **FACTURA VUELATOUR en la hoja maestra de los balances** (30-sep-2026, API
+  0.0.45). Pedido de Marie para Ale, con la foto del «reporte horas XA-VGV»:
+  «se ocupa que diga el num de factura que nosotros emitimos del servicio …
+  y si puede salir en el reporte general también». Campo ADITIVO
+  `BalanceAvionVuelo.factura_vuelatour: str | None` que el API resuelve con
+  su cascada ÚNICA `etiquetasFacturaDeVuelos` (CFDI timbrado vivo →
+  facturas EMITIDAS vigentes «A-0424, A-0430» → `vuelo.factura_folio`
+  tecleado → etiqueta del estatus «Facturado» / «Factura elaborada y
+  enviada» → null): la MISMA etiqueta de «FACTURA VUELATOUR» del Libro
+  Dinero y de «factura vuelatour» de 'otros movimientos'. **Aquí no se
+  decide nada**: se pinta tal cual. Es del VUELO (multi-avión: todas sus
+  filas traen la misma; cancelados también). Validador LIBERAL
+  `_factura_liberal`: número ⇒ texto («1234»; 1234.0 ⇒ «1234»), texto en
+  blanco ⇒ None, booleano/objeto/NaN ⇒ None — nunca un 422 que tumbe el
+  balance por una columna informativa. Layout: una entrada más en `_COLS`
+  AL FINAL de STATUS DE COBROS («FACTURA\nVUELATOUR», formato None = texto)
+  ⇒ la hoja pasa de 46 a **47 columnas** (AU); el título combinado del grupo
+  crece solo (`AH1:AU1`), relleno verde del bloque, ancho 16 (`anchos`), fila
+  TOTALES vacía (no está en `_TOTAL_MAP`) y guarda «=» (`_texto_literal`
+  importado de `caja_chica_xlsx`; la misma guarda en la columna 10
+  «factura vuelatour» de 'otros movimientos'). Por ir al final **no se
+  corre nada**: `_COBRO1_COL` = 35 y `_COMISION_COL` = 29 siguen igual, y
+  lo demás se busca por atributo. Nota al pie `_NOTA_FACTURA_VUELATOUR` justo después
+  de la del ESTATUS DE COBRO (las notas de abajo bajan una fila). Sale en
+  el libro INDIVIDUAL y en «reporte horas FLOTA» del GENERAL (los dos usan
+  `_hoja_maestra`); 'cobranza' y el RESUMEN no cambian y 'otros
+  movimientos' solo cambia con un folio que empiece con «=» (ahora texto). **Payload viejo (sin la clave) ⇒ libro idéntico salvo la columna
+  vacía**: verificado celda a celda (valor, formato, relleno, fuente, borde,
+  comentario, merges, anchos, alturas) contra el código previo en las dos
+  hojas maestras — difieren solo AU2..AU(n), el merge del grupo y la nota
+  nueva; las demás pestañas de ambos libros, idénticas. Tests:
+  `tests/test_balance_factura_vuelatour.py` (layout e índices, valores tal
+  cual, vacío sin clave/null, TOTALES vacía, columnas 1..46 intactas con y
+  sin factura, multi-avión, «=A-12» como texto en la maestra y en 'otros
+  movimientos', nota al pie, validador, rutas con el JSON del API).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

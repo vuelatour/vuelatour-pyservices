@@ -845,6 +845,36 @@ class BalanceAvionVuelo(BaseModel):
     # ferries/tramos operativos no reparten) · 'unico' (un solo avión). El
     # API no emite otra fuente (nunca por horas).
     participacion_fuente: str | None = None
+    # --- FACTURA VUELATOUR (30-sep-2026, API 0.0.45; pedido de Marie: «que
+    # diga el num de factura que nosotros emitimos del servicio») ---
+    # Folio de la factura del SERVICIO emitida al cliente, YA resuelto por la
+    # cascada única del API `etiquetasFacturaDeVuelos` (CFDI timbrado vivo →
+    # facturas EMITIDAS vigentes «A-0424, A-0430» → `vuelo.factura_folio`
+    # tecleado → etiqueta del estatus «Facturado» / «Factura elaborada y
+    # enviada» → None). La misma etiqueta que «FACTURA VUELATOUR» del Libro
+    # Dinero y «factura vuelatour» de 'otros movimientos'. Es del VUELO: en un
+    # multi-avión todas sus filas traen la misma. None/ausente (API viejo) ⇒
+    # celda vacía.
+    factura_vuelatour: str | None = None
+
+    @field_validator("factura_vuelatour", mode="before")
+    @classmethod
+    def _factura_liberal(cls, v: Any) -> Any:
+        """Liberal con lo que manda NestJS: un folio NUMÉRICO (1234) se
+        vuelve texto, un texto en blanco es None y cualquier otra cosa
+        (booleano, objeto, NaN) es None — jamás un 422 que tumbe el balance
+        entero por una columna informativa."""
+        if v is None or isinstance(v, bool):
+            return None
+        if isinstance(v, int):
+            return str(v)
+        if isinstance(v, float):
+            if not math.isfinite(v):
+                return None
+            return str(int(v)) if v.is_integer() else str(v)
+        if isinstance(v, str):
+            return v.strip() or None
+        return None
 
 
 class BalanceAvionTotales(BaseModel):

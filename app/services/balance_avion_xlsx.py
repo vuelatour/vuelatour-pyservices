@@ -11,7 +11,9 @@ Ocho hojas en el orden del libro:
      matrículas por tramo; los gastos van al avión de su tramo. Costos SIN
      combustible; el TUA pagado es SOLO nota en OPERACIONES (no resta).
      STATUS DE COBROS trae los depósitos REALES (COBRO 1..4 y su Σ) y,
-     aparte, COBRADO AVIÓN = la parte prorrateada al avión.
+     aparte, COBRADO AVIÓN = la parte prorrateada al avión; cierra con
+     FACTURA VUELATOUR (folio de la factura del servicio que el API ya
+     resolvió, 30-sep-2026 — texto tal cual, vacía sin dato).
   2. cobranza — estatus de cobro por vuelo: venta avión prorrateada, total
      cotización (c/extras), depósitos reales, comisión y cuenta del banco.
   3. combustible — el gas del avión POR MES (litros y $/L), 26-ago-2026.
@@ -69,6 +71,7 @@ from app.schemas.reportes import (
     TcHoy,
 )
 from app.services._formato import _tc_txt
+from app.services.caja_chica_xlsx import _texto_literal
 from app.services.tabla_xlsx import sheet_title
 
 BRAND = "0F4C81"
@@ -225,6 +228,12 @@ _COLS: list[tuple[str, str, str | None, str | None]] = [
     ("STATUS DE COBROS", "COBRADO AVIÓN\nMXN (prorrateado) ****", "cobrado_mxn", MONEY),
     ("STATUS DE COBROS", "POR COBRAR\nMXN", "por_cobrar_mxn", MONEY),
     ("STATUS DE COBROS", "POR COBRAR\nUSD", "por_cobrar_usd", MONEY),
+    # 30-sep-2026 (API 0.0.45, pedido de Marie): folio de la factura del
+    # servicio emitida al cliente, YA resuelto por el API (misma etiqueta que
+    # el Libro Dinero y 'otros movimientos'). Texto tal cual; sin dato o con
+    # un API viejo, celda vacía. Va AL FINAL: no corre `_COBRO1_COL` ni
+    # `_COMISION_COL` (los demás índices se buscan por atributo).
+    ("STATUS DE COBROS", "FACTURA\nVUELATOUR", "factura_vuelatour", None),
 ]
 _COBRO1_COL = next(i for i, c in enumerate(_COLS, start=1) if c[1] == "COBRO 1\nFECHA")
 _COMISION_COL = next(
@@ -360,6 +369,18 @@ _MAESTRA_PAGO_VENDEDOR_REAL = (
 )
 
 
+# Nota al pie de la hoja maestra (individual y general) que explica la
+# columna FACTURA VUELATOUR (30-sep-2026, API 0.0.45). Se pinta SIEMPRE: la
+# columna existe aunque el API no mande el dato.
+_NOTA_FACTURA_VUELATOUR = (
+    "FACTURA VUELATOUR = folio de la factura del servicio emitida al cliente "
+    "(timbrada, registrada en Facturas emitidas o capturada en el vuelo); sin "
+    "folio registrado dice el estatus del vuelo («Facturado» / «Factura "
+    "elaborada y enviada») y vacía = sin factura. Es la factura del VUELO "
+    "completo: en un vuelo multi-avión todas sus filas traen la misma."
+)
+
+
 def _hay_pago_vendedor_real(om: BalanceHojaOtrosMovimientos | None) -> bool:
     """True solo si el API marcó la hoja con `hay_pago_vendedor_real: true`
     (None/False/ausente ⇒ leyendas de siempre)."""
@@ -437,6 +458,11 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
                 val = getattr(v, attr)
                 if fmt is None:
                     cell = ws.cell(row=row, column=i, value=_fecha(val) if attr == "fecha" else val)
+                    if attr == "factura_vuelatour":
+                        # El folio lo teclea la oficina: un «=A-12» sería
+                        # FÓRMULA para openpyxl (guarda de la caja chica,
+                        # 24-sep-2026) — se queda como TEXTO.
+                        _texto_literal(cell)
                     if attr == "estado" and val == "CANCELADO":
                         cell.font = Font(color=RED, size=9)
                     elif attr == "estado":
@@ -619,6 +645,7 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
         "métodos, y cuánto falta) está al frente en la hoja 'cobranza' — el "
         "bloque STATUS DE COBROS del final de esta hoja trae lo mismo en "
         "columnas.",
+        _NOTA_FACTURA_VUELATOUR,
         "El COMBUSTIBLE ya no va por vuelo (26-ago-2026): se controla por "
         "avión y por MES en la hoja 'combustible'"
         + (" del libro individual de cada avión" if general else "")
@@ -658,6 +685,8 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
     for i, (_g, _h, attr, _f) in enumerate(_COLS, start=1):
         if attr in ("cobrado_real_mxn", "cobrado_mxn"):
             anchos[i] = 17
+        elif attr == "factura_vuelatour":
+            anchos[i] = 16
     for i in range(1, n + 1):
         ws.column_dimensions[get_column_letter(i)].width = anchos.get(i, 13)
     ws.freeze_panes = "D3"
@@ -2036,6 +2065,12 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
             cell.border = _border
             if isinstance(v, (int, float)):
                 cell.number_format = MONEY
+            if i == 10:
+                # FACTURA: la MISMA etiqueta que la columna FACTURA
+                # VUELATOUR de la hoja maestra (30-sep-2026) — un folio
+                # tecleado «=A-12» se queda como TEXTO aquí también; si no,
+                # el Balance general entero abre con error por esta pestaña.
+                _texto_literal(cell)
         swatch = _hex(f.avion_color)
         if swatch:
             ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor=swatch)
