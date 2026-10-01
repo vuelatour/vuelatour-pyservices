@@ -22,6 +22,11 @@ from app.services.anthropic_vision import (
     leer_ticket_combustible,
     leer_ticket_gasto,
 )
+from app.services.ia_errores import (
+    detalle_error_claude,
+    detalle_error_claude_captura_manual,
+    registrar_error_claude,
+)
 
 logger = logging.getLogger("vision")
 
@@ -33,10 +38,10 @@ def tacometro(req: TacometroRequest) -> TacometroResponse:
     try:
         return leer_tacometro(req)
     except anthropic.APIStatusError as e:
-        logger.warning("Claude API error %s: %s", e.status_code, e.message)
+        registrar_error_claude(logger, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Claude no disponible ({e.status_code})",
+            detail=detalle_error_claude(e),
         ) from e
     except (ValueError, KeyError) as e:
         logger.warning("Respuesta de Claude no parseable: %s", e)
@@ -51,10 +56,10 @@ def gasto(req: GastoTicketRequest) -> GastoTicketResponse:
     try:
         return leer_ticket_gasto(req)
     except anthropic.APIStatusError as e:
-        logger.warning("Claude API error %s: %s", e.status_code, e.message)
+        registrar_error_claude(logger, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Claude no disponible ({e.status_code})",
+            detail=detalle_error_claude(e),
         ) from e
     except (ValueError, KeyError) as e:
         logger.warning("Respuesta de Claude no parseable: %s", e)
@@ -73,11 +78,11 @@ def constancia_fiscal(req: ConstanciaFiscalRequest) -> ConstanciaFiscalResponse:
     try:
         return leer_constancia_fiscal(req)
     except anthropic.APIStatusError as e:
-        logger.warning("Claude API error %s: %s", e.status_code, e.message)
+        registrar_error_claude(logger, e)
         return ConstanciaFiscalResponse(
             disponible=False,
             legible=False,
-            motivo=f"IA no disponible ({e.status_code}); captura los datos manualmente.",
+            motivo=detalle_error_claude_captura_manual(e),
         )
     except anthropic.APIError as e:
         # Timeout / red caída: mismo destino que un 5xx del modelo.
@@ -103,10 +108,10 @@ def combustible(req: GastoTicketRequest) -> CombustibleTicketResponse:
     try:
         return leer_ticket_combustible(req)
     except anthropic.APIStatusError as e:
-        logger.warning("Claude API error %s: %s", e.status_code, e.message)
+        registrar_error_claude(logger, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Claude no disponible ({e.status_code})",
+            detail=detalle_error_claude(e),
         ) from e
     except (ValueError, KeyError) as e:
         logger.warning("Respuesta de Claude no parseable: %s", e)
@@ -124,10 +129,10 @@ def inventario_item(req: InventarioItemRequest) -> InventarioItemResponse:
     try:
         return leer_producto_inventario(req)
     except anthropic.APIStatusError as e:
-        logger.warning("Claude API error %s: %s", e.status_code, e.message)
+        registrar_error_claude(logger, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Claude no disponible ({e.status_code})",
+            detail=detalle_error_claude(e),
         ) from e
     except (ValueError, KeyError) as e:
         logger.warning("Respuesta de Claude no parseable: %s", e)

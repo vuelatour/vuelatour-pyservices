@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.schemas.vencimiento import VencimientoExtraerRequest, VencimientoExtraerResponse
 from app.services._dominio import sistema_con_dominio
 from app.services.ia_usage import uso_ia_de
+from app.services.imagen_media_type import media_type_real
 from app.services.validaciones_ia import (
     confianza_calibrada,
     confianza_de,
@@ -88,7 +89,7 @@ def _source_block(req: VencimientoExtraerRequest) -> dict:
         "type": "image",
         "source": {
             "type": "base64",
-            "media_type": req.media_type,
+            "media_type": media_type_real(req.image_base64, req.media_type),
             "data": req.image_base64,
         },
     }

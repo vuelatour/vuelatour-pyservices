@@ -16,6 +16,7 @@ from app.services.combustible_masivo import (
     render_plantilla_combustible,
 )
 from app.services.gasto_vuelo import sugerir_vuelo_para_gasto
+from app.services.ia_errores import detalle_error_claude, registrar_error_claude
 
 logger = logging.getLogger("gastos")
 
@@ -31,10 +32,10 @@ def sugerir_vuelo(req: GastoVueloSugerirRequest) -> GastoVueloSugerirResponse:
     try:
         return sugerir_vuelo_para_gasto(req)
     except anthropic.APIStatusError as e:
-        logger.warning("Claude API error %s: %s", e.status_code, e.message)
+        registrar_error_claude(logger, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Claude no disponible ({e.status_code})",
+            detail=detalle_error_claude(e),
         ) from e
     except (ValueError, KeyError) as e:
         logger.warning("Sugerencia gasto→vuelo no parseable: %s", e)

@@ -20,6 +20,7 @@ from app.services.conciliacion_abonos import (
     sugerir_abonos,
 )
 from app.services.estado_cuenta import parsear_estado_cuenta, sugerir_conciliacion
+from app.services.ia_errores import detalle_error_claude, registrar_error_claude
 
 logger = logging.getLogger("conciliacion")
 
@@ -41,10 +42,10 @@ def parse(req: ConciliacionParseRequest) -> ConciliacionParseResponse:
             detail="Falta pandas/openpyxl en el servidor para leer CSV/Excel",
         ) from e
     except anthropic.APIStatusError as e:
-        logger.warning("Claude API error %s: %s", e.status_code, e.message)
+        registrar_error_claude(logger, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Claude no disponible ({e.status_code})",
+            detail=detalle_error_claude(e),
         ) from e
     except (ValueError, KeyError) as e:
         logger.warning("Estado de cuenta no parseable: %s", e)
@@ -59,10 +60,10 @@ def sugerir(req: ConciliacionSugerirRequest) -> ConciliacionSugerirResponse:
     try:
         return sugerir_conciliacion(req)
     except anthropic.APIStatusError as e:
-        logger.warning("Claude API error %s: %s", e.status_code, e.message)
+        registrar_error_claude(logger, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Claude no disponible ({e.status_code})",
+            detail=detalle_error_claude(e),
         ) from e
     except (ValueError, KeyError) as e:
         logger.warning("Sugerencia de conciliación no parseable: %s", e)
@@ -106,10 +107,10 @@ def sugerir_abonos_endpoint(
             ),
         ) from e
     except anthropic.APIStatusError as e:
-        logger.warning("Claude API error %s: %s", e.status_code, e.message)
+        registrar_error_claude(logger, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Claude no disponible ({e.status_code})",
+            detail=detalle_error_claude(e),
         ) from e
     except anthropic.APIConnectionError as e:
         # Incluye APITimeoutError: sin esto un timeout salía como 500.

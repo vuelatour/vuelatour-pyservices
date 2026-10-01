@@ -20,6 +20,7 @@ from app.schemas.vision import (
 )
 from app.services._dominio import MATRICULAS_FLOTA, sistema_con_dominio
 from app.services.ia_usage import uso_ia_de
+from app.services.imagen_media_type import media_type_real
 from app.services.validaciones_ia import (
     confianza_calibrada,
     confianza_de,
@@ -95,7 +96,7 @@ def _image_block(req: TacometroRequest | GastoTicketRequest | ImagenFuente) -> d
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": req.media_type,
+                "media_type": media_type_real(req.image_base64, req.media_type),
                 "data": req.image_base64,
             },
         }
@@ -672,7 +673,7 @@ def _constancia_blocks(req: ConstanciaFiscalRequest) -> list[dict]:
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": req.media_type,
+                "media_type": media_type_real(req.image_base64, req.media_type),
                 "data": req.image_base64,
             },
         }

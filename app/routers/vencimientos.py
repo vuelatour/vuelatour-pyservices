@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.schemas.vencimiento import VencimientoExtraerRequest, VencimientoExtraerResponse
 from app.security import require_internal_token
+from app.services.ia_errores import detalle_error_claude, registrar_error_claude
 from app.services.vencimiento_extract import extraer_vencimiento
 
 logger = logging.getLogger("vencimientos")
@@ -19,10 +20,10 @@ def extraer(req: VencimientoExtraerRequest) -> VencimientoExtraerResponse:
     try:
         return extraer_vencimiento(req)
     except anthropic.APIStatusError as e:
-        logger.warning("Claude API error %s: %s", e.status_code, e.message)
+        registrar_error_claude(logger, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Claude no disponible ({e.status_code})",
+            detail=detalle_error_claude(e),
         ) from e
     except (ValueError, KeyError) as e:
         logger.warning("Respuesta de Claude no parseable: %s", e)

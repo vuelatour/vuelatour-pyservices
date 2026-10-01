@@ -599,7 +599,8 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   "" y se parte normal (AES-256 probado). Riesgos abiertos: 4 llamadas
   simultáneas de `max_tokens` 16384 pueden toparse con el rate limit de
   salida de la cuenta (el SDK reintenta 429 dos veces; si no alcanza, 502
-  «Claude no disponible (429)»); con > 12 páginas hacen falta 2 tandas y
+  «La IA está saturada (límite de peticiones): espera un minuto y
+  reintenta», ver «Errores de Claude» en «IA»); con > 12 páginas hacen falta 2 tandas y
   un bloque truncado se re-lee completo antes de partirse, así que el tope
   de 260 s puede cortar; los hilos en vuelo siguen (y cobran) tras un error
   o el tope, y el SDK reintenta también los timeouts.
@@ -750,6 +751,43 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   magnitud; conservar ese contrato.
 - Todo punto de IA degrada a captura manual: los errores devuelven
   `legible=false`/`disponible=false`, nunca 500 por fallo del modelo.
+- **Errores de Claude → texto para el operador** (1-oct-2026). Caso real:
+  un ADMIN vio «IA no disponible: Claude no disponible (400). Captura a
+  mano.» y la oficina creyó que «Claude no está disponible»; era el SALDO de
+  créditos agotado, que Anthropic responde como **400
+  `invalid_request_error`** («Your credit balance is too low…»). Fuente
+  ÚNICA `app/services/ia_errores.py` (pura salvo el log):
+  `detalle_error_claude(e)` decide primero por el TEXTO del error
+  (`error.message` del cuerpo; sin él, `e.message`; sin distinguir
+  mayúsculas, la primera regla de `_REGLAS_POR_TEXTO` gana: saldo, límite
+  de gasto «usage limits», pixeles «image dimensions», tipo mal etiquetado
+  «image appears to be», peso, formato, foto ilegible, demasiadas fotos,
+  documento largo «prompt is too long»/«context limit») y después por el
+  STATUS (401/403 llave, 404 + «model», 413 peso, 429 saturada, TODO 5xx
+  caída); lo demás cae en «Claude no disponible (<status>): <mensaje>» sin
+  el prefijo «Error code: N - » del SDK y jamás un dict/lista/HTML (queda
+  «Claude no disponible (400)»). **Contrato de los textos**: SIN punto final
+  y SIN «captura a mano» — quien los muestra arma «IA no disponible:
+  <texto>. Captura a mano…» (app: `gasto_screen`, `admin_factura_screen`,
+  `inventory_item_form_screen`); con punto salía «..». La constancia
+  fiscal (degrada a 200, no es 502) usa
+  `detalle_error_claude_captura_manual` («…; captura los datos
+  manualmente»). `registrar_error_claude(logger, e)` deja status, tipo,
+  mensaje (≤ 500) y `request_id`; nunca la llave ni encabezados. **Todo
+  `except anthropic.APIStatusError` nuevo en `app/routers` usa los dos**:
+  `test_todos_los_routers_usan_la_fuente_unica` (AST) lo exige y cuenta
+  EXACTAMENTE 11 manejadores — agregar uno obliga a subir ese número.
+  Además el bloque `image` ya no confía en el `media_type` del cliente:
+  `app/services/imagen_media_type.media_type_real` lo deduce por bytes
+  mágicos (JPEG/PNG/GIF/WEBP; si no reconoce, respeta el declarado) en
+  `anthropic_vision._image_block`, `_constancia_blocks` y
+  `vencimiento_extract._source_block` — una captura PNG etiquetada JPEG
+  daba 400. Pendiente en el API (no aquí): solo `readGastoTicket`,
+  `readConstanciaFiscal` e inventario reenvían el `detail`; tacómetro,
+  combustible, vencimientos y las sugerencias de conciliación lo tiran, y
+  `/conciliacion/parse` y compras lo muestran envuelto en el JSON. Tests:
+  `tests/test_ia_errores.py` (clases reales del SDK; los casos clave, armados
+  por el cliente REAL sobre `httpx.MockTransport`).
 - **Contexto de dominio compartido** (`app/services/_dominio.py`,
   15-sep-2026): flota, aeropuertos IATA, alias de proveedores y leyendas del
   banco (ASUR, ASA, AFAC, MERPAGO*, «SEL TRASPASO ENTRE CUENTAS»…), IVA
