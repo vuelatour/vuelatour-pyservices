@@ -241,6 +241,36 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   cual, vacío sin clave/null, TOTALES vacía, columnas 1..46 intactas con y
   sin factura, multi-avión, «=A-12» como texto en la maestra y en 'otros
   movimientos', nota al pie, validador, rutas con el JSON del API).
+- **EXTENSIÓN DE HORARIO pagada = traslado, como el TUA** (1-oct-2026, API
+  0.0.47). Pedido de Ale sobre el #192 (N4142R, CUN-CTM-CUN): «me se está
+  poniendo la extensión de servicios como Operación y no va en ese
+  apartado» — factura de Chetumal «AE-Extension y/o antelacion de horario»
+  $4,549.06 (mismo caso #190 XB-PEV $4,549.04; sin IA, #314 «extensión de
+  servicio inspector» $500). **La regla y los montos viven en el API**
+  (`desgloseGastoPartes`/`partesDeGasto`): la saca de OPERACIONES/OTROS y
+  arma la nota de la celda («Extensión de horario (IVA incluido) $X**» en
+  `op_detalle`). Aquí llegan dos llaves ADITIVAS que el API SOLO manda con
+  monto ≠ 0: `BalanceAvionVuelo.extension_pagada_mxn` (informativa, no se
+  pinta en ninguna columna) y `BalanceAvionTotales.extension_pagada_mxn`
+  (Σ; también en el `consolidado` del general). Con ellas, en
+  `_hoja_maestra` (libro individual y «reporte horas FLOTA»): (1) renglón
+  «Extensión de horario pagada del periodo (solo nota en OPERACIONES, no
+  resta en este libro):» justo después del del TUA pagado, mismo formato
+  (A:H combinadas, monto en I, «MXN» en J), solo con el total ≠ 0; (2) pie
+  ** ampliado `_NOTA_TRASLADOS_EXTENSION` y nota del combustible «(ni el
+  TUA pagado ni la extensión de horario restan, ver **)» … «(sin gas, TUA
+  ni extensión de horario)» cuando ALGUNA fila o los totales traen la llave
+  ≠ 0 (`_hay_extension_pagada`; None o 0 cuentan como ausente). 'otros
+  movimientos' y el Libro Dinero NO cambian: el egreso «extensión de
+  horario pagada» llega armado en `concepto_egreso`/`nota_egreso`. **Sin la
+  llave ⇒ libro byte-idéntico** (todos los miembros del .xlsx salvo
+  `docProps/core.xml`, también con la llave en null/0), congelado con
+  `_firma_hoja` de las dos hojas maestras calculada con el código previo
+  (HEAD ef4d1f4). Las notas de 'Gastos Indirectos'/'repartidos a aviones'
+  («El TUA pagado NO va aquí») no se tocaron: la extensión solo existe en
+  gastos CON vuelo. Tests: `tests/test_balance_extension_horario.py`
+  (montos reales, orden tras el TUA, sin TUA, columnas idénticas con y sin
+  llave, pie en individual y general, skew fila/totales, rutas).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

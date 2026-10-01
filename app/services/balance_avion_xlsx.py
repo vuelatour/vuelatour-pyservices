@@ -9,7 +9,9 @@ Ocho hojas en el orden del libro:
      general; la columna COMISIÓN VENDEDOR se conserva por layout pero va
      vacía). Vuelos MULTI-AVIÓN (regla B): la venta se reparte entre las
      matrículas por tramo; los gastos van al avión de su tramo. Costos SIN
-     combustible; el TUA pagado es SOLO nota en OPERACIONES (no resta).
+     combustible; el TUA pagado es SOLO nota en OPERACIONES (no resta), y
+     desde el 1-oct-2026 (API 0.0.47) la extensión y/o antelación de
+     horario pagada al aeropuerto también (`extension_pagada_mxn`).
      STATUS DE COBROS trae los depósitos REALES (COBRO 1..4 y su Σ) y,
      aparte, COBRADO AVIÓN = la parte prorrateada al avión; cierra con
      FACTURA VUELATOUR (folio de la factura del servicio que el API ya
@@ -381,6 +383,64 @@ _NOTA_FACTURA_VUELATOUR = (
 )
 
 
+# Notas al pie de la hoja maestra sobre los TRASLADOS al pasajero (pie **).
+# La versión «de siempre» habla solo del TUA; la ampliada (1-oct-2026, API
+# 0.0.47, pedido de Ale sobre el #192: la extensión de horario de Chetumal
+# caía en OPERACIONES) suma la extensión y/o antelación de horario y se pinta
+# SOLO cuando alguna fila o los totales traen `extension_pagada_mxn` ≠ 0
+# (`_hay_extension_pagada`). Sin la llave, el libro es byte-idéntico.
+_NOTA_COMBUSTIBLE_FILAS_SIN_GAS = (
+    "El COMBUSTIBLE ya no va por vuelo (26-ago-2026): se controla por "
+    "avión y por MES en la hoja 'combustible'"
+)
+_NOTA_COMBUSTIBLE_COLA_TUA = (
+    " (litros y $/L incluidos) y "
+    "resta una sola vez en la hoja 'balance'. Por eso COSTO TOTAL, COSTO "
+    "X HORA, REMANENTE y GANANCIA de las filas van SIN combustible (y el "
+    "TUA pagado tampoco resta, ver **): la utilidad real del periodo se "
+    "lee en la hoja 'balance', no en la fila. IVA PAGADO y DIF. IVA "
+    "también derivan solo de los costos de la fila (sin gas ni TUA)."
+)
+_NOTA_COMBUSTIBLE_COLA_EXTENSION = (
+    " (litros y $/L incluidos) y "
+    "resta una sola vez en la hoja 'balance'. Por eso COSTO TOTAL, COSTO "
+    "X HORA, REMANENTE y GANANCIA de las filas van SIN combustible (ni el "
+    "TUA pagado ni la extensión de horario restan, ver **): la utilidad "
+    "real del periodo se lee en la hoja 'balance', no en la fila. IVA "
+    "PAGADO y DIF. IVA también derivan solo de los costos de la fila (sin "
+    "gas, TUA ni extensión de horario)."
+)
+_NOTA_TRASLADOS_TUA = (
+    "** El TUA pagado al aeropuerto NO es costo del avión ni resta en "
+    "ningún lado de este libro: queda solo como nota en la celda "
+    "OPERACIONES ('TUA $x**'); cobro y pago del TUA viven en 'otros "
+    "movimientos' del Balance general. Los servicios FBO sí son costo "
+    "(columna OTROS)."
+)
+_NOTA_TRASLADOS_EXTENSION = (
+    "** TUA y extensión de horario (extensión y/o antelación de horario del "
+    "aeropuerto) son traslados al pasajero: NO son costo del avión ni "
+    "restan en ningún lado de este libro; quedan solo como nota en la celda "
+    "OPERACIONES ('TUA $x**', 'Extensión de horario (IVA incluido) $x**'); "
+    "lo cobrado y lo pagado viven en 'otros movimientos' del Balance "
+    "general. Los servicios FBO sí son costo (columna OTROS)."
+)
+
+
+def _monto_no_cero(x: float | None) -> bool:
+    return x is not None and x != 0
+
+
+def _hay_extension_pagada(req: BalanceAvionRequest) -> bool:
+    """True si alguna fila o los totales traen `extension_pagada_mxn` ≠ 0
+    (API 0.0.47). El API solo manda la llave con monto ≠ 0; un None o un 0
+    explícitos cuentan como «no vino» — mismo criterio que el renglón del
+    TUA pagado en el bloque de totales."""
+    return _monto_no_cero(req.totales.extension_pagada_mxn) or any(
+        _monto_no_cero(v.extension_pagada_mxn) for v in req.vuelos
+    )
+
+
 def _hay_pago_vendedor_real(om: BalanceHojaOtrosMovimientos | None) -> bool:
     """True solo si el API marcó la hoja con `hay_pago_vendedor_real: true`
     (None/False/ausente ⇒ leyendas de siempre)."""
@@ -608,7 +668,24 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
         _num(ws, row, 9, tua, MONEY, bold=True)
         ws.cell(row=row, column=10, value="MXN").font = Font(bold=True, size=9)
         row += 1
+    # 3) Extensión y/o antelación de horario pagada al aeropuerto (1-oct-2026,
+    #    API 0.0.47): traslado al cliente como el TUA — solo nota en
+    #    OPERACIONES, no resta aquí. El API manda la llave solo con suma ≠ 0;
+    #    sin ella no se pinta nada (libro byte-idéntico).
+    extension = t.extension_pagada_mxn
+    if _monto_no_cero(extension):
+        ws.cell(
+            row=row,
+            column=1,
+            value="Extensión de horario pagada del periodo (solo nota en "
+            "OPERACIONES, no resta en este libro):",
+        ).font = Font(bold=True, size=9)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
+        _num(ws, row, 9, extension, MONEY, bold=True)
+        ws.cell(row=row, column=10, value="MXN").font = Font(bold=True, size=9)
+        row += 1
     row += 1
+    hay_extension = _hay_extension_pagada(req)
 
     # Notas al pie.
     for nota in (
@@ -646,20 +723,14 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
         "bloque STATUS DE COBROS del final de esta hoja trae lo mismo en "
         "columnas.",
         _NOTA_FACTURA_VUELATOUR,
-        "El COMBUSTIBLE ya no va por vuelo (26-ago-2026): se controla por "
-        "avión y por MES en la hoja 'combustible'"
+        _NOTA_COMBUSTIBLE_FILAS_SIN_GAS
         + (" del libro individual de cada avión" if general else "")
-        + " (litros y $/L incluidos) y "
-        "resta una sola vez en la hoja 'balance'. Por eso COSTO TOTAL, COSTO "
-        "X HORA, REMANENTE y GANANCIA de las filas van SIN combustible (y el "
-        "TUA pagado tampoco resta, ver **): la utilidad real del periodo se "
-        "lee en la hoja 'balance', no en la fila. IVA PAGADO y DIF. IVA "
-        "también derivan solo de los costos de la fila (sin gas ni TUA).",
-        "** El TUA pagado al aeropuerto NO es costo del avión ni resta en "
-        "ningún lado de este libro: queda solo como nota en la celda "
-        "OPERACIONES ('TUA $x**'); cobro y pago del TUA viven en 'otros "
-        "movimientos' del Balance general. Los servicios FBO sí son costo "
-        "(columna OTROS).",
+        + (
+            _NOTA_COMBUSTIBLE_COLA_EXTENSION
+            if hay_extension
+            else _NOTA_COMBUSTIBLE_COLA_TUA
+        ),
+        _NOTA_TRASLADOS_EXTENSION if hay_extension else _NOTA_TRASLADOS_TUA,
         "*** Filas 'COMPARTIDO' / con porcentaje en la RUTA (vuelo "
         "MULTI-AVIÓN, regla 28-ago-2026): la fila trae la parte "
         "proporcional de la VENTA del avión (repartida entre las matrículas "

@@ -876,6 +876,17 @@ class BalanceAvionVuelo(BaseModel):
             return v.strip() or None
         return None
 
+    # --- EXTENSIÓN DE HORARIO pagada (1-oct-2026, API 0.0.47; pedido de Ale
+    # sobre el #192 CUN-CTM-CUN: «me se está poniendo la extensión de
+    # servicios como Operación y no va en ese apartado») ---
+    # «Extensión y/o antelación de horario» pagada al aeropuerto, en MXN:
+    # traslado al cliente igual que el TUA, SOLO informativo. La nota de la
+    # celda OPERACIONES ya llega armada en `op_detalle` («Extensión de
+    # horario (IVA incluido) $X**») y no suma en ninguna columna. El API la
+    # manda AL FINAL de la fila y solo cuando es ≠ 0: sin ella (o con un API
+    # ≤ 0.0.46) el libro es byte-idéntico al de siempre.
+    extension_pagada_mxn: float | None = None
+
 
 class BalanceAvionTotales(BaseModel):
     """Fila TOTALES de la hoja maestra: sumas y promedios YA calculados."""
@@ -912,6 +923,10 @@ class BalanceAvionTotales(BaseModel):
     total_cotizacion_mxn: float | None = None  # total completo (c/extras)
     tua_pagado_mxn: float | None = None  # solo nota; no resta en el libro
     comision_banco_mxn: float | None = None  # Σ comisiones retenidas por bancos
+    # Σ extension_pagada_mxn de las filas (1-oct-2026, API 0.0.47): solo nota,
+    # como el TUA. Viaja solo con suma ≠ 0 (libro de cada avión y
+    # `consolidado` del general); sin la llave no se pinta nada nuevo.
+    extension_pagada_mxn: float | None = None
 
 
 class BalanceAvionGastoFila(BaseModel):
