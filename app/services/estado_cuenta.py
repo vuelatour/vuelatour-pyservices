@@ -26,6 +26,7 @@ from app.schemas.conciliacion import (
 from app.schemas.uso_ia import UsoIA
 from app.services._dominio import TC_USD_MXN_MAX, TC_USD_MXN_MIN, sistema_con_dominio
 from app.services.ia_usage import uso_ia_de
+from app.services.modelo_ia import modelo_actual
 from app.services.validaciones_ia import (
     confianza_de,
     dias_entre,
@@ -734,14 +735,18 @@ def _contenido_completo(req: ConciliacionParseRequest) -> list[dict]:
     return [_doc_pdf(req.file_base64), {"type": "text", "text": _prompt_pdf(req)}]
 
 
-def _llamar_claude(cliente, contenido: list[dict]):
+def _llamar_claude(cliente, contenido: list[dict], modelo: str):
     """UNA llamada de lectura. Mismos parámetros para el PDF completo y para
-    cada bloque: solo cambia el contenido del mensaje del usuario."""
-    s = get_settings()
+    cada bloque: solo cambia el contenido del mensaje del usuario.
+
+    `modelo` llega YA resuelto (`modelo_actual()` en el hilo de la petición):
+    los bloques corren en hilos de un ThreadPoolExecutor, que NO heredan el
+    ContextVar del modelo de la petición (2-oct-2026) — leerlo aquí daría el
+    del servidor aunque Configuración haya elegido otro."""
     # Timeout propio: generar cientos de movimientos tarda más que el timeout
     # global (90s) — la importación es manual y el operador espera.
     return cliente.with_options(timeout=240.0).messages.create(
-        model=s.anthropic_model,
+        model=modelo,
         # Un estado de cuenta mensual trae cientos de movimientos: con 4096 la
         # respuesta se TRUNCABA a media estructura y el json.loads reventaba
         # con un error críptico ("Expecting ',' delimiter...").
@@ -869,7 +874,7 @@ class _PlanPdf:
 
 def _leer_completo(req: ConciliacionParseRequest) -> tuple[list[dict], list[UsoIA]]:
     """Camino de siempre: el PDF completo en UNA llamada (pypdf no pudo abrirlo)."""
-    resp = _llamar_claude(_client(), _contenido_completo(req))
+    resp = _llamar_claude(_client(), _contenido_completo(req), modelo_actual())
     uso = uso_ia_de(resp)
     # Truncado por límite de salida: la conciliación exige el universo COMPLETO
     # de movimientos — importar una lista parcial en silencio es peor que
@@ -909,6 +914,9 @@ def _leer_por_bloques(
         return None
 
     cliente = _client()
+    # Resuelto AQUÍ, en el hilo de la petición: los hilos del pool no ven el
+    # ContextVar. Todos los bloques (y sus re-partos) usan el mismo modelo.
+    modelo = modelo_actual()
     limite = time.monotonic() + _TOPE_TOTAL_PDF_S
     pendientes: dict[Future, tuple[int, int]] = {}
     leidos: dict[int, dict] = {}  # página inicial del bloque → JSON del bloque
@@ -916,7 +924,7 @@ def _leer_por_bloques(
     pool = ThreadPoolExecutor(max_workers=_MAX_HILOS_PDF, thread_name_prefix="estado-cuenta-pdf")
 
     def enviar(inicio: int, fin: int, contenido: list[dict]) -> None:
-        pendientes[pool.submit(_llamar_claude, cliente, contenido)] = (inicio, fin)
+        pendientes[pool.submit(_llamar_claude, cliente, contenido, modelo)] = (inicio, fin)
 
     try:
         for inicio, fin, contenido in iniciales:
@@ -1039,7 +1047,6 @@ def _movimientos_de(data: dict) -> list[MovimientoParseado]:
 
 
 def _parse_pdf(req: ConciliacionParseRequest) -> ConciliacionParseResponse:
-    s = get_settings()
     lector = _abrir_pdf(req.file_base64)
     leido = _leer_por_bloques(req, lector) if lector is not None else None
     if leido is None:
@@ -1062,7 +1069,7 @@ def _parse_pdf(req: ConciliacionParseRequest) -> ConciliacionParseResponse:
         movimientos=movimientos,
         total=len(movimientos),
         formato="pdf",
-        modelo=s.anthropic_model,
+        modelo=modelo_actual(),
         uso_ia=_sumar_usos(usos),
         notas=" ".join(notas),
         advertencias=advertencias,
@@ -1360,7 +1367,6 @@ def _alternativas(
 
 
 def sugerir_conciliacion(req: ConciliacionSugerirRequest) -> ConciliacionSugerirResponse:
-    s = get_settings()
     ids_validos = {c.id for c in req.candidatos}
 
     if not req.candidatos:
@@ -1371,7 +1377,7 @@ def sugerir_conciliacion(req: ConciliacionSugerirRequest) -> ConciliacionSugerir
             motivo_sin_match=(
                 "Sin candidatos: ningún gasto sin conciliar cerca en fecha, monto y moneda."
             ),
-            modelo=s.anthropic_model,
+            modelo=modelo_actual(),
         )
 
     # La terminación de tarjeta del movimiento: la que ya dedujo el API o la
@@ -1390,7 +1396,7 @@ def sugerir_conciliacion(req: ConciliacionSugerirRequest) -> ConciliacionSugerir
         ensure_ascii=False,
     )
     resp = _client().messages.create(
-        model=s.anthropic_model,
+        model=modelo_actual(),
         max_tokens=900,
         system=sistema_con_dominio(_SUGERIR_SYSTEM),
         messages=[
@@ -1444,7 +1450,7 @@ def sugerir_conciliacion(req: ConciliacionSugerirRequest) -> ConciliacionSugerir
         gasto_id_sugerido=sugerido,
         confianza=confianza,
         razon=razon,
-        modelo=s.anthropic_model,
+        modelo=modelo_actual(),
         uso_ia=uso,
         evidencias=evidencias[:8],
         alternativas=_alternativas(data, ids_validos, sugerido),

@@ -746,9 +746,43 @@ Reglas de este microservicio (FastAPI, Python 3.12).
 
 ## IA
 
-- Visión (tacómetro/tickets) usa el modelo de `ANTHROPIC_MODEL`. La lectura
-  de tacómetro recibe `ultimo` (último taco del avión) como ancla de
+- Visión (tacómetro/tickets) usa el modelo de `modelo_actual()` (ver la
+  entrada siguiente; sin elección en el panel = `ANTHROPIC_MODEL`). La
+  lectura de tacómetro recibe `ultimo` (último taco del avión) como ancla de
   magnitud; conservar ese contrato.
+- **Modelo de Claude elegible desde Configuración** (2-oct-2026, API
+  0.0.51). Pedido: «dejar una opción en la configuración para adaptar el
+  modelo que quieran utilizar, aunque ahorita dejaremos por default el que
+  estamos usando». La elección vive en el API (`configuracion_sistema`,
+  clave `ia_modelo`); aquí NO se guarda nada. El API manda el id en el
+  header **`X-IA-Modelo`** SOLO cuando hay uno configurado.
+  `require_internal_token` (`app/security.py`) lo deja en el ContextVar
+  `modelo_ia_peticion` de `app/services/modelo_ia.py` en TODA petición
+  (sin header ⇒ None: jamás queda el de la anterior) y **`modelo_actual()`
+  es la ÚNICA fuente** del `model=` de cada `messages.create` y del campo
+  `modelo` de las respuestas (`uso_ia` sigue saliendo de `resp.model`).
+  Header ausente, vacío o que no cumple `^claude-[a-z0-9.-]{3,80}$`
+  (`PATRON_ID_MODELO`, la MISMA regex del API y del panel; `fullmatch`,
+  espacios a los lados se recortan) ⇒ `ANTHROPIC_MODEL` + warning en el log
+  `security` (solo con token válido). API viejo sin header ⇒ todo como
+  antes. Aquí no hay catálogo ni tarifas: un id válido que Anthropic no
+  conoce da 404 y `TEXTO_MODELO_INEXISTENTE` dice dónde se cambia. Dos
+  trampas congeladas en `tests/test_modelo_ia.py`: (1) la dependencia es
+  **`async def` a propósito** — FastAPI corre una dependencia `def` en un
+  hilo con COPIA del contexto y el ContextVar fijado ahí se pierde (todo
+  usaría el del servidor); (2) **un `ThreadPoolExecutor` NO hereda el
+  ContextVar**: quien reparta llamadas en hilos propios resuelve
+  `modelo_actual()` ANTES y pasa el id (`estado_cuenta._leer_por_bloques` →
+  `_llamar_claude(cliente, contenido, modelo)`; test en
+  `tests/test_estado_cuenta_pdf_bloques.py`). Las pruebas de AISLAMIENTO
+  entre peticiones van con `httpx.ASGITransport` (seguidas en la MISMA
+  tarea; simultáneas con `asyncio.gather` en un loop), nunca con
+  `TestClient` sin `with`: abre hilo, loop y contexto nuevos por petición y
+  una fuga del modelo jamás se vería. Ruta `GET /ia/modelo`
+  (internal token) → `{default_servidor, efectivo}`: el API la consulta
+  best-effort para pintar «default del servidor» en Configuración.
+  Llamada nueva a Claude ⇒ `model=modelo_actual()`, nunca
+  `get_settings().anthropic_model`.
 - Todo punto de IA degrada a captura manual: los errores devuelven
   `legible=false`/`disponible=false`, nunca 500 por fallo del modelo.
 - **Errores de Claude → texto para el operador** (1-oct-2026). Caso real:

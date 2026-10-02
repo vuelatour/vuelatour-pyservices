@@ -9,7 +9,6 @@ acota la confianza que el modelo puede reclamar.
 import json
 import re
 
-from app.config import get_settings
 from app.schemas.gastos import (
     GastoParaMatch,
     GastoVueloSugerirRequest,
@@ -19,6 +18,7 @@ from app.schemas.gastos import (
 from app.services._dominio import AEROPUERTOS, sistema_con_dominio
 from app.services.estado_cuenta import _client, _extract_json
 from app.services.ia_usage import uso_ia_de
+from app.services.modelo_ia import modelo_actual
 from app.services.validaciones_ia import (
     confianza_de,
     dias_entre_cancun,
@@ -138,7 +138,6 @@ def _evidencias_deterministas(
 def sugerir_vuelo_para_gasto(
     req: GastoVueloSugerirRequest,
 ) -> GastoVueloSugerirResponse:
-    s = get_settings()
 
     if not req.candidatos:
         return GastoVueloSugerirResponse(
@@ -146,7 +145,7 @@ def sugerir_vuelo_para_gasto(
             confianza=0.0,
             razon="Sin vuelos del piloto en fechas cercanas.",
             motivo_sin_match="El piloto que capturó el gasto no tiene vuelos en esas fechas.",
-            modelo=s.anthropic_model,
+            modelo=modelo_actual(),
         )
 
     ids_validos = {c.vuelo_id for c in req.candidatos}
@@ -158,7 +157,7 @@ def sugerir_vuelo_para_gasto(
         ensure_ascii=False,
     )
     resp = _client().messages.create(
-        model=s.anthropic_model,
+        model=modelo_actual(),
         max_tokens=800,
         system=sistema_con_dominio(_SYSTEM),
         messages=[
@@ -206,7 +205,7 @@ def sugerir_vuelo_para_gasto(
         vuelo_id_sugerido=sugerido,
         confianza=confianza,
         razon=razon,
-        modelo=s.anthropic_model,
+        modelo=modelo_actual(),
         uso_ia=uso,
         evidencias=evidencias[:8],
         motivo_sin_match=motivo if elegido is None else None,

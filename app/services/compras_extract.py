@@ -7,6 +7,7 @@ from app.config import get_settings
 from app.schemas.compras import CompraExtraerRequest, CompraExtraerResponse, CompraLinea
 from app.services._dominio import sistema_con_dominio
 from app.services.ia_usage import uso_ia_de
+from app.services.modelo_ia import modelo_actual
 from app.services.validaciones_ia import (
     confianza_calibrada,
     confianza_de,
@@ -84,9 +85,8 @@ def _num(v) -> float | None:
 
 
 def extraer_compra(req: CompraExtraerRequest) -> CompraExtraerResponse:
-    s = get_settings()
     resp = _client().messages.create(
-        model=s.anthropic_model,
+        model=modelo_actual(),
         max_tokens=2048,
         system=sistema_con_dominio(_SYSTEM),
         messages=[
@@ -184,6 +184,6 @@ def extraer_compra(req: CompraExtraerRequest) -> CompraExtraerResponse:
         confianza=confianza_calibrada(confianza_de(data.get("confianza")), sospechoso),
         notas=str(data.get("notas", "")),
         advertencias=limpiar_advertencias(avisos),
-        modelo=s.anthropic_model,
+        modelo=modelo_actual(),
         uso_ia=uso,
     )

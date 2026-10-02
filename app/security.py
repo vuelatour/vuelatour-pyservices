@@ -6,15 +6,31 @@ Por compatibilidad se aceptan dos esquemas de token:
 Pueden configurarse con el mismo valor en ambas variables de entorno.
 """
 
+import logging
 import secrets
 
 from fastapi import Header, HTTPException, status
 
 from app.config import get_settings
+from app.services.modelo_ia import fijar_modelo_de_peticion, modelo_pedido
+
+logger = logging.getLogger("security")
 
 
-def require_internal_token(x_internal_token: str | None = Header(default=None)) -> None:
-    """Valida el header X-Internal-Token contra INTERNAL_SHARED_TOKEN."""
+async def require_internal_token(
+    x_internal_token: str | None = Header(default=None),
+    x_ia_modelo: str | None = Header(default=None, alias="X-IA-Modelo"),
+) -> None:
+    """Valida el header X-Internal-Token contra INTERNAL_SHARED_TOKEN y deja el
+    modelo de Claude de ESTA petición (header X-IA-Modelo, 2-oct-2026).
+
+    Es `async def` A PROPÓSITO: FastAPI corre una dependencia `def` en un hilo
+    con una COPIA del contexto, y el ContextVar fijado ahí se pierde antes de
+    llegar al endpoint (se leería siempre el modelo del servidor). Async, se
+    fija en el contexto de la petición y el endpoint (`def`, en su hilo) lo
+    hereda. Se fija SIEMPRE —None sin header—: jamás queda el de otra petición.
+    """
+    fijar_modelo_de_peticion(x_ia_modelo)
     expected = get_settings().internal_shared_token
     if not expected:
         raise HTTPException(
@@ -25,6 +41,11 @@ def require_internal_token(x_internal_token: str | None = Header(default=None)) 
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token interno inválido",
+        )
+    # Solo con token válido (un anónimo no llena el log). El id no es secreto.
+    if x_ia_modelo is not None and modelo_pedido(x_ia_modelo) is None:
+        logger.warning(
+            "X-IA-Modelo inválido (%r): se usa el modelo del servidor", x_ia_modelo[:100]
         )
 
 

@@ -247,7 +247,10 @@ def test_textos_congelados() -> None:
         "El documento es demasiado largo para la IA: pártelo en varios archivos"
     )
     assert TEXTO_LLAVE_INVALIDA == "La llave de la IA no es válida o venció: avisa a sistemas"
-    assert TEXTO_MODELO_INEXISTENTE == "El modelo de IA configurado no existe: avisa a sistemas"
+    assert TEXTO_MODELO_INEXISTENTE == (
+        "El modelo de IA configurado no existe: avisa a sistemas (se elige en "
+        "Configuración → Créditos de IA)"
+    )
     assert TEXTO_LIMITE_PETICIONES == (
         "La IA está saturada (límite de peticiones): espera un minuto y reintenta"
     )

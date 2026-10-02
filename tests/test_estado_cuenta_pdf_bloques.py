@@ -599,3 +599,34 @@ def test_encabezado_ilegible_no_rompe_la_lectura() -> None:
 
     lector = SimpleNamespace(pages=[SimpleNamespace(extract_text=revienta)])
     assert estado_cuenta._texto_encabezado(lector) == ""
+
+
+# --- Modelo de la petición (X-IA-Modelo, 2-oct-2026) -----------------------
+
+
+def test_bloques_en_hilos_usan_el_modelo_de_la_peticion(
+    cliente_por_paginas, monkeypatch, request
+) -> None:
+    """Los bloques corren en hilos de un ThreadPoolExecutor, que NO heredan el
+    ContextVar del modelo: `_leer_por_bloques` lo resuelve antes y lo pasa.
+    Por HTTP real: dependencia async → endpoint en su hilo → pool de bloques."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", "secreto-de-prueba")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-servidor-prueba")
+    get_settings.cache_clear()
+    request.addfinalizer(get_settings.cache_clear)
+    cliente = cliente_por_paginas(_responder(7))
+
+    res = TestClient(app).post(
+        "/conciliacion/parse",
+        json=_req(_pdf(7)).model_dump(),
+        headers={"X-Internal-Token": "secreto-de-prueba", "X-IA-Modelo": "claude-prueba-pdf"},
+    )
+
+    assert res.status_code == 200, res.text
+    assert cliente.paginas() == [[1, 2, 3], [4, 5, 6], [7]]
+    assert [k["model"] for _, k in cliente.llamadas] == ["claude-prueba-pdf"] * 3
+    assert res.json()["modelo"] == "claude-prueba-pdf"

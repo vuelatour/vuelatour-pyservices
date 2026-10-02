@@ -21,6 +21,7 @@ from app.schemas.vision import (
 from app.services._dominio import MATRICULAS_FLOTA, sistema_con_dominio
 from app.services.ia_usage import uso_ia_de
 from app.services.imagen_media_type import media_type_real
+from app.services.modelo_ia import modelo_actual
 from app.services.validaciones_ia import (
     confianza_calibrada,
     confianza_de,
@@ -174,7 +175,6 @@ def _extract_json(text: str) -> dict:
 
 
 def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
-    s = get_settings()
     user_text = _USER_PROMPT
     if isinstance(req.ultimo, (int, float)) and req.ultimo > 0:
         # Ancla de magnitud: la lectura anterior acota el rango esperado y evita
@@ -186,7 +186,7 @@ def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
             f"revisa que no hayas tomado la décima como entero."
         )
     resp = _client().messages.create(
-        model=s.anthropic_model,
+        model=modelo_actual(),
         max_tokens=800,
         system=sistema_con_dominio(_SYSTEM),
         messages=[
@@ -254,7 +254,7 @@ def leer_tacometro(req: TacometroRequest) -> TacometroResponse:
         notas=str(data.get("notas", ""))[:400],
         calidad_foto=calidad,
         advertencias=advertencias,
-        modelo=s.anthropic_model,
+        modelo=modelo_actual(),
         uso_ia=uso,
     )
 
@@ -420,7 +420,6 @@ def _contexto_catalogos(req: GastoTicketRequest) -> str:
 
 
 def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
-    s = get_settings()
     if req.excel_base64:
         # Hoja de cálculo: viaja como TEXTO tabular (Claude no lee xlsx nativo).
         texto = _excel_to_text(req.excel_base64, req.excel_filename)
@@ -448,7 +447,7 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
     if catalogos:
         prompt = f"{prompt}\n{catalogos}"
     resp = _client().messages.create(
-        model=s.anthropic_model,
+        model=modelo_actual(),
         max_tokens=2000,
         system=sistema_con_dominio(_TICKET_SYSTEM),
         messages=[
@@ -562,7 +561,7 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         legible=bool(data.get("legible", monto_f is not None)),
         notas=str(data.get("notas", "")),
         advertencias=advertencias,
-        modelo=s.anthropic_model,
+        modelo=modelo_actual(),
         uso_ia=uso,
     )
 
@@ -708,9 +707,8 @@ def _str_or_none(raw: object) -> str | None:
 
 
 def leer_constancia_fiscal(req: ConstanciaFiscalRequest) -> ConstanciaFiscalResponse:
-    s = get_settings()
     resp = _client().messages.create(
-        model=s.anthropic_model,
+        model=modelo_actual(),
         max_tokens=1000,
         system=sistema_con_dominio(_CONSTANCIA_SYSTEM),
         messages=[
@@ -823,13 +821,12 @@ _COMBUSTIBLE_PROMPT = (
 
 
 def leer_ticket_combustible(req: GastoTicketRequest) -> CombustibleTicketResponse:
-    s = get_settings()
     prompt = _COMBUSTIBLE_PROMPT
     catalogos = _contexto_catalogos(req)
     if catalogos:
         prompt = f"{prompt}\n{catalogos}"
     resp = _client().messages.create(
-        model=s.anthropic_model,
+        model=modelo_actual(),
         max_tokens=1000,
         system=sistema_con_dominio(_COMBUSTIBLE_SYSTEM),
         messages=[
@@ -915,7 +912,7 @@ def leer_ticket_combustible(req: GastoTicketRequest) -> CombustibleTicketRespons
         legible=bool(data.get("legible", total is not None)),
         notas=str(data.get("notas", "")),
         advertencias=limpiar_advertencias(avisos),
-        modelo=s.anthropic_model,
+        modelo=modelo_actual(),
         uso_ia=uso,
     )
 
@@ -1055,7 +1052,6 @@ def _concilia_codigos(
 
 
 def leer_producto_inventario(req: InventarioItemRequest) -> InventarioItemResponse:
-    s = get_settings()
     blocks = _bloques_imagenes(req.images)
     escaneados = list(
         dict.fromkeys(
@@ -1088,7 +1084,7 @@ def leer_producto_inventario(req: InventarioItemRequest) -> InventarioItemRespon
     prompt = "\n".join(partes)
 
     resp = _client().messages.create(
-        model=s.anthropic_model,
+        model=modelo_actual(),
         max_tokens=1500,
         system=sistema_con_dominio(_INVENTARIO_SYSTEM),
         messages=[
@@ -1142,6 +1138,6 @@ def leer_producto_inventario(req: InventarioItemRequest) -> InventarioItemRespon
         empaque=empaque,
         confianza=confianza,
         notas_ia=" ".join(notas) or None,
-        modelo=s.anthropic_model,
+        modelo=modelo_actual(),
         uso_ia=uso,
     )

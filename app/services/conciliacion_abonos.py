@@ -39,6 +39,7 @@ from app.schemas.conciliacion import (
 from app.schemas.uso_ia import UsoIA
 from app.services._dominio import sistema_con_dominio
 from app.services.ia_usage import uso_ia_de
+from app.services.modelo_ia import modelo_actual
 from app.services.validaciones_ia import (
     confianza_de,
     dias_entre_cancun,
@@ -803,9 +804,8 @@ def _dedupe_candidatos(sugerencias: list[SugerenciaAbono], cont: _Contadores) ->
 
 
 def sugerir_abonos(req: ConciliacionSugerirAbonosRequest) -> ConciliacionSugerirAbonosResponse:
-    s = get_settings()
     if not req.abonos:
-        return ConciliacionSugerirAbonosResponse(sugerencias=[], modelo=s.anthropic_model)
+        return ConciliacionSugerirAbonosResponse(sugerencias=[], modelo=modelo_actual())
 
     cont = _Contadores()
     pool: dict[str, CandidatoParaAbono] = {}
@@ -841,7 +841,7 @@ def sugerir_abonos(req: ConciliacionSugerirAbonosRequest) -> ConciliacionSugerir
         ensure_ascii=False,
     )
     resp = _client().with_options(timeout=TIMEOUT_S, max_retries=MAX_REINTENTOS).messages.create(
-        model=s.anthropic_model,
+        model=modelo_actual(),
         max_tokens=MAX_TOKENS,
         system=sistema_con_dominio(_SUGERIR_ABONOS_SYSTEM),
         messages=[
@@ -885,7 +885,7 @@ def sugerir_abonos(req: ConciliacionSugerirAbonosRequest) -> ConciliacionSugerir
 
     return ConciliacionSugerirAbonosResponse(
         sugerencias=sugerencias,
-        modelo=s.anthropic_model,
+        modelo=modelo_actual(),
         uso_ia=uso,
         advertencias=cont.advertencias(),
     )

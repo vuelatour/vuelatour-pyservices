@@ -54,7 +54,12 @@ TEXTO_FOTO_ILEGIBLE = "La IA no pudo leer la foto: toma otra con mejor luz y enf
 TEXTO_DEMASIADAS_FOTOS = "Demasiadas fotos en una sola lectura: léelas en dos tandas"
 TEXTO_DOCUMENTO_LARGO = "El documento es demasiado largo para la IA: pártelo en varios archivos"
 TEXTO_LLAVE_INVALIDA = "La llave de la IA no es válida o venció: avisa a sistemas"
-TEXTO_MODELO_INEXISTENTE = "El modelo de IA configurado no existe: avisa a sistemas"
+# Desde el 2-oct-2026 el modelo se elige en el panel (un «Otro» con un id que
+# Anthropic no conoce da este 404 en TODAS las lecturas): el texto dice dónde.
+TEXTO_MODELO_INEXISTENTE = (
+    "El modelo de IA configurado no existe: avisa a sistemas (se elige en "
+    "Configuración → Créditos de IA)"
+)
 TEXTO_LIMITE_PETICIONES = (
     "La IA está saturada (límite de peticiones): espera un minuto y reintenta"
 )

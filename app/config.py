@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     # Anthropic (Claude) — vision para lectura de tacómetros y extracción.
     anthropic_api_key: str = ""
+    # Modelo del SERVIDOR (default). Desde el 2-oct-2026 el API puede pedir
+    # otro por petición (header X-IA-Modelo, elegido en Configuración): nadie
+    # lee este campo directo para llamar a Claude, se usa
+    # `app.services.modelo_ia.modelo_actual()`.
     anthropic_model: str = "claude-sonnet-4-6"
     # Opus tarda 20-60s en una factura densa: 30s cortaba la lectura a medias.
     # Si la var ANTHROPIC_TIMEOUT_S existe en el entorno, debe ser >= 90.

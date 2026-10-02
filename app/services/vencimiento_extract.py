@@ -9,6 +9,7 @@ from app.schemas.vencimiento import VencimientoExtraerRequest, VencimientoExtrae
 from app.services._dominio import sistema_con_dominio
 from app.services.ia_usage import uso_ia_de
 from app.services.imagen_media_type import media_type_real
+from app.services.modelo_ia import modelo_actual
 from app.services.validaciones_ia import (
     confianza_calibrada,
     confianza_de,
@@ -96,7 +97,6 @@ def _source_block(req: VencimientoExtraerRequest) -> dict:
 
 
 def extraer_vencimiento(req: VencimientoExtraerRequest) -> VencimientoExtraerResponse:
-    s = get_settings()
     prompt = _PROMPT
     contexto: list[str] = []
     flota = [str(m).strip() for m in (req.matriculas_flota or []) if str(m).strip()]
@@ -108,7 +108,7 @@ def extraer_vencimiento(req: VencimientoExtraerRequest) -> VencimientoExtraerRes
     if contexto:
         prompt = prompt + "\n" + " ".join(contexto)
     resp = _client().messages.create(
-        model=s.anthropic_model,
+        model=modelo_actual(),
         max_tokens=1024,
         system=sistema_con_dominio(_SYSTEM),
         messages=[
@@ -185,6 +185,6 @@ def extraer_vencimiento(req: VencimientoExtraerRequest) -> VencimientoExtraerRes
         confianza=confianza_calibrada(confianza_de(data.get("confianza")), sospechoso),
         notas=str(data.get("notas", "")),
         advertencias=limpiar_advertencias(avisos),
-        modelo=s.anthropic_model,
+        modelo=modelo_actual(),
         uso_ia=uso,
     )
