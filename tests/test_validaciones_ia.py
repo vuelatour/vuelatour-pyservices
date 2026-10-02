@@ -9,6 +9,7 @@ from app.services._dominio import (
     sistema_con_dominio,
 )
 from app.services.validaciones_ia import (
+    folio_anti_duplicado,
     confianza_calibrada,
     confianza_de,
     dia_cancun,
@@ -177,3 +178,45 @@ def test_confianza() -> None:
     assert confianza_de(1.7) == 1.0
     assert confianza_calibrada(0.99, True) == 0.3
     assert confianza_calibrada(0.99, False) == 0.99
+
+
+class TestFolioAntiDuplicado:
+    """Ticket de estancia ASUR (2-oct-2026): «Boleto FBOE7» se repite; manda NUM.OPERACION."""
+
+    def test_asur_boleto_repetido_usa_terminal_y_operacion(self):
+        assert folio_anti_duplicado(
+            "FBOE7", boleto="FBOE7", numero_operacion="4368", numero_terminal="1-094"
+        ) == ("1-094-4368", None)
+
+    def test_sin_terminal_queda_solo_la_operacion(self):
+        assert folio_anti_duplicado("FBOE7", boleto="FBOE7", numero_operacion="4368") == (
+            "4368",
+            None,
+        )
+
+    def test_folio_vacio_con_operacion(self):
+        assert folio_anti_duplicado(None, boleto="FBOE7", numero_operacion=4368, numero_terminal="1-094") == (
+            "1-094-4368",
+            None,
+        )
+
+    def test_folio_igual_a_la_operacion_se_completa_con_terminal(self):
+        assert folio_anti_duplicado("4368", numero_operacion="4368", numero_terminal="1-094") == (
+            "1-094-4368",
+            None,
+        )
+
+    def test_folio_real_distinto_se_conserva(self):
+        assert folio_anti_duplicado(
+            "FEDCUN 193422", boleto="FBOE7", numero_operacion="4368", numero_terminal="1-094"
+        ) == ("FEDCUN 193422", None)
+
+    def test_boleto_sin_operacion_no_bloquea_y_avisa(self):
+        folio, aviso = folio_anti_duplicado("fboe7", boleto="FBOE7")
+        assert folio is None
+        assert "FBOE7" in aviso and "número de operación" in aviso
+
+    def test_sin_datos_extra_no_cambia_nada(self):
+        assert folio_anti_duplicado("2622242310") == ("2622242310", None)
+        assert folio_anti_duplicado(None) == (None, None)
+        assert folio_anti_duplicado("  ") == (None, None)

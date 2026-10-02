@@ -368,3 +368,50 @@ def limpiar_advertencias(valores: list[str | None]) -> list[str]:
         if v and v not in out:
             out.append(v)
     return out
+
+
+def _texto_o_none(raw: object) -> str | None:
+    if raw is None:
+        return None
+    v = str(raw).strip()
+    return v or None
+
+
+def folio_anti_duplicado(
+    folio: object,
+    *,
+    boleto: object = None,
+    numero_operacion: object = None,
+    numero_terminal: object = None,
+) -> tuple[str | None, str | None]:
+    """Folio ÚNICO por operación (llave anti-duplicados del API).
+
+    Caso real (2-oct-2026): los tickets de ESTANCIA del aeropuerto (ASUR «COBRO
+    ESTANCIA») imprimen «Boleto FBOE7», que es la TARJETA de acceso y se repite
+    en cada visita; la IA lo tomaba como folio y el candado anti-duplicados
+    rechazaba un ticket legítimo. Lo que sí es único es NUM.OPERACION (por
+    terminal), así que:
+
+    - con número de operación y un folio ausente, igual al boleto o igual al
+      número de operación «pelón» ⇒ folio = «<terminal>-<operación>» (o solo la
+      operación si no hay terminal): «1-094-4368»;
+    - un folio distinto (una remisión o folio real) se conserva tal cual;
+    - boleto igual al folio y SIN número de operación ⇒ folio None + aviso para
+      capturarlo a mano (bloquear el gasto sería peor que no deduplicar).
+    Devuelve (folio, aviso).
+    """
+    f = _texto_o_none(folio)
+    b = _texto_o_none(boleto)
+    op = _texto_o_none(numero_operacion)
+    term = _texto_o_none(numero_terminal)
+    mismo = lambda a, c: a is not None and c is not None and a.casefold() == c.casefold()  # noqa: E731
+    if op:
+        if f is None or mismo(f, b) or mismo(f, op):
+            return (f"{term}-{op}" if term else op), None
+        return f, None
+    if f is not None and mismo(f, b):
+        return None, (
+            f"El boleto {b} es la tarjeta de acceso y se repite en cada visita: "
+            "captura a mano el número de operación del ticket como folio."
+        )
+    return f, None

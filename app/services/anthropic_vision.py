@@ -23,6 +23,7 @@ from app.services.ia_usage import uso_ia_de
 from app.services.imagen_media_type import media_type_real
 from app.services.modelo_ia import modelo_actual
 from app.services.validaciones_ia import (
+    folio_anti_duplicado,
     confianza_calibrada,
     confianza_de,
     limpiar_advertencias,
@@ -281,7 +282,18 @@ _TICKET_SYSTEM = (
     "lo traen en el recuadro superior derecho). Solo el identificador, sin la "
     "palabra Folio/Remision. Si hay varios, el de la remision o folio principal "
     "(NO el folio fiscal UUID). Si no aparece: null. Este dato evita capturas "
-    "duplicadas: no lo inventes.\n"
+    "duplicadas: no lo inventes. El folio es el identificador ÚNICO de ESA "
+    "operación. OJO con los tickets de ESTACIONAMIENTO/ESTANCIA del aeropuerto "
+    "(ASUR «COBRO ESTANCIA», «Boleto FBOE7»): el «Boleto» es la tarjeta de "
+    "acceso y SE REPITE en cada visita, así que NO sirve como folio; ahí el "
+    "folio es NUM.TERMINAL-NUM.OPERACION (ej. «NUM.TERMINAL: 1-094» y "
+    "«NUM.OPERACION: 4368» → «1-094-4368»).\n"
+    '  "boleto": número de boleto o tarjeta de acceso impreso (ej. "Boleto FBOE7" '
+    '→ "FBOE7"), o null si no aparece.\n'
+    '  "numero_operacion": número de operación/transacción impreso (ej. '
+    '"NUM.OPERACION: 4368" → "4368"), o null.\n'
+    '  "numero_terminal": número de terminal/caja impreso (ej. "NUM.TERMINAL: '
+    '1-094" → "1-094"), o null.\n'
     '  "concepto": descripción breve de lo comprado, o null.\n'
     '  "categoria_sugerida": una de GAS, GASOLINA, OPERACIONES, ATERRIZAJE, '
     "TUAS, FBO, COMIDA, HOTEL, TAXI, REFACCION, SERVICIOS, PERMISO, FIJO, "
@@ -530,6 +542,18 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         avisos.append("El IVA leído no es coherente con el total: se descartó.")
         iva_monto = None
 
+    # Folio anti-duplicados (2-oct-2026): en los tickets de estancia del
+    # aeropuerto el «Boleto» es la tarjeta de acceso y se repite en cada
+    # visita, así que el folio es terminal-operación (regla determinista,
+    # no solo del prompt). Ver folio_anti_duplicado.
+    folio, aviso_folio = folio_anti_duplicado(
+        _str_o_numero(data.get("folio")),
+        boleto=_str_o_numero(data.get("boleto")),
+        numero_operacion=_str_o_numero(data.get("numero_operacion")),
+        numero_terminal=_str_o_numero(data.get("numero_terminal")),
+    )
+    avisos.append(aviso_folio)
+
     advertencias = limpiar_advertencias(avisos)
 
     return GastoTicketResponse(
@@ -537,7 +561,7 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         propina=propina_f,
         # El folio es la llave anti-duplicados del API: el prompt ya lo pedía y
         # el esquema ya lo tenía, pero nunca se copiaba a la respuesta.
-        folio=_str_o_numero(data.get("folio")),
+        folio=folio,
         moneda=moneda if moneda in ("MXN", "USD") else None,
         fecha=fecha,
         proveedor=str(data["proveedor"]) if data.get("proveedor") else None,

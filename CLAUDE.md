@@ -746,6 +746,18 @@ Reglas de este microservicio (FastAPI, Python 3.12).
 
 ## IA
 
+- **Folio anti-duplicados de tickets de ESTANCIA del aeropuerto (2-oct-2026).**
+  ASUR imprime «COBRO ESTANCIA · Boleto FBOE7»: el «Boleto» es la TARJETA de
+  acceso y se repite en cada visita; la IA lo tomaba como `folio` y el candado
+  anti-duplicados del API (folio_ticket único) rechazaba el ticket legítimo.
+  El prompt de `leer_ticket_gasto` pide además `boleto`, `numero_operacion`
+  y `numero_terminal`, y `validaciones_ia.folio_anti_duplicado` (PURA, con
+  test) decide el folio: con operación ⇒ «<terminal>-<operación>»
+  («1-094-4368») cuando el folio falta, es el boleto o es la operación
+  pelona; un folio real distinto se conserva; boleto sin operación ⇒ folio
+  null + aviso (nunca bloquear la captura). Un folio corto como «4368»
+  NO va solo: chocaría con folios de otros proveedores.
+
 - Visión (tacómetro/tickets) usa el modelo de `modelo_actual()` (ver la
   entrada siguiente; sin elección en el panel = `ANTHROPIC_MODEL`). La
   lectura de tacómetro recibe `ultimo` (último taco del avión) como ancla de
