@@ -1,7 +1,8 @@
 """Parseo determinista de un CFDI recibido (sin IA: un CFDI es estructurado).
 
 Soporta CFDI 3.3 y 4.0 (deriva el namespace cfdi del root). Extrae emisor,
-receptor, totales, moneda, fecha y el UUID del Timbre Fiscal Digital.
+receptor, totales, moneda, fecha, serie/folio del comprobante y el UUID del
+Timbre Fiscal Digital.
 
 SEGURIDAD (15-sep-2026): el XML llega de un tercero (lo sube el proveedor o
 el operador). Se parsea con `defusedxml` y, además, se rechaza cualquier
@@ -47,6 +48,21 @@ def _cfdi_ns(root: ET.Element) -> str:
     return "http://www.sat.gob.mx/cfd/4"
 
 
+def _texto_attr(root: ET.Element, nombre: str) -> str | None:
+    """Atributo de texto del Comprobante, recortado; vacío ⇒ None.
+
+    `Serie`/`Folio` son opcionales en el CFDI (el SAT no los exige) y hay
+    emisores que los mandan con espacios o vacíos («Serie=""»): ninguno de
+    esos casos es un número de factura. Los CFDI 3.2 usaban el nombre en
+    minúscula (`serie`/`folio`), igual que `version`.
+    """
+    valor = root.get(nombre)
+    if valor is None:
+        valor = root.get(nombre.lower())
+    valor = (valor or "").strip()
+    return valor or None
+
+
 def _rfc_norm(rfc: str | None) -> str:
     return (rfc or "").strip().upper().replace("-", "").replace(" ", "")
 
@@ -76,6 +92,10 @@ def parse_cfdi(req: ParseRecibidaRequest) -> FacturaRecibidaParsed:
     # `Version` en 4.0/3.3; los CFDI 3.2 usaban `version` en minúscula.
     version = root.get("Version") or root.get("version")
     uuid = tfd.get("UUID") if tfd is not None else None
+    # ADITIVO (5-oct-2026): número de factura del proveedor («A-0411»). Solo
+    # se lee; cómo se rotula (serie-folio, respaldo al UUID) lo decide el API.
+    serie = _texto_attr(root, "Serie")
+    folio = _texto_attr(root, "Folio")
     receptor_rfc = receptor.get("Rfc") if receptor is not None else None
 
     advertencias: list[str] = []
@@ -122,6 +142,8 @@ def parse_cfdi(req: ParseRecibidaRequest) -> FacturaRecibidaParsed:
         total=_f(root.get("Total")),
         moneda=root.get("Moneda"),
         fecha_emision=root.get("Fecha"),
+        serie=serie,
+        folio=folio,
         conceptos_resumen=resumen,
         version_cfdi=version,
         conceptos_n=len(conceptos),

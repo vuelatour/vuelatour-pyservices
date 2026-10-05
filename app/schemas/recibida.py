@@ -36,3 +36,9 @@ class FacturaRecibidaParsed(BaseModel):
     valido: bool = Field(default=True, description="false si el CFDI no se puede dar por bueno")
     motivo: str | None = Field(default=None, description="Por que no es valido, si aplica")
     advertencias: list[str] = Field(default_factory=list)
+    # ADITIVOS (5-oct-2026): atributos `Serie`/`Folio` del Comprobante, sin
+    # espacios; vacío o ausente ⇒ None. Son el «número de factura» que la
+    # conciliación muestra en la columna «Notas». Un API que no los lea se
+    # comporta igual que antes.
+    serie: str | None = Field(default=None, description="Serie del CFDI (atributo Serie)")
+    folio: str | None = Field(default=None, description="Folio del CFDI (atributo Folio)")
