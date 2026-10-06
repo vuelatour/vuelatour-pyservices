@@ -9,6 +9,10 @@ GUARDADO, leído dos veces — con fórmulas (`data_only=False`) y con la caché
 $A$1 / 'hoja'!A1, rangos, SUM, AVERAGE, AVERAGEIF, SUMIF, ROUND, + − × ÷ y
 paréntesis. Una celda con fórmula se evalúa con el valor COMPLETO de las
 fórmulas que cita (como Excel), no con su caché redondeada.
+
+`verificar_libro` exige además que toda fórmula lleve ROUND exterior salvo
+las referencias puras y la lista blanca `ENCABEZADOS_SIN_ROUND` (revisión
+5-oct-2026: sin esa regla, quitar un ROUND seguía cuadrando a la vista).
 """
 
 from __future__ import annotations
@@ -194,18 +198,99 @@ def es_round_externo(formula: str) -> bool:
     return False
 
 
+# Las ÚNICAS fórmulas que no llevan ROUND exterior (revisión 5-oct-2026): el
+# API no hace `round2` en su cadena (AE = Y/z, AF = AE/1.16, …; solo redondea
+# al SERIALIZAR) y la fórmula tampoco, o el siguiente eslabón dejaría de
+# reproducirlo. Se identifican por el ENCABEZADO de su columna y solo como
+# aritmética de fila (sin funciones): un TOTALES de estas columnas con
+# SUM/AVERAGE sí lleva ROUND. Cualquier otra fórmula sin ROUND exterior —
+# salvo una referencia pura (=F14, ='hoja'!$C$5)— es un ROUND perdido: con la
+# tolerancia «a la vista» el número seguiría cuadrando y la regresión
+# llegaría a producción sin aviso.
+ENCABEZADOS_SIN_ROUND = frozenset(
+    {
+        "COSTO TOTAL USD",
+        "COSTO TOTAL USD S/IVA",
+        "IVA PAGADO USD",
+        "IVA PAGADO MXN",
+        "COSTO X HORA USD",
+        "COSTO X HORA USD S/IVA",
+        "% COBRADO",
+    }
+)
+_REFERENCIA_PURA = re.compile(r"^(?:'(?:[^']|'')+'!)?\$?[A-Z]{1,3}\$?\d+$")
+
+
+def es_referencia_pura(formula: str) -> bool:
+    """¿La fórmula solo copia otra celda (=F14, ='hoja'!$C$5)?"""
+    return _REFERENCIA_PURA.match(formula) is not None
+
+
+def _normalizar_encabezado(texto: str) -> str:
+    return " ".join(texto.split()).upper()
+
+
+def encabezado(libro: Libro, hoja: str, celda: str) -> str | None:
+    """Encabezado de la columna de la celda: el primer TEXTO (no fórmula) que
+    hay arriba de ella en la misma columna."""
+    ws = libro.con_formulas[hoja]
+    c = ws[celda]
+    for fila in range(c.row - 1, 0, -1):
+        arriba = ws.cell(row=fila, column=c.column)
+        if arriba.data_type == "f":
+            continue
+        if isinstance(arriba.value, str) and arriba.value.strip():
+            return _normalizar_encabezado(arriba.value)
+    return None
+
+
+def _tiene_funcion(formula: str) -> bool:
+    return re.search(r"[A-Z][A-Z0-9.]*\(", _TEXTO.sub("", formula)) is not None
+
+
+def _exacto(calculado: float, cache: float) -> bool:
+    """Igualdad «exacta»: solo se tolera el último dígito con el que openpyxl
+    escribe el número (%.16g)."""
+    return abs(calculado - cache) <= 1e-9 * max(1.0, abs(cache))
+
+
+def tolerancia(libro: Libro, hoja: str, celda: str) -> str:
+    """'exacta' (ROUND exterior, referencia a un valor o a una fórmula
+    exacta) o 'a la vista' (las de `ENCABEZADOS_SIN_ROUND`, que el API solo
+    redondea al serializar). Revienta con un AssertionError legible si la
+    fórmula no lleva ROUND y no está en la lista blanca."""
+    formula = libro.con_formulas[hoja][celda].value[1:]
+    if es_round_externo(formula):
+        return "exacta"
+    if es_referencia_pura(formula):
+        m = _REF.match(formula)
+        destino_hoja = (m.group("hoja") or hoja).replace("''", "'")
+        destino = libro.con_formulas[destino_hoja][f"{m.group('c1')}{m.group('f1')}"]
+        if destino.data_type != "f":
+            return "exacta"
+        return tolerancia(libro, destino_hoja, destino.coordinate)
+    nombre = encabezado(libro, hoja, celda)
+    assert nombre in ENCABEZADOS_SIN_ROUND and not _tiene_funcion(formula), (
+        f"{hoja}!{celda} ={formula} (columna {nombre!r}) no lleva ROUND exterior y no "
+        "está en ENCABEZADOS_SIN_ROUND: ¿se perdió el ROUND(…,2) del round2 del API?"
+    )
+    return "a la vista"
+
+
 def verificar_libro(data: bytes) -> list[tuple[str, str, str, float, float]]:
     """Evalúa CADA fórmula y la compara con su caché (el número del API).
-    Devuelve (hoja, celda, fórmula, calculado, caché); revienta con un
-    AssertionError legible a la primera que no cuadre."""
+    Igualdad exacta salvo en la lista blanca de las que no redondean (ahí,
+    medio centavo: el API redondea al serializar). Devuelve (hoja, celda,
+    fórmula, calculado, caché); revienta con un AssertionError legible a la
+    primera que no cuadre o que perdió su ROUND."""
     libro = Libro(data)
     salida = []
     for hoja, celda, formula in libro.formulas():
         cache = libro.cache(hoja, celda)
         assert _es_numero(cache), f"{hoja}!{celda} =({formula}) sin valor en caché: {cache!r}"
         calculado = libro.evaluar(hoja, celda)
-        if es_round_externo(formula):
-            assert abs(calculado - float(cache)) < 1e-9, (
+        if tolerancia(libro, hoja, celda) == "exacta":
+            assert _exacto(calculado, float(cache)), (
                 f"{hoja}!{celda} ={formula} da {calculado!r}, el API {cache!r}"
             )
         else:

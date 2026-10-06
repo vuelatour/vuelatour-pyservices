@@ -240,6 +240,11 @@ class Evaluador:
         self.reg = reg
         self._memo: dict[tuple[int, str], object] = {}
         self._en_curso: set[tuple[int, str]] = set()
+        # Errores que NO son de la fórmula (otra versión de openpyxl sin
+        # `_cells`, recursión…): la celda se degrada igual y `finalizar`
+        # avisa UNA vez con el primero.
+        self.inesperados = 0
+        self.primer_inesperado: BaseException | None = None
 
     # -- celdas --------------------------------------------------------------
 
@@ -282,6 +287,14 @@ class Evaluador:
             ok = isinstance(calculado, float) and coincide(calculado, f.valor, f.decimales)
         except (FormulaInvalidaError, ArithmeticError, ValueError, TypeError):
             # #DIV/0!, #¡VALOR!, desbordes del ROUND (Decimal)… ⇒ valor.
+            calculado, ok = None, False
+        except Exception as e:  # jamás un 500 por una fórmula
+            # Fallo del evaluador, no de la fórmula (AttributeError de otra
+            # versión de openpyxl, RecursionError…): solo ESTA celda vuelve a
+            # valor y el balance sale.
+            self.inesperados += 1
+            if self.primer_inesperado is None:
+                self.primer_inesperado = e
             calculado, ok = None, False
         finally:
             self._en_curso.discard(clave)
@@ -520,6 +533,12 @@ def finalizar(wb: Workbook) -> dict[str, dict[str, float | int]]:
     for ws, celdas in list(reg.por_hoja.items()):
         for coord in list(celdas):
             ev.verificar(ws, coord)
+    if ev.inesperados:
+        logger.warning(
+            "%d fórmula(s) quedaron como valor por un error del evaluador (primero: %r)",
+            ev.inesperados,
+            ev.primer_inesperado,
+        )
     degradadas = reg.degradadas()
     if degradadas:
         logger.info(
@@ -542,11 +561,18 @@ def _a_valores(wb: Workbook) -> None:
 
 
 def guardar(wb: Workbook) -> bytes:
-    """Verifica las fórmulas, guarda el libro e inyecta su caché. Si la caché
-    no se puede escribir (p. ej. otra versión de openpyxl serializa distinto
-    las celdas), el libro sale con VALORES —el de siempre— en vez de fórmulas
-    que la vista previa del teléfono mostraría vacías; jamás un error 500."""
-    cache = finalizar(wb)
+    """Verifica las fórmulas, guarda el libro e inyecta su caché. Si la
+    verificación falla (un error que no es de una fórmula: revisión
+    5-oct-2026) o la caché no se puede escribir (p. ej. otra versión de
+    openpyxl serializa distinto las celdas), el libro sale con VALORES —el de
+    siempre— en vez de fórmulas sin verificar o que la vista previa del
+    teléfono mostraría vacías; jamás un error 500."""
+    try:
+        cache = finalizar(wb)
+    except Exception:
+        logger.exception("no se pudieron verificar las fórmulas: el libro sale con valores")
+        _a_valores(wb)
+        cache = {}
     buf = BytesIO()
     wb.save(buf)
     data = buf.getvalue()
@@ -590,10 +616,13 @@ def rutas_de_hojas(z: zipfile.ZipFile) -> dict[str, str]:
 
 
 def numero_xml(x: float | int) -> str:
-    """Número para `<v>`: repr (todos los dígitos, punto decimal) SIN
-    notación científica. Un entero se escribe sin «.0», igual que openpyxl
-    escribe un valor (7000.0 → «7000»): leído con `data_only=True` el libro
-    da los MISMOS números —y tipos— que antes de las fórmulas."""
+    """Número para `<v>`, escrito IGUAL que openpyxl escribía el valor antes
+    de las fórmulas (`safe_string`: «%.16g», 16 cifras significativas) pero
+    SIN notación científica. Un entero va sin «.0» (7000.0 → «7000»). Así,
+    leído con `data_only=True`, el libro da los MISMOS números —bit a bit— y
+    tipos que el generador anterior: con `repr` (17 cifras) un % COBRADO
+    como 18500.50 / 52158.40 salía distinto en el último bit (revisión
+    5-oct-2026)."""
     if isinstance(x, bool):
         raise TypeError("booleano como caché de fórmula")
     if isinstance(x, int):
@@ -603,7 +632,7 @@ def numero_xml(x: float | int) -> str:
         raise ValueError(f"caché no finita: {x!r}")
     if f.is_integer() and abs(f) < 1e16:
         return str(int(f))
-    texto = repr(f)
+    texto = format(f, ".16g")  # == "%.16g" % f de openpyxl
     if "e" in texto or "E" in texto:
         texto = format(Decimal(texto), "f")
     return texto

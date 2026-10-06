@@ -289,10 +289,17 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   intermedios del API, empates binarios); luego inyecta el número del API
   en el `<v>` de cada fórmula (la vista previa del teléfono no calcula) con
   `fullCalcOnLoad`. Leído con `data_only=True` el libro es idéntico al de
-  antes (huellas congeladas del generador previo). Tests:
+  antes (huellas congeladas del generador previo): el `<v>` se escribe con
+  «%.16g» como `safe_string` de openpyxl, no con `repr` (17 cifras cambiaban
+  el último bit del % COBRADO). Si la verificación revienta por algo que no
+  es la fórmula, esa celda —o el libro entero, en `guardar`— sale con
+  valores: jamás un 500. Tests:
   `tests/test_balance_formulas.py` (espejo de la aritmética del API +
-  evaluador independiente `tests/_evaluador_formulas.py`); los tests que
-  leen números de un balance usan `data_only=True`.
+  evaluador independiente `tests/_evaluador_formulas.py`, cuyo
+  `verificar_libro` exige ROUND exterior en TODA fórmula salvo referencias
+  puras y `ENCABEZADOS_SIN_ROUND` — una fórmula nueva sin ROUND se agrega
+  ahí a propósito); los tests que leen números de un balance usan
+  `data_only=True`.
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

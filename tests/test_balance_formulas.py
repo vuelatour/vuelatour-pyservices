@@ -332,6 +332,23 @@ def _individual_tst() -> BalanceAvionRequest:
     return BalanceAvionRequest.model_validate(_payload_tst())
 
 
+# % COBRADO de 17 cifras (revisión 5-oct-2026): 18,500.50 ÷ 52,158.40 =
+# 0.35469838031841466 en `repr`, pero openpyxl escribía «%.16g» =
+# 0.3546983803184147. La caché tiene que escribirse igual que openpyxl o el
+# libro, leído con data_only=True, difiere del anterior en el último bit.
+_SPECS_PCT17 = [
+    {"clave": "#501 · Cliente Seis", "fecha": "2026-09-10", "D": 2.0, "E": 1124.1,
+     "G": 179.86, "I": 2607.92, "J": 359.71, "K": 20.0, "O": 2.1, "op": 3000.0,
+     "z": 20.0, "cobros": [_cobro("2026-09-09", 18500.5)], "cobrado": 18500.5},
+]  # fmt: skip
+
+
+def _individual_pct17() -> BalanceAvionRequest:
+    return BalanceAvionRequest.model_validate(
+        _libro_api("XA-PCT", 25.0, _SPECS_PCT17, {}, [("Socio A", 100.0)])
+    )
+
+
 def _individual_dos() -> BalanceAvionRequest:
     return BalanceAvionRequest.model_validate(_payload_dos())
 
@@ -562,6 +579,9 @@ def _formula(ws, fila: int, encabezado: str):
 _LIBROS = {
     "nuevo individual XA-TST": lambda: render_balance_avion_xlsx(_individual_tst()),
     "nuevo individual XB-DOS (sin AFAC)": lambda: render_balance_avion_xlsx(_individual_dos()),
+    "nuevo individual XA-PCT (% de 17 cifras)": lambda: render_balance_avion_xlsx(
+        _individual_pct17()
+    ),
     "nuevo general": lambda: render_balance_general_xlsx(_general()),
     "hojas general": lambda: render_balance_general_xlsx(t_hojas._general()),
     "hojas individual": lambda: render_balance_avion_xlsx(t_hojas._individual()),
@@ -575,6 +595,10 @@ _LIBROS = {
     "extensión general": lambda: render_balance_general_xlsx(t_extension._general(con_llave=True)),
     "inventario general": lambda: render_balance_general_xlsx(
         t_inventario._general(inventario=t_inventario._TIENDA_SEP26)
+    ),
+    # API sin `inventario`: hoja 'refacciones' con GANANCIA = venta − costo.
+    "refacciones general (sin inventario)": lambda: render_balance_general_xlsx(
+        t_inventario._general()
     ),
     "comisión general": lambda: render_balance_general_xlsx(t_comision._general(bandera=True)),
 }
@@ -941,6 +965,9 @@ _FIRMAS_ANTES = {
     "tst": "bec9b5bb97ed7e6c1239780d2e06d175e45ca9ff8507009f76db16b05d290ebc",
     "dos": "c65974859fdb78e1e9f50e8893770c0c504efb0f01aad4f7f7ae8d2820aea57b",
     "general": "76307f5e832a7ef50bdae876dfb635c325b3ad3128e7ccccd5d9caf325991538",
+    # Con la caché en `repr` (17 cifras) esta daba 5472c557…: % COBRADO
+    # difería del generador anterior en el último bit.
+    "pct17": "1ef5fea33c44a79129424208a48f6e021035d3cd2807060ef02cc273996e4667",
 }
 
 
@@ -950,6 +977,7 @@ _FIRMAS_ANTES = {
         ("tst", lambda: render_balance_avion_xlsx(_individual_tst())),
         ("dos", lambda: render_balance_avion_xlsx(_individual_dos())),
         ("general", lambda: render_balance_general_xlsx(_general())),
+        ("pct17", lambda: render_balance_avion_xlsx(_individual_pct17())),
     ],
 )
 def test_cache_da_los_numeros_del_generador_anterior(clave, render) -> None:
@@ -962,6 +990,17 @@ def test_sin_cache_la_celda_tiene_formula_y_con_cache_el_numero() -> None:
     assert wb["reporte horas XA-TST"]["K3"].value == "=ROUND(H3*J3,2)"
     assert wv["reporte horas XA-TST"]["K3"].value == r2(3480 * 17.25)
     # Excel recalcula al abrir (las fórmulas dan lo mismo que la caché).
+    calc = zipfile.ZipFile(BytesIO(data)).read("xl/workbook.xml").decode()
+    assert 'fullCalcOnLoad="1"' in calc
+
+
+def test_full_calc_on_load_lo_pone_guardar_no_el_default_de_openpyxl() -> None:
+    """openpyxl ya trae fullCalcOnLoad=True por omisión: la prueba de arriba
+    pasaría aunque `finalizar` dejara de pedirlo (revisión 5-oct-2026). Aquí
+    el libro llega con el default APAGADO."""
+    wb = _libro_dos_hojas()
+    wb.calculation.fullCalcOnLoad = False
+    data = xlsx_formulas.guardar(wb)
     calc = zipfile.ZipFile(BytesIO(data)).read("xl/workbook.xml").decode()
     assert 'fullCalcOnLoad="1"' in calc
 
@@ -1083,7 +1122,10 @@ def test_inyeccion_hoja_inexistente_revienta() -> None:
         (1e-05, "0.00001"),
         (1.5e16, "15000000000000000"),
         (17.123456, "17.123456"),
-        (0.1 + 0.2, "0.30000000000000004"),
+        # Como openpyxl («%.16g»), no repr: 0.30000000000000004 → «0.3».
+        (0.1 + 0.2, "0.3"),
+        (18500.50 / 52158.40, "0.3546983803184147"),
+        (1.2345678901234567e-7, "0.0000001234567890123457"),
     ],
 )
 def test_numero_xml_sin_notacion_cientifica(valor, texto) -> None:
@@ -1167,3 +1209,83 @@ def test_si_la_cache_no_se_puede_escribir_el_libro_sale_con_valores(monkeypatch)
     assert not Libro(data).formulas()
     assert wb["reporte horas XA-TST"]["K3"].value == r2(3480 * 17.25)
     assert _firma_valores(data) == _FIRMAS_ANTES["tst"]
+
+
+# ---------------------------------------------------------------------------
+# 7) Revisión 5-oct-2026: ROUND perdido, caché como openpyxl y «jamás un 500».
+# ---------------------------------------------------------------------------
+
+
+def _libro_con_encabezado(encabezado: str, formula: str, valor: float) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = encabezado
+    ws["A2"], ws["A3"] = 1250.5, 3085.33
+    xlsx_formulas.escribir(ws["A4"], formula, valor)
+    return xlsx_formulas.guardar(wb)
+
+
+def test_el_verificador_de_tests_detecta_un_round_perdido() -> None:
+    """Quitar el ROUND exterior de una suma seguía cuadrando «a la vista»
+    (tolerancia de medio centavo) y la regresión llegaba a producción."""
+    with pytest.raises(AssertionError, match="no lleva ROUND exterior"):
+        verificar_libro(_libro_con_encabezado("EGRESO\nMXN", "SUM(A2:A3)", 4335.83))
+    # Con su ROUND, la misma suma pasa.
+    assert verificar_libro(_libro_con_encabezado("EGRESO\nMXN", "ROUND(SUM(A2:A3),2)", 4335.83))
+    # La lista blanca solo cubre la aritmética de fila de sus columnas…
+    assert verificar_libro(_libro_con_encabezado("COSTO TOTAL\nUSD", "A2/A3", 1250.5 / 3085.33))
+    # …no un TOTALES con función de esas mismas columnas.
+    with pytest.raises(AssertionError, match="no lleva ROUND exterior"):
+        verificar_libro(_libro_con_encabezado("COSTO TOTAL\nUSD", "SUM(A2:A3)", 4335.83))
+
+
+def test_numero_xml_igual_que_openpyxl() -> None:
+    """El <v> se lee como el número que openpyxl escribía antes (safe_string,
+    «%.16g»), en cualquier magnitud."""
+    from random import Random
+
+    from openpyxl.compat.strings import safe_string
+
+    rnd = Random(20261005)
+    for _ in range(5000):
+        x = rnd.uniform(-1e6, 1e6) * rnd.choice([1e-9, 1e-3, 1.0, 1e9, 1e17])
+        assert float(xlsx_formulas.numero_xml(x)) == float(safe_string(x)), x
+
+
+def test_un_error_del_evaluador_no_tumba_el_balance(monkeypatch) -> None:
+    """Otra versión de openpyxl sin `ws._cells` (AttributeError) no es un 500:
+    cada fórmula vuelve a su número del API y el libro es el de siempre."""
+
+    def sin_cells(*_a, **_k):
+        raise AttributeError("'Worksheet' object has no attribute '_cells'")
+
+    monkeypatch.setattr(xlsx_formulas.Evaluador, "valor_celda", sin_cells)
+    data = render_balance_avion_xlsx(_individual_tst())
+    assert not Libro(data).formulas()
+    assert _firma_valores(data) == _FIRMAS_ANTES["tst"]
+
+
+def test_un_error_inesperado_solo_regresa_esa_celda_a_valor(monkeypatch) -> None:
+    """El fallo del evaluador en UNA fórmula no se lleva las demás."""
+    original = xlsx_formulas.Evaluador.valor_celda
+
+    def falla_en_beta_b1(self, ws, fila, col):
+        if ws.title == "Beta Dos" and (fila, col) == (1, 2):
+            raise IndexError("fallo raro de openpyxl")
+        return original(self, ws, fila, col)
+
+    monkeypatch.setattr(xlsx_formulas.Evaluador, "valor_celda", falla_en_beta_b1)
+    wb, wv = _libros(xlsx_formulas.guardar(_libro_dos_hojas()))
+    assert wb["Alfa"]["A3"].value == "=ROUND(SUM(A1:A2),2)"
+    assert wb["Beta Dos"]["B2"].value == 44.25  # degradada a su número
+    assert wv["Alfa"]["A3"].value == 14.75
+
+
+def test_si_la_verificacion_revienta_el_libro_sale_con_valores(monkeypatch) -> None:
+    def revienta(*_a, **_k):
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(xlsx_formulas, "finalizar", revienta)
+    data = render_balance_general_xlsx(_general())
+    assert not Libro(data).formulas()
+    assert _firma_valores(data) == _FIRMAS_ANTES["general"]
