@@ -313,12 +313,24 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   empresa: 0.00 + «sin participación registrada»; `participaciones` sin la
   bandera en los socios ⇒ valores), OTROS GASTOS = `'otros gastos'!$C$5`
   (sin esa hoja, valor), RESULTADO = `ROUND(part+ing−pag−otros+tienda,2)`
-  verde/rojo; ingresos propios, pagos al vendedor y tienda van como VALOR
+  verde/rojo; ingresos propios, egresos propios y tienda van como VALOR
   con nota (salen de MXN con el TC de cada vuelo). Todo por `_formula`
-  (verificado y en caché). **Sin `empresa` ⇒ libro byte-idéntico** (también
-  con `es_empresa` en los socios o `empresa: null`; verificado miembro a
-  miembro contra HEAD f509d1a y congelado con huellas de layout). Tests:
-  `tests/test_balance_empresa_vuelatour.py`.
+  (verificado y en caché). **Las dos filas de 'otros movimientos' NO son
+  caja** (revisión 6-oct): el ingreso es lo COTIZADO de los vuelos del
+  periodo no cancelados (COTIZADO/RESERVA incluidos) y `pagos_vendedor_usd`
+  es TODO lo que esa hoja resta (pago o provisión al vendedor, TUAs,
+  extensión, comisión bancaria, sueltos) — etiquetas «INGRESOS PROPIOS USD
+  (… cotizado del periodo)» / «EGRESOS PROPIOS USD (…)» y
+  `_NOTA_EMPRESA_BASE` al pie, debajo de la `nota` del API (sin ella, el pie
+  fijo `_NOTA_BLOQUE_EMPRESA`; jamás los dos). Base de caja = cambio del API
+  y decisión del cliente. `participacion_usd` null ⇒ celda vacía; con
+  `empresa` el RESUMEN suma una línea que apunta al bloque. **Sin `empresa`
+  ⇒ libro byte-idéntico** (también con `es_empresa` en los socios o
+  `empresa: null`; verificado miembro a miembro contra HEAD f509d1a y
+  congelado con huellas de layout). Tests:
+  `tests/test_balance_empresa_vuelatour.py` (payload con la forma REAL del
+  API y espía del registro de `xlsx_formulas`: una fórmula degradada deja
+  el mismo número y solo el registro la delata).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

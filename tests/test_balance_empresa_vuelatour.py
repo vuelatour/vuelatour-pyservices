@@ -23,7 +23,11 @@ import pytest
 from openpyxl import load_workbook
 
 from app.schemas.reportes import BalanceGeneralRequest
+from app.services import xlsx_formulas
 from app.services.balance_avion_xlsx import (
+    _NOTA_BLOQUE_EMPRESA,
+    _NOTA_EMPRESA_BASE,
+    _RESUMEN_BLOQUE_EMPRESA,
     GREEN,
     MUTED,
     NAVY,
@@ -57,27 +61,37 @@ _EGRESOS_MXN_TC = [(1100.25, 17.25)]
 
 
 def _poner_socios(libro: dict, socios: list[tuple[str, float, bool]]) -> None:
-    """Socios de un avión como los manda el API (monto = cobrada × % / 100)."""
+    """Socios de un avión como los manda el API 0.0.59 (monto = cobrada × % /
+    100): `es_empresa` EXPLÍCITO en todos, `false` en los que no son la
+    empresa (`u?.es_empresa === true` del servicio)."""
     cobrada = libro["balance"]["utilidad_cobrada_usd"]
     libro["balance"]["socios"] = [
         {
             "nombre": nombre,
             "porcentaje": pct,
             "monto_usd": r2((pct / 100) * cobrada),
-            **({"es_empresa": True} if es_empresa else {}),
+            "es_empresa": es_empresa,
         }
         for nombre, pct, es_empresa in socios
     ]
 
 
 def _empresa_api(p: dict) -> dict:
-    """Espejo de `balance-empresa.util.ts` (API 0.0.59)."""
+    """Espejo de `balance-empresa.util.ts` (API 0.0.59) con la forma REAL del
+    payload: `participaciones[].socio` y `movimientos_sin_tc` viajan aunque
+    pyservices no los pinte (el esquema los ignora; si alguien le pone
+    extra='forbid', estos tests lo tumban)."""
     tc = p["consolidado"]["totales"]["tc_promedio"]
     participaciones = [
-        {"matricula": a["matricula"], "porcentaje": s["porcentaje"], "monto_usd": s["monto_usd"]}
+        {
+            "matricula": a["matricula"],
+            "socio": s["nombre"],
+            "porcentaje": s["porcentaje"],
+            "monto_usd": s["monto_usd"],
+        }
         for a in p["aviones"]
         for s in a["balance"]["socios"]
-        if s.get("es_empresa")
+        if s.get("es_empresa") is True
     ]
     participacion = r2(tf._suma(x["monto_usd"] for x in participaciones))
     ingresos = r2(tf._suma(mxn / k for mxn, k in _INGRESOS_MXN_TC))
@@ -87,6 +101,17 @@ def _empresa_api(p: dict) -> dict:
     inv = p.get("inventario")
     tienda = r2(inv["total_utilidad_mxn"] / tc) if inv is not None else None
     resultado = r2(participacion + ingresos - pagos - otros + (tienda or 0))
+    aviones = list(dict.fromkeys(x["matricula"] for x in participaciones))
+    nota = (
+        f"Participación: utilidad COBRADA de {', '.join(aviones)} × % de la empresa como socia."
+        if aviones
+        else "Participación: la empresa no es socia de ningún avión del periodo."
+    ) + (
+        " Ingresos y egresos propios: hoja 'otros movimientos' (por vuelo y sueltas), "
+        "cada fila a USD con el T.C. de su vuelo; las sueltas con su T.C. o el oficial "
+        "del día. Egresos = pago al vendedor, TUAs pagadas, extensión de horario, "
+        "comisión bancaria y gastos sueltos. Los gastos personales del dueño no entran."
+    )
     return {
         "participaciones": participaciones,
         "participacion_usd": participacion,
@@ -97,7 +122,8 @@ def _empresa_api(p: dict) -> dict:
         "tienda_utilidad_usd": tienda,
         "resultado_usd": resultado,
         "tc_promedio": tc,
-        "nota": "Ingresos cobrados y pagos al vendedor pagados del periodo; TC de cada vuelo.",
+        "nota": nota,
+        "movimientos_sin_tc": 0,
     }
 
 
@@ -123,6 +149,37 @@ def _payload(
 
 def _render(p: dict) -> bytes:
     return render_balance_general_xlsx(BalanceGeneralRequest.model_validate(p))
+
+
+@pytest.fixture
+def registros(monkeypatch) -> list[xlsx_formulas.RegistroFormulas]:
+    """Registro de fórmulas de cada libro que se cierra: qué celdas se
+    ESCRIBIERON como fórmula y cuáles volvieron a valor. Una fórmula que el
+    evaluador degrada (p. ej. a una hoja que no existe) deja el mismo número
+    en la celda: sin el registro, un test que solo lee el valor no la ve."""
+    capturados: list[xlsx_formulas.RegistroFormulas] = []
+    original = xlsx_formulas.finalizar
+
+    def espia(wb):
+        cache = original(wb)
+        capturados.append(xlsx_formulas.registro(wb))
+        return cache
+
+    monkeypatch.setattr(xlsx_formulas, "finalizar", espia)
+    return capturados
+
+
+def _formulas_balance(reg: xlsx_formulas.RegistroFormulas, desde: int) -> dict[str, bool]:
+    """Celdas de la hoja 'balance' desde la fila `desde` que se escribieron
+    como fórmula → ¿se degradaron a valor?"""
+    ws = next((w for w in reg.por_hoja if w.title == "balance"), None)
+    if ws is None:
+        return {}
+    return {
+        coord: f.degradada
+        for coord, f in reg.por_hoja[ws].items()
+        if int("".join(ch for ch in coord if ch.isdigit())) >= desde
+    }
 
 
 def _miembros(data: bytes) -> dict[str, bytes]:
@@ -205,8 +262,14 @@ def _bloque(ws) -> dict[str, int]:
     return {
         "titulo": _fila(ws, "VUELATOUR (empresa)"),
         "part": _fila(ws, "(+) PARTICIPACIÓN COMO SOCIO EN LOS AVIONES USD"),
-        "ing": _fila(ws, "(+) INGRESOS PROPIOS COBRADOS USD (TUAs, extras, pernocta, comisión)"),
-        "pag": _fila(ws, "(−) PAGOS AL VENDEDOR USD"),
+        "ing": _fila(
+            ws, "(+) INGRESOS PROPIOS USD (TUAs, extras, pernocta, comisión — cotizado del periodo)"
+        ),
+        "pag": _fila(
+            ws,
+            "(−) EGRESOS PROPIOS USD (pago al vendedor, TUAs, extensión, "
+            "comisión bancaria, sueltos)",
+        ),
         "otros": _fila(ws, "(−) OTROS GASTOS DE LA EMPRESA USD"),
         "tienda": _fila(ws, "(+) UTILIDAD TIENDA (INVENTARIO) USD"),
         "res": _fila(ws, "RESULTADO VUELATOUR USD"),
@@ -232,7 +295,7 @@ def _verificadas_del_bloque(data: bytes, desde: int) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def test_bloque_empresa_al_final_con_formulas_y_caches_del_api() -> None:
+def test_bloque_empresa_al_final_con_formulas_y_caches_del_api(registros) -> None:
     p = _payload()
     emp = p["empresa"]
     data = _render(p)
@@ -270,7 +333,10 @@ def test_bloque_empresa_al_final_con_formulas_y_caches_del_api() -> None:
     assert gris.i and gris.color.rgb.endswith(MUTED)
 
     # Ingresos propios, pagos al vendedor y tienda: VALOR del API con nota.
-    nota_om = "MXN de la hoja 'otros movimientos' convertidos con el TC de cada vuelo"
+    nota_om = (
+        "MXN de la hoja 'otros movimientos' a USD con el TC de cada vuelo "
+        "(sueltas: su TC o el oficial del día)"
+    )
     for clave, campo in (
         ("ing", "ingresos_propios_usd"),
         ("pag", "pagos_vendedor_usd"),
@@ -295,11 +361,27 @@ def test_bloque_empresa_al_final_con_formulas_y_caches_del_api() -> None:
     assert res.font.b and res.font.color.rgb.endswith(GREEN)
     assert ws[f"A{b['res']}"].font.b
 
-    # Nota al pie del bloque + la nota del API.
+    # Pie: la nota del API y, debajo, la base de 'otros movimientos' (lo
+    # único que la del API no dice). El pie fijo de respaldo NO se repite.
+    assert ws[f"A{b['res'] + 2}"].value == emp["nota"]
+    assert ws[f"A{b['res'] + 3}"].value == _NOTA_EMPRESA_BASE
     textos = [c.value for c in ws["A"] if isinstance(c.value, str)]
-    assert any(t.startswith("Participación = utilidad COBRADA de cada avión") for t in textos)
-    assert any("gastos personales del dueño no entran" in t for t in textos)
-    assert emp["nota"] in textos
+    assert _NOTA_BLOQUE_EMPRESA not in textos
+    assert sum("gastos personales del dueño no entran" in t for t in textos) == 1
+    # Nada del bloque dice que ingresos/egresos propios son caja.
+    del_bloque = [
+        t for c in ws["A"][b["titulo"] - 1 :] if isinstance(t := c.value, str)
+    ] + [
+        ws[f"B{b[k]}"].comment.text for k in ("ing", "pag")
+    ]  # fmt: skip
+    assert not any("COBRADO/PAGADO" in t or "COBRADOS" in t for t in del_bloque)
+    assert "no es dinero en caja" in _NOTA_EMPRESA_BASE
+
+    # RESUMEN: una línea apunta al bloque.
+    assert _RESUMEN_BLOQUE_EMPRESA in [c.value for c in wb["RESUMEN flota"]["A"]]
+
+    # Ninguna fórmula del bloque se escribió para luego degradarse a valor.
+    assert not any(_formulas_balance(registros[-1], b["titulo"]).values())
 
     # El evaluador independiente reproduce CADA fórmula del bloque.
     verificadas = _verificadas_del_bloque(data, b["titulo"])
@@ -363,8 +445,9 @@ def test_sin_empresa_el_libro_es_el_de_antes(caso) -> None:
     kwargs, firma = _FIRMAS_SIN_EMPRESA[caso]
     data = _render(_payload(empresa=False, **kwargs))
     assert _firma_libro(data) == firma
-    textos = [c.value for c in load_workbook(BytesIO(data))["balance"]["A"]]
-    assert "VUELATOUR (empresa)" not in textos
+    wb = load_workbook(BytesIO(data))
+    assert "VUELATOUR (empresa)" not in [c.value for c in wb["balance"]["A"]]
+    assert _RESUMEN_BLOQUE_EMPRESA not in [c.value for c in wb["RESUMEN flota"]["A"]]
 
 
 def test_sin_empresa_ni_la_bandera_es_empresa_cambia_un_byte() -> None:
@@ -386,7 +469,7 @@ def test_sin_empresa_ni_la_bandera_es_empresa_cambia_un_byte() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_sin_hoja_otros_gastos_la_linea_va_como_valor() -> None:
+def test_sin_hoja_otros_gastos_la_linea_va_como_valor(registros) -> None:
     p = _payload(otros_gastos=False)
     data = _render(p)
     wb, wv = _libros(data)
@@ -394,6 +477,11 @@ def test_sin_hoja_otros_gastos_la_linea_va_como_valor() -> None:
     ws, wsv = wb["balance"], wv["balance"]
     b = _bloque(ws)
     assert ws[f"B{b['otros']}"].value == p["empresa"]["otros_gastos_empresa_usd"]
+    # VALOR desde el principio: jamás una fórmula a una hoja que no existe
+    # que el evaluador tenga que degradar (el número sería el mismo).
+    formulas = _formulas_balance(registros[-1], b["titulo"])
+    assert f"B{b['otros']}" not in formulas
+    assert not any(formulas.values())
     assert ws[f"B{b['res']}"].value == _formula_resultado(b)
     assert wsv[f"B{b['res']}"].value == p["empresa"]["resultado_usd"]
     assert f"B{b['res']}" in _verificadas_del_bloque(data, b["titulo"])
@@ -427,6 +515,38 @@ def test_sin_socio_empresa_participacion_cero_y_linea_sin_participacion() -> Non
     assert ws[f"B{b['res']}"].value == _formula_resultado(b)
     assert wsv[f"B{b['res']}"].value == p["empresa"]["resultado_usd"]
     assert f"B{b['res']}" in _verificadas_del_bloque(data, b["titulo"])
+
+
+def test_participacion_null_sin_socio_empresa_queda_vacia() -> None:
+    """Payload a medias: sin socio empresa, sin `participaciones` y
+    `participacion_usd` null ⇒ celda VACÍA (nunca un 0.00 falso), igual que
+    el RESULTADO, que el API deja en null cuando falta una línea."""
+    p = _payload(socios=_SOCIOS_SIN_EMPRESA)
+    emp = p["empresa"]
+    emp.pop("participaciones")
+    emp["participacion_usd"] = None
+    emp["resultado_usd"] = None
+    data = _render(p)
+    wb, wv = _libros(data)
+    ws, wsv = wb["balance"], wv["balance"]
+    b = _bloque(ws)
+    assert ws[f"B{b['part']}"].value is None
+    assert wsv[f"B{b['part']}"].value is None
+    assert ws[f"A{b['part'] + 1}"].value == "   sin participación registrada"
+    assert ws[f"B{b['res']}"].value is None
+    # Las demás líneas del API sí se pintan.
+    assert ws[f"B{b['ing']}"].value == emp["ingresos_propios_usd"]
+    verificar_libro(data)
+
+
+def test_sin_nota_del_api_el_pie_fijo_completo() -> None:
+    p = _payload()
+    p["empresa"]["nota"] = None
+    ws = load_workbook(BytesIO(_render(p)))["balance"]
+    b = _bloque(ws)
+    assert ws[f"A{b['res'] + 2}"].value == _NOTA_BLOQUE_EMPRESA
+    assert _NOTA_EMPRESA_BASE in _NOTA_BLOQUE_EMPRESA
+    assert ws[f"A{b['res'] + 3}"].value is None
 
 
 def test_resultado_negativo_en_rojo() -> None:

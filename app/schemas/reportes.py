@@ -1307,8 +1307,11 @@ class BalanceEmpresaBloque(BaseModel):
     # Socios `es_empresa` de cada avión (monto = utilidad COBRADA × %).
     participaciones: list[BalanceEmpresaParticipacion] = Field(default_factory=list)
     participacion_usd: float | None = None  # Σ anterior (round2)
-    # Σ ingreso_mxn / egreso_mxn de 'otros movimientos' (cobrado / pagado)
-    # convertidos con el TC de SU vuelo (fila suelta: TC oficial del día).
+    # Σ ingreso_mxn / egreso_mxn de 'otros movimientos' convertidos con el TC
+    # de SU vuelo (fila suelta: su TC o el oficial del día). NO es caja: el
+    # ingreso es lo COTIZADO de los vuelos del periodo no cancelados y el
+    # egreso TODO lo que esa hoja resta (pago o provisión al vendedor, TUAs,
+    # extensión de horario, comisión bancaria, sueltos) — no solo el vendedor.
     ingresos_propios_usd: float | None = None
     pagos_vendedor_usd: float | None = None
     # = TOTAL USD de la hoja 'otros gastos' (total MXN / TC promedio flota).

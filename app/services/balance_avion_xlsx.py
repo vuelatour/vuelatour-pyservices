@@ -1766,22 +1766,49 @@ def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int, *,
 # final, el balance de la empresa VuelaTour»). Etiquetas de sus filas:
 _EMPRESA_TITULO = "VUELATOUR (empresa)"
 _EMPRESA_PARTICIPACION = "(+) PARTICIPACIÓN COMO SOCIO EN LOS AVIONES USD"
-_EMPRESA_INGRESOS = "(+) INGRESOS PROPIOS COBRADOS USD (TUAs, extras, pernocta, comisión)"
-_EMPRESA_PAGOS = "(−) PAGOS AL VENDEDOR USD"
+# Revisión 6-oct-2026: las dos filas de 'otros movimientos' NO son caja. El
+# ingreso es lo COTIZADO (desglose v1.3) de TODOS los vuelos del periodo no
+# cancelados —COTIZADO y RESERVA incluidos— y el egreso es TODO lo que esa
+# hoja resta (pago o PROVISIÓN al vendedor, TUAs pagadas, extensión de
+# horario, comisión bancaria, gas sin avión, TUAS sin vuelo): las etiquetas
+# lo dicen para que nadie lea el RESULTADO como dinero en caja.
+_EMPRESA_INGRESOS = (
+    "(+) INGRESOS PROPIOS USD (TUAs, extras, pernocta, comisión — cotizado del periodo)"
+)
+_EMPRESA_PAGOS = (
+    "(−) EGRESOS PROPIOS USD (pago al vendedor, TUAs, extensión, comisión bancaria, sueltos)"
+)
 _EMPRESA_OTROS = "(−) OTROS GASTOS DE LA EMPRESA USD"
 _EMPRESA_TIENDA = "(+) UTILIDAD TIENDA (INVENTARIO) USD"
 _EMPRESA_RESULTADO = "RESULTADO VUELATOUR USD"
 _EMPRESA_SIN_PARTICIPACION = "   sin participación registrada"
 _NOTA_EMPRESA_OTROS_MOVIMIENTOS = (
-    "MXN de la hoja 'otros movimientos' convertidos con el TC de cada vuelo"
+    "MXN de la hoja 'otros movimientos' a USD con el TC de cada vuelo "
+    "(sueltas: su TC o el oficial del día)"
 )
 _NOTA_EMPRESA_TIENDA = "utilidad de la hoja 'inventario' / TC promedio"
+# Base de las filas de 'otros movimientos' (lo único que la `nota` del API no
+# dice): va SIEMPRE al pie del bloque.
+_NOTA_EMPRESA_BASE = (
+    "Ingresos y egresos propios = hoja 'otros movimientos': lo cotizado de "
+    "los vuelos del periodo (no cancelados) más los otros ingresos "
+    "registrados, y lo pagado o provisionado — no es lo cobrado: el "
+    "RESULTADO no es dinero en caja."
+)
+# Pie de RESPALDO para un payload sin `nota` (con ella, el API ya explica
+# participación, otros gastos, tienda y gastos personales: repetirlo era
+# pintar dos párrafos casi iguales).
 _NOTA_BLOQUE_EMPRESA = (
     "Participación = utilidad COBRADA de cada avión × % de Aero Charter "
-    "Cancún. Ingresos propios y pagos al vendedor son lo COBRADO/PAGADO del "
-    "periodo (hoja 'otros movimientos'). Otros gastos = hoja 'otros "
-    "gastos'. Tienda = margen de las salidas de inventario. Los gastos "
-    "personales del dueño no entran."
+    "Cancún. " + _NOTA_EMPRESA_BASE + " Otros gastos = hoja 'otros gastos'. "
+    "Tienda = margen de las salidas de inventario. Los gastos personales del "
+    "dueño no entran."
+)
+# Línea del RESUMEN que apunta al bloque (solo con `empresa`). Corta: las
+# notas del RESUMEN van combinadas en A:L SIN envolver.
+_RESUMEN_BLOQUE_EMPRESA = (
+    "Al final de la hoja 'balance': bloque VUELATOUR (empresa) — participación "
+    "como socia, ingresos y egresos propios, otros gastos, tienda y su RESULTADO."
 )
 # Caracteres que caben en la columna A (ancho 46) de la hoja 'balance' con
 # etiquetas en MAYÚSCULAS: arriba de eso la etiqueta se envuelve.
@@ -1856,9 +1883,10 @@ def _bloque_empresa(
         refs = ",".join(c.celda for c in celdas)
         monto(row, f"ROUND(SUM({refs}),2)", emp.participacion_usd)
     else:
-        # Sin socio empresa en ningún avión: 0.00 (no hay participación).
-        sin_dato = emp.participacion_usd is None and not emp.participaciones
-        monto(row, None, 0.0 if sin_dato else emp.participacion_usd)
+        # Sin celda que citar: el número del API tal cual. Sin socio empresa
+        # el API manda 0 (0.00); un null es un payload a medias y queda
+        # VACÍO, como el RESULTADO —jamás un 0 falso (revisión 6-oct-2026).
+        monto(row, None, emp.participacion_usd)
     row += 1
     if celdas:
         for c in celdas:
@@ -1919,10 +1947,14 @@ def _bloque_empresa(
     )
     row += 2
 
-    _pinta_nota_envuelta(ws, row, _NOTA_BLOQUE_EMPRESA, 3, _ANCHO_HOJA_BALANCE)
-    row += 1
+    # Pie: la `nota` del API (base de cada línea con sus números) + la base
+    # de 'otros movimientos'; sin `nota`, el pie fijo completo.
     if emp.nota:
-        _pinta_nota_envuelta(ws, row, emp.nota, 3, _ANCHO_HOJA_BALANCE)
+        for texto in (emp.nota, _NOTA_EMPRESA_BASE):
+            _pinta_nota_envuelta(ws, row, texto, 3, _ANCHO_HOJA_BALANCE)
+            row += 1
+    else:
+        _pinta_nota_envuelta(ws, row, _NOTA_BLOQUE_EMPRESA, 3, _ANCHO_HOJA_BALANCE)
         row += 1
     return row
 
@@ -2691,6 +2723,9 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
         "sin avión ni vuelo, fuera de toda cascada por avión) y 'repartidos "
         "a aviones' (la parte de esos gastos asignada a mano a cada avión; "
         "en el libro individual va dentro de su hoja 'Gastos Indirectos').",
+        # Bloque «VUELATOUR (empresa)» (6-oct-2026): solo con `empresa`; sin
+        # él el RESUMEN es el de siempre.
+        *((_RESUMEN_BLOQUE_EMPRESA,) if req.empresa is not None else ()),
     ):
         ws.cell(row=row, column=1, value=nota).font = Font(
             color=MUTED, size=9, italic=True
