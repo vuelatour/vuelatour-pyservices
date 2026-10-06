@@ -300,6 +300,25 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   puras y `ENCABEZADOS_SIN_ROUND` — una fórmula nueva sin ROUND se agrega
   ahí a propósito); los tests que leen números de un balance usan
   `data_only=True`.
+- **Bloque «VUELATOUR (empresa)» al final de la hoja 'balance' del GENERAL**
+  (6-oct-2026, API 0.0.59; pedido: «en la hoja de balance falta, hasta el
+  final, el balance de la empresa VuelaTour»). Payload ADITIVO
+  `BalanceGeneralRequest.empresa` (`BalanceEmpresaBloque`, todo opcional;
+  `participaciones` null ⇒ []) + `BalanceAvionSocio.es_empresa`; los números
+  los calcula el API (`balance-empresa.util.ts`), aquí solo se pintan.
+  `_bloque_balance` acumula en `celdas_empresa` la celda MONTO USD real de
+  cada socio `es_empresa` (los bloques tienen distinto número de socios:
+  jamás calcular la fila) y `_bloque_empresa` la cita: PARTICIPACIÓN =
+  `ROUND(SUM(C17,C33),2)` con una línea gris `=C17` por avión (sin socio
+  empresa: 0.00 + «sin participación registrada»; `participaciones` sin la
+  bandera en los socios ⇒ valores), OTROS GASTOS = `'otros gastos'!$C$5`
+  (sin esa hoja, valor), RESULTADO = `ROUND(part+ing−pag−otros+tienda,2)`
+  verde/rojo; ingresos propios, pagos al vendedor y tienda van como VALOR
+  con nota (salen de MXN con el TC de cada vuelo). Todo por `_formula`
+  (verificado y en caché). **Sin `empresa` ⇒ libro byte-idéntico** (también
+  con `es_empresa` en los socios o `empresa: null`; verificado miembro a
+  miembro contra HEAD f509d1a y congelado con huellas de layout). Tests:
+  `tests/test_balance_empresa_vuelatour.py`.
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

@@ -73,6 +73,7 @@ from app.schemas.reportes import (
     BalanceAvionHojaGastos,
     BalanceAvionRequest,
     BalanceAvionVuelo,
+    BalanceEmpresaBloque,
     BalanceGeneralRequest,
     BalanceGeneralResumenFila,
     BalanceHojaInventario,
@@ -1641,9 +1642,21 @@ def _refs_balance_individual(maestra: _Maestra, con_refacciones: bool) -> dict[s
     return refs
 
 
+@dataclass(frozen=True)
+class _CeldaSocioEmpresa:
+    """Celda MONTO USD del socio `es_empresa` en el bloque de un avión de la
+    hoja 'balance' del GENERAL: el bloque «VUELATOUR (empresa)» la cita."""
+
+    matricula: str
+    porcentaje: float | None
+    celda: str  # «C15» (misma hoja)
+    monto_usd: float | None
+
+
 def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int, *,
                     general: bool = False,
-                    refs: dict[str, str] | None = None) -> int:
+                    refs: dict[str, str] | None = None,
+                    celdas_empresa: list[_CeldaSocioEmpresa] | None = None) -> int:
     """Bloque utilidad + reparto de socios de UN avión, empezando en `row`.
     Devuelve la siguiente fila libre (el balance GENERAL apila un bloque por
     avión — los socios son POR avión, no hay un reparto de flota).
@@ -1664,7 +1677,11 @@ def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int, *,
     UTILIDAD COBRADA = DESPUÉS − PENDIENTE DE PAGO y cada socio = ROUND(% ÷
     100 × UTILIDAD COBRADA, 2) — la aritmética del API. Con `refs` (libro
     individual) las filas de arriba citan su hoja; en el GENERAL van como
-    valor (son los números de cada avión, que no están en ese libro)."""
+    valor (son los números de cada avión, que no están en ese libro).
+    `celdas_empresa` (6-oct-2026, solo el GENERAL): lista ACUMULADA a la que
+    se agrega la celda MONTO USD de cada socio `es_empresa` de este bloque —
+    el bloque «VUELATOUR (empresa)» del final la cita con fórmula. No cambia
+    nada de lo que se pinta."""
     b = req.balance
     refs = refs or {}
     fila_ini = row
@@ -1728,12 +1745,184 @@ def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int, *,
                 s.monto_usd, MONEY, bold=True,
             )
             mc.border = _border
+            if celdas_empresa is not None and s.es_empresa:
+                celdas_empresa.append(
+                    _CeldaSocioEmpresa(
+                        req.matricula or "—", s.porcentaje, mc.coordinate, s.monto_usd
+                    )
+                )
             row += 1
     else:
         ws.cell(
             row=row, column=1, value="Sin socios configurados para este avión (ver pendientes)."
         ).font = Font(color=RED, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
+        row += 1
+    return row
+
+
+# Bloque «VUELATOUR (empresa)» al final de la hoja 'balance' del GENERAL
+# (6-oct-2026, pedido del cliente: «en la hoja de balance falta, hasta el
+# final, el balance de la empresa VuelaTour»). Etiquetas de sus filas:
+_EMPRESA_TITULO = "VUELATOUR (empresa)"
+_EMPRESA_PARTICIPACION = "(+) PARTICIPACIÓN COMO SOCIO EN LOS AVIONES USD"
+_EMPRESA_INGRESOS = "(+) INGRESOS PROPIOS COBRADOS USD (TUAs, extras, pernocta, comisión)"
+_EMPRESA_PAGOS = "(−) PAGOS AL VENDEDOR USD"
+_EMPRESA_OTROS = "(−) OTROS GASTOS DE LA EMPRESA USD"
+_EMPRESA_TIENDA = "(+) UTILIDAD TIENDA (INVENTARIO) USD"
+_EMPRESA_RESULTADO = "RESULTADO VUELATOUR USD"
+_EMPRESA_SIN_PARTICIPACION = "   sin participación registrada"
+_NOTA_EMPRESA_OTROS_MOVIMIENTOS = (
+    "MXN de la hoja 'otros movimientos' convertidos con el TC de cada vuelo"
+)
+_NOTA_EMPRESA_TIENDA = "utilidad de la hoja 'inventario' / TC promedio"
+_NOTA_BLOQUE_EMPRESA = (
+    "Participación = utilidad COBRADA de cada avión × % de Aero Charter "
+    "Cancún. Ingresos propios y pagos al vendedor son lo COBRADO/PAGADO del "
+    "periodo (hoja 'otros movimientos'). Otros gastos = hoja 'otros "
+    "gastos'. Tienda = margen de las salidas de inventario. Los gastos "
+    "personales del dueño no entran."
+)
+# Caracteres que caben en la columna A (ancho 46) de la hoja 'balance' con
+# etiquetas en MAYÚSCULAS: arriba de eso la etiqueta se envuelve.
+_ANCHO_ETIQUETA_BALANCE = 40
+# Ancho total A:C de la hoja 'balance' (46 + 14 + 16) para las notas.
+_ANCHO_HOJA_BALANCE = 76
+
+
+def _nota_celda(texto: str) -> Comment:
+    com = Comment(texto, "VuelaTour")
+    com.width = 320
+    com.height = 80
+    return com
+
+
+def _pct_socio(pct: float | None) -> str:
+    return "" if pct is None else f" · {pct:.2f} %"
+
+
+def _bloque_empresa(
+    ws: Worksheet, emp: BalanceEmpresaBloque, row: int, celdas: list[_CeldaSocioEmpresa]
+) -> int:
+    """Bloque «VUELATOUR (empresa)» de la hoja 'balance' del GENERAL, después
+    del último bloque de avión (6-oct-2026). Mismo estilo que la cascada de
+    los aviones; los números los calculó el API (`empresa`, 0.0.59) y aquí
+    solo se pintan. Fórmulas verificadas con `xlsx_formulas` (si no
+    reproducen el número del API, la celda queda como valor):
+      PARTICIPACIÓN = ROUND(SUM(celda MONTO USD del socio `es_empresa` de
+        cada bloque de arriba), 2) — `celdas`, que acumuló _bloque_balance
+        (bloques con distinto número de socios: la celda es la real); debajo
+        una línea gris por avión que cita esa celda.
+      OTROS GASTOS = 'otros gastos'!$C$5 (TOTAL USD de esa hoja; sin la
+        hoja, valor).
+      RESULTADO = ROUND(part + ingresos − pagos − otros + tienda, 2).
+    Ingresos propios, pagos al vendedor y tienda van como valor (salen de
+    filas en MXN con el TC de cada vuelo, que no están en esta hoja).
+    Devuelve la siguiente fila libre."""
+    t = ws.cell(row=row, column=1, value=_EMPRESA_TITULO)
+    t.font = Font(bold=True, size=12, color="FFFFFF")
+    t.fill = PatternFill("solid", fgColor=NAVY)
+    row += 1
+
+    def etiqueta(r: int, texto: str, *, bold: bool = False, detalle: bool = False) -> None:
+        c = ws.cell(row=r, column=1, value=texto)
+        c.font = Font(bold=bold, italic=detalle, color=NAVY if bold else MUTED)
+        c.border = _border
+        lineas = math.ceil(len(texto) / _ANCHO_ETIQUETA_BALANCE)
+        if lineas > 1:
+            c.alignment = Alignment(wrap_text=True, vertical="center")
+            ws.row_dimensions[r].height = 15 * lineas + 1
+
+    def monto(
+        r: int,
+        formula: str | None,
+        valor: float | None,
+        *,
+        bold: bool = False,
+        detalle: bool = False,
+        color: str | None = None,
+        nota: str | None = None,
+    ) -> None:
+        color = color or ("000000" if bold else MUTED)
+        cell = _formula(ws, r, 2, formula, valor, MONEY, bold=bold, italic=detalle, color=color)
+        cell.border = _border
+        if nota and valor is not None:
+            cell.comment = _nota_celda(nota)
+
+    # (+) Participación como socio: Σ de las celdas de los bloques de arriba.
+    fila_part = row
+    etiqueta(row, _EMPRESA_PARTICIPACION)
+    if celdas:
+        refs = ",".join(c.celda for c in celdas)
+        monto(row, f"ROUND(SUM({refs}),2)", emp.participacion_usd)
+    else:
+        # Sin socio empresa en ningún avión: 0.00 (no hay participación).
+        sin_dato = emp.participacion_usd is None and not emp.participaciones
+        monto(row, None, 0.0 if sin_dato else emp.participacion_usd)
+    row += 1
+    if celdas:
+        for c in celdas:
+            etiqueta(row, f"   {c.matricula}{_pct_socio(c.porcentaje)}", detalle=True)
+            monto(row, c.celda, c.monto_usd, detalle=True)
+            row += 1
+    elif emp.participaciones:
+        # El API manda participaciones pero ningún socio trae `es_empresa`
+        # (skew): las líneas van como valor, sin celda que citar.
+        for p in emp.participaciones:
+            etiqueta(row, f"   {p.matricula or '—'}{_pct_socio(p.porcentaje)}", detalle=True)
+            monto(row, None, p.monto_usd, detalle=True)
+            row += 1
+    else:
+        etiqueta(row, _EMPRESA_SIN_PARTICIPACION, detalle=True)
+        ws.cell(row=row, column=2).border = _border
+        row += 1
+
+    fila_ing = row
+    etiqueta(row, _EMPRESA_INGRESOS)
+    monto(row, None, emp.ingresos_propios_usd, nota=_NOTA_EMPRESA_OTROS_MOVIMIENTOS)
+    row += 1
+
+    fila_pag = row
+    etiqueta(row, _EMPRESA_PAGOS)
+    monto(row, None, emp.pagos_vendedor_usd, nota=_NOTA_EMPRESA_OTROS_MOVIMIENTOS)
+    row += 1
+
+    fila_otros = row
+    etiqueta(row, _EMPRESA_OTROS)
+    hoja_otros = "otros gastos" in ws.parent.sheetnames
+    nota_otros = None
+    if emp.tc_usado is not None:
+        nota_otros = (
+            "TOTAL USD de la hoja 'otros gastos' (total MXN / TC promedio de "
+            f"la flota, {_tc_txt(emp.tc_usado)})"
+        )
+    formula_otros = _ref_hoja("otros gastos", "$C$5") if hoja_otros else None
+    monto(row, formula_otros, emp.otros_gastos_empresa_usd, nota=nota_otros)
+    row += 1
+
+    fila_tienda = row
+    etiqueta(row, _EMPRESA_TIENDA)
+    nota_tienda = _NOTA_EMPRESA_TIENDA + (
+        f" ({_tc_txt(emp.tc_promedio)})" if emp.tc_promedio is not None else ""
+    )
+    monto(row, None, emp.tienda_utilidad_usd, nota=nota_tienda)
+    row += 1
+
+    etiqueta(row, _EMPRESA_RESULTADO, bold=True)
+    res = emp.resultado_usd
+    monto(
+        row,
+        f"ROUND(B{fila_part}+B{fila_ing}-B{fila_pag}-B{fila_otros}+B{fila_tienda},2)",
+        res,
+        bold=True,
+        color=None if res is None else (GREEN if res >= 0 else RED),
+    )
+    row += 2
+
+    _pinta_nota_envuelta(ws, row, _NOTA_BLOQUE_EMPRESA, 3, _ANCHO_HOJA_BALANCE)
+    row += 1
+    if emp.nota:
+        _pinta_nota_envuelta(ws, row, emp.nota, 3, _ANCHO_HOJA_BALANCE)
         row += 1
     return row
 
@@ -2670,7 +2859,9 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
     detalle de salidas con su costo vs venta al avión — sustituye a la
     hoja 'refacciones' del general, que solo se pinta como fallback de un
     API viejo), 1 balance (bloques por avión: los socios son por avión;
-    indirectos + reparto manual en UNA fila, 2-sep) y 1 pendientes.
+    indirectos + reparto manual en UNA fila, 2-sep; y, hasta el final, el
+    bloque «VUELATOUR (empresa)» con el payload `empresa`, 6-oct-2026) y 1
+    pendientes.
     Renombre 1-sep-2026 (modelo mental del equipo: lo sin avión ni vuelo
     "cae en otros gastos"): la hoja de empresa se llamaba 'gastos
     VuelaTour' y la de parciales 'otros gastos'. Este libro CONSERVA sus
@@ -2758,6 +2949,9 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
             f"{req.periodo_hasta or '—'} (todo en USD) · los socios son POR avión",
         ).font = Font(italic=True, size=10, color=MUTED)
         row = 4
+        # Celdas MONTO USD de los socios `es_empresa` de cada bloque: las cita
+        # el bloque «VUELATOUR (empresa)» del final (6-oct-2026).
+        celdas_empresa: list[_CeldaSocioEmpresa] = []
         for avion in req.aviones:
             tc = ws_b.cell(row=row, column=1, value=avion.matricula or "—")
             tc.font = Font(bold=True, size=12, color=NAVY)
@@ -2765,7 +2959,14 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
             swatch = _hex(avion.avion_color)
             if swatch:
                 tc.fill = PatternFill("solid", fgColor=swatch)
-            row = _bloque_balance(ws_b, avion, row + 1, general=True) + 2
+            row = (
+                _bloque_balance(ws_b, avion, row + 1, general=True, celdas_empresa=celdas_empresa)
+                + 2
+            )
+        # Balance de la EMPRESA hasta el final (6-oct-2026): solo con el API
+        # 0.0.59+; sin `empresa` el libro es byte-idéntico al de antes.
+        if req.empresa is not None:
+            _bloque_empresa(ws_b, req.empresa, row, celdas_empresa)
         for i, w in enumerate([46, 14, 16], start=1):
             ws_b.column_dimensions[get_column_letter(i)].width = w
 

@@ -986,6 +986,11 @@ class BalanceAvionSocio(BaseModel):
     nombre: str = ""
     porcentaje: float | None = None  # % vigente (0–100)
     monto_usd: float | None = None  # utilidad cobrada × pct/100
+    # ADITIVO (6-oct-2026, API 0.0.59): el socio es la EMPRESA (Aero Charter
+    # Cancún, `usuario.es_empresa`). Solo lo usa el bloque «VUELATOUR
+    # (empresa)» del Balance general para citar la celda MONTO USD de este
+    # socio; la fila del socio se pinta igual. None = API viejo.
+    es_empresa: bool | None = None
 
 
 class BalanceAvionBalanceBloque(BaseModel):
@@ -1282,6 +1287,46 @@ class BalanceHojaInventario(BaseModel):
         return None
 
 
+class BalanceEmpresaParticipacion(BaseModel):
+    """Participación de la EMPRESA como socio de UN avión (su `monto_usd` es
+    el mismo que el del socio `es_empresa` del bloque de ese avión)."""
+
+    matricula: str | None = None
+    porcentaje: float | None = None
+    monto_usd: float | None = None
+
+
+class BalanceEmpresaBloque(BaseModel):
+    """Bloque «VUELATOUR (empresa)» al final de la hoja 'balance' del Balance
+    GENERAL (6-oct-2026, API 0.0.59). Todo en USD y YA calculado por el API
+    (`balance-empresa.util.ts`): aquí no se recalcula nada, solo se pinta
+    (las sumas que están en el libro van como fórmula verificada).
+    Todos opcionales: un API que mande el bloque a medias no tumba el
+    balance (celda vacía, nunca un 0 falso)."""
+
+    # Socios `es_empresa` de cada avión (monto = utilidad COBRADA × %).
+    participaciones: list[BalanceEmpresaParticipacion] = Field(default_factory=list)
+    participacion_usd: float | None = None  # Σ anterior (round2)
+    # Σ ingreso_mxn / egreso_mxn de 'otros movimientos' (cobrado / pagado)
+    # convertidos con el TC de SU vuelo (fila suelta: TC oficial del día).
+    ingresos_propios_usd: float | None = None
+    pagos_vendedor_usd: float | None = None
+    # = TOTAL USD de la hoja 'otros gastos' (total MXN / TC promedio flota).
+    otros_gastos_empresa_usd: float | None = None
+    tc_usado: float | None = None  # TC con el que se convirtió lo anterior
+    # Utilidad de la hoja 'inventario' / TC promedio; None = sin inventario.
+    tienda_utilidad_usd: float | None = None
+    resultado_usd: float | None = None
+    tc_promedio: float | None = None  # TC promedio de la flota
+    nota: str | None = None  # base de cada línea (texto corto del API)
+
+    @field_validator("participaciones", mode="before")
+    @classmethod
+    def _participaciones_liberal(cls, v: Any) -> Any:
+        """NestJS puede mandar null en una lista vacía: jamás un 422."""
+        return [] if v is None else v
+
+
 class BalanceGeneralRequest(BaseModel):
     """Balance GENERAL de flota: los libros individuales de varios aviones
     (misma estructura de hojas) concatenados en un workbook + hoja RESUMEN."""
@@ -1310,6 +1355,10 @@ class BalanceGeneralRequest(BaseModel):
     # ser su bloque 2); el libro INDIVIDUAL conserva la suya. None = API
     # viejo → se pinta 'refacciones' como antes (skew tolerante).
     inventario: BalanceHojaInventario | None = None
+    # Bloque «VUELATOUR (empresa)» al final de la hoja 'balance' (6-oct-2026,
+    # API 0.0.59). None = API viejo ⇒ el bloque NO se pinta (libro
+    # byte-idéntico al de antes).
+    empresa: BalanceEmpresaBloque | None = None
 
 
 class BitacoraTacoFila(BaseModel):
