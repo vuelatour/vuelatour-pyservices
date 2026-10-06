@@ -1,5 +1,5 @@
 import math
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -1350,6 +1350,15 @@ class BalanceEmpresaBloque(BaseModel):
         return [] if v is None else v
 
 
+# Variantes del libro de flota (6-oct-2026, API 0.0.64). Pedido del cliente:
+# «el que ya tenemos que se renombre a "Balance mensual" y el nuevo botón sea
+# el "Balance general"». MISMO payload y mismos números en las dos: solo
+# cambia la hoja «reporte horas FLOTA» (ver `balance_avion_xlsx._COLS_GENERAL`).
+VARIANTE_BALANCE_MENSUAL = "mensual"
+VARIANTE_BALANCE_GENERAL = "general"
+VARIANTES_BALANCE_GENERAL = (VARIANTE_BALANCE_MENSUAL, VARIANTE_BALANCE_GENERAL)
+
+
 class BalanceGeneralRequest(BaseModel):
     """Balance GENERAL de flota: los libros individuales de varios aviones
     (misma estructura de hojas) concatenados en un workbook + hoja RESUMEN."""
@@ -1382,6 +1391,24 @@ class BalanceGeneralRequest(BaseModel):
     # API 0.0.59). None = API viejo ⇒ el bloque NO se pinta (libro
     # byte-idéntico al de antes).
     empresa: BalanceEmpresaBloque | None = None
+    # Variante del libro (6-oct-2026, API 0.0.64): 'mensual' = el libro de
+    # siempre, BYTE-IDÉNTICO (también sin la llave: un API ≤ 0.0.63 no la
+    # manda); 'general' = la hoja «reporte horas FLOTA» resumida a COSTO
+    # TOTAL + las 12 columnas del costo por hora de la hoja «utilidades» del
+    # cliente. Ningún número del payload depende de la variante.
+    variante: Literal["mensual", "general"] = VARIANTE_BALANCE_MENSUAL
+
+    @field_validator("variante", mode="before")
+    @classmethod
+    def _variante_liberal(cls, v: Any) -> Any:
+        """Liberal con lo que manda NestJS: mayúsculas y espacios se
+        normalizan; null o un valor desconocido = el libro de siempre (el API
+        valida `modo` con 400) — jamás un 422 que tumbe la descarga."""
+        if isinstance(v, str):
+            texto = v.strip().lower()
+            if texto in VARIANTES_BALANCE_GENERAL:
+                return texto
+        return VARIANTE_BALANCE_MENSUAL
 
 
 class BitacoraTacoFila(BaseModel):

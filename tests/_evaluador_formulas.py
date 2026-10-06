@@ -206,7 +206,9 @@ def es_round_externo(formula: str) -> bool:
 # SUM/AVERAGE sí lleva ROUND. Cualquier otra fórmula sin ROUND exterior —
 # salvo una referencia pura (=F14, ='hoja'!$C$5)— es un ROUND perdido: con la
 # tolerancia «a la vista» el número seguiría cuadrando y la regresión
-# llegaría a producción sin aviso.
+# llegaría a producción sin aviso. Variante «Balance general» (6-oct-2026):
+# las mismas cuentas con los nombres de la hoja «utilidades» del cliente
+# (AE, AG, AH, AN, AO y costo total − AH, que tampoco redondea el API).
 ENCABEZADOS_SIN_ROUND = frozenset(
     {
         "COSTO TOTAL USD",
@@ -216,6 +218,12 @@ ENCABEZADOS_SIN_ROUND = frozenset(
         "COSTO X HORA USD",
         "COSTO X HORA USD S/IVA",
         "% COBRADO",
+        "TOTAL PARA PROVEEDOR (DLLS)",
+        "IVA TOTAL PAGADO (DLLS)",
+        "IVA TOTAL PAGADO (PESOS)",
+        "COSTO HR MÁS IVA (DLLS)",
+        "COSTO X HORA (DLLS S/IVA)",
+        "TOTAL PAGADO S/IVA (PESOS)",
     }
 )
 _REFERENCIA_PURA = re.compile(r"^(?:'(?:[^']|'')+'!)?\$?[A-Z]{1,3}\$?\d+$")

@@ -44,6 +44,15 @@ y, con el API 0.0.36, costo = último precio de compra y pesos al T.C.
 oficial del día — `regla_costo`, solo cambian los textos) — el libro
 INDIVIDUAL conserva la suya.
 
+El libro de flota sale en DOS variantes (6-oct-2026, API 0.0.64,
+`BalanceGeneralRequest.variante`): «mensual» (o sin la llave) = el libro de
+siempre, byte-idéntico; «general» = la hoja «reporte horas FLOTA» con el
+juego de columnas `_COLS_GENERAL` — COSTO TOTAL y el bloque COSTO POR HORA
+(las 12 columnas de la hoja «utilidades» del cliente) en lugar de
+operaciones / piloto / otros / AFAC e indicadores. Mismos números del API y
+las demás hojas iguales. En 'otros movimientos' (las dos variantes) las
+filas con PROVISIÓN van en amarillo con su leyenda al pie.
+
 Los montos vienen YA calculados del API (aquí solo se pintan; jamás se
 recalcula dinero). None = celda vacía — nunca un 0 falso.
 
@@ -59,6 +68,7 @@ centavo, la celda se queda como valor.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -70,6 +80,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from app.schemas.reportes import (
     REGLA_COSTO_ULTIMO_PRECIO,
+    VARIANTE_BALANCE_GENERAL,
     BalanceAvionCobro,
     BalanceAvionHojaCombustible,
     BalanceAvionHojaGastos,
@@ -353,9 +364,163 @@ _CELDA_AFAC = "$B$1"
 _CELDA_FACTOR_IVA = "$D$1"
 # Factor con que el API quita el IVA a los costos (AF = AE / 1.16).
 FACTOR_IVA_COSTOS = 1.16
-# Columnas de la fila TOTALES que son suma de las filas de vuelo (el API:
-# round2(Σ no nulos)); las dos de promedio van aparte.
-_TOTAL_SUMA = {a for a, t in _TOTAL_MAP.items() if t not in ("tc_promedio", "costo_hr_prom_usd")}
+# Totales que son PROMEDIO (el API: promedio de los no nulos); los demás de
+# la fila TOTALES son suma de las filas de vuelo (round2(Σ no nulos)).
+_TOTALES_PROMEDIO = ("tc_promedio", "costo_hr_prom_usd")
+
+
+# ===== Variante «Balance general» de la hoja maestra (6-oct-2026, API 0.0.64)
+# Pedido del cliente: «el que va a ser balance mensual está perfecto como
+# está ahora; el que cambiaría sería el balance general: todos esos montos de
+# operación, piloto, pagos AFAC se van a eliminar y se va a hacer un resumen
+# del total de COSTO TOTAL. En lugar del apartado de Operaciones, piloto y
+# otros se van a agregar estas columnas para sacar el costo por hora por cada
+# vuelo» (las de su hoja «utilidades»), con la fórmula: «es el total de todos
+# los gastos, entre el tiempo volado, entre el tipo de cambio del día, entre
+# 1.16 (para sacar subtotal) y el resultado sería el costo por hora».
+# Mismos campos del API (no hay números nuevos): CLAVE..ESTADO, VENTA y
+# TIEMPO / TACÓMETRO iguales; «COSTO TOTAL (MXN)» = COSTO TOTAL + TIPO CAMBIO
+# COSTOS; «COSTO POR HORA» = las 12 columnas del cliente EN SU ORDEN y con
+# sus nombres (repiten a propósito la venta s/IVA, el tiempo, el T.C. y el
+# costo total: el bloque se lee solo, como su hoja); STATUS DE COBROS y
+# FACTURA VUELATOUR iguales. Fuera: OPERACIONES, PILOTO, OTROS, PERMISO AFAC
+# (su desglose va en la NOTA de TOTAL PARA PROVEEDOR (PESOS)) e INDICADORES
+# (cubiertos por el bloque nuevo; DIF. IVA, COMISIÓN VENDEDOR y GANANCIA
+# salen). La 3.ª posición de cada tupla es la LLAVE de la columna: el
+# atributo del vuelo o, en las que repiten un dato o lo derivan, una llave
+# `cph_*` (`_ORIGEN_GENERAL` / `_valor_columna`). Toda fórmula cita columnas
+# por su llave (`_Disposicion.letra`), jamás por una letra fija.
+_GRUPO_COSTO_TOTAL = "COSTO TOTAL (MXN)"
+_GRUPO_COSTO_HORA = "COSTO POR HORA"
+_COLS_GENERAL: list[tuple[str, str, str | None, str | None]] = [
+    *(c for c in _COLS if c[0] in ("", "VENTA", "TIEMPO / TACÓMETRO")),
+    (_GRUPO_COSTO_TOTAL, "COSTO TOTAL\nMXN", "costo_total_mxn", MONEY),
+    (_GRUPO_COSTO_TOTAL, "TIPO CAMBIO\nCOSTOS", "tc_costos", TC),
+    (_GRUPO_COSTO_HORA, "TOTAL COBRADO\nS/IVA (PESOS)", "cph_cobrado_siva_mxn", MONEY),
+    (_GRUPO_COSTO_HORA, "TIEMPO\nCALZOS/HOBS (HR)", "cph_tiempo_hr", HORAS),
+    (_GRUPO_COSTO_HORA, "COSTO X HORA\n(DLLS S/IVA)", "costo_hr_usd_siva", MONEY),
+    (_GRUPO_COSTO_HORA, "IVA X HR\n(DLLS)", "cph_iva_hr_usd", MONEY),
+    (_GRUPO_COSTO_HORA, "COSTO HR\nMÁS IVA (DLLS)", "costo_hr_usd", MONEY),
+    (_GRUPO_COSTO_HORA, "TOTAL PARA\nPROVEEDOR (DLLS)", "costo_usd", MONEY),
+    (_GRUPO_COSTO_HORA, "IVA TOTAL\nPAGADO (DLLS)", "iva_pagado_usd", MONEY),
+    (_GRUPO_COSTO_HORA, "TIPO\nCAMBIO", "cph_tc", TC),
+    (_GRUPO_COSTO_HORA, "TOTAL PARA\nPROVEEDOR (PESOS)", "cph_proveedor_mxn", MONEY),
+    (_GRUPO_COSTO_HORA, "IVA TOTAL\nPAGADO (PESOS)", "iva_pagado_mxn", MONEY),
+    (_GRUPO_COSTO_HORA, "TOTAL PAGADO\nS/IVA (PESOS)", "cph_pagado_siva_mxn", MONEY),
+    (_GRUPO_COSTO_HORA, "REMANENTE VENTA\nMENOS COMPRA (PESOS)", "remanente_mxn", MONEY),
+    *(c for c in _COLS if c[0] == "STATUS DE COBROS"),
+]
+# Columnas del bloque COSTO POR HORA que REPITEN un dato de otra columna de
+# la fila: llave → atributo del vuelo. Mismo número: TOTAL COBRADO S/IVA lleva
+# la misma fórmula que TOTAL S/IVA MXN y las otras tres son valor.
+_ORIGEN_GENERAL = {
+    "cph_cobrado_siva_mxn": "subtotal_mxn",
+    "cph_tiempo_hr": "tiempo_vuelo",
+    "cph_tc": "tc_costos",
+    "cph_proveedor_mxn": "costo_total_mxn",
+}
+# TOTALES de la variante: los del API por atributo (los mismos de siempre;
+# las columnas repetidas llevan el total de su dato). Las columnas del bloque
+# que el API no totaliza (COSTO X HORA, IVA X HR, TOTAL PARA PROVEEDOR
+# (DLLS), IVA TOTAL PAGADO y TOTAL PAGADO S/IVA) van sin total: aquí no se
+# inventa ninguno.
+_TOTAL_MAP_GENERAL = {
+    **{k: t for k, t in _TOTAL_MAP.items() if any(c[2] == k for c in _COLS_GENERAL)},
+    **{k: _TOTAL_MAP[a] for k, a in _ORIGEN_GENERAL.items()},
+}
+# Título del bloque nuevo en la fila de grupos: el encabezado de la hoja dice
+# que es el «Balance general» (A1:D1 son las constantes y no se mueven).
+_TITULO_GRUPO_COSTO_HORA = "BALANCE GENERAL · COSTO POR HORA"
+# Ancho de las 12 columnas del bloque: sus encabezados son más largos.
+_ANCHO_COSTO_HORA = 15
+
+
+@dataclass(frozen=True)
+class _Disposicion:
+    """Juego de columnas de la hoja maestra (6-oct-2026): el de siempre
+    (`_COLS`: libro individual y Balance mensual) o el del Balance general
+    (`_COLS_GENERAL`). Todo lo que la hoja y las demás pestañas necesitan
+    saber de las columnas sale de aquí, por LLAVE — nunca una letra fija."""
+
+    cols: tuple[tuple[str, str, str | None, str | None], ...]
+    letra: dict[str, str]  # llave → letra de su columna
+    cobro1_col: int
+    cobro_mxn_letras: tuple[str, ...]
+    comision_col: int | None
+    total_map: dict[str, str]
+    fills: dict[str, str]
+    detalle_attr: dict[str, str]
+    titulos_grupo: dict[str, str]
+    costo_por_hora: bool
+
+
+def _disposicion(
+    cols: list[tuple[str, str, str | None, str | None]],
+    *,
+    total_map: dict[str, str],
+    fills: dict[str, str],
+    detalle_attr: dict[str, str],
+    titulos_grupo: dict[str, str] | None = None,
+    costo_por_hora: bool = False,
+) -> _Disposicion:
+    claves = [c[2] for c in cols if c[2]]
+    if len(claves) != len(set(claves)):
+        raise ValueError("llave de columna repetida en la hoja maestra")
+    cobro1 = next(i for i, c in enumerate(cols, start=1) if c[1] == "COBRO 1\nFECHA")
+    return _Disposicion(
+        cols=tuple(cols),
+        letra={c[2]: get_column_letter(i) for i, c in enumerate(cols, start=1) if c[2]},
+        cobro1_col=cobro1,
+        cobro_mxn_letras=tuple(get_column_letter(cobro1 + 1 + 2 * k) for k in range(4)),
+        comision_col=next(
+            (i for i, c in enumerate(cols, start=1) if c[2] == "comision_vendedor_mxn"), None
+        ),
+        total_map=total_map,
+        fills=fills,
+        detalle_attr=detalle_attr,
+        titulos_grupo=titulos_grupo or {},
+        costo_por_hora=costo_por_hora,
+    )
+
+
+_DISP_MENSUAL = _disposicion(
+    _COLS, total_map=_TOTAL_MAP, fills=_GROUP_FILLS, detalle_attr=_DETALLE_ATTR
+)
+_DISP_GENERAL = _disposicion(
+    _COLS_GENERAL,
+    total_map=_TOTAL_MAP_GENERAL,
+    fills={"VENTA": FILL_VENTA, _GRUPO_COSTO_TOTAL: FILL_COSTOS, "STATUS DE COBROS": FILL_COBROS},
+    # El desglose de operación/piloto/otros/AFAC va en UNA nota, la de TOTAL
+    # PARA PROVEEDOR (PESOS) (`_nota_desglose_costo`).
+    detalle_attr={},
+    titulos_grupo={_GRUPO_COSTO_HORA: _TITULO_GRUPO_COSTO_HORA},
+    costo_por_hora=True,
+)
+
+
+def _resta(a: float | None, b: float | None) -> float | None:
+    """Diferencia de dos montos que YA manda el API (dos columnas del bloque
+    COSTO POR HORA son la resta de otras dos, como en la hoja del cliente):
+    None si falta un lado (celda vacía, nunca un 0 falso)."""
+    if a is None or b is None:
+        return None
+    return round(a - b, 2)
+
+
+def _valor_columna(clave: str, v: BalanceAvionVuelo) -> float | str | None:
+    """Valor de la celda de la columna `clave` en la fila del vuelo `v`: el
+    atributo del vuelo tal cual (o el que repite, `_ORIGEN_GENERAL`); IVA X
+    HR y TOTAL PAGADO S/IVA son la resta de dos campos del API."""
+    if clave == "cph_iva_hr_usd":  # COSTO HR MÁS IVA − COSTO X HORA
+        return _resta(v.costo_hr_usd, v.costo_hr_usd_siva)
+    if clave == "cph_pagado_siva_mxn":  # TOTAL PARA PROVEEDOR − IVA PAGADO
+        return _resta(v.costo_total_mxn, v.iva_pagado_mxn)
+    return getattr(v, _ORIGEN_GENERAL.get(clave, clave))
+
+
+class _ColumnaAusente(Exception):  # noqa: N818 - no es un error: es una señal
+    """La fórmula de una celda cita una columna que no está en la variante
+    de la hoja: la celda va como VALOR del API («calculado por el sistema»)."""
 
 
 @dataclass(frozen=True)
@@ -368,19 +533,26 @@ class _Maestra:
     fila_fin: int  # < fila_ini si el periodo no tiene vuelos
     fila_tot: int
     general: bool
+    disp: _Disposicion  # juego de columnas de la hoja (6-oct-2026)
 
     @property
     def hay_filas(self) -> bool:
         return self.fila_fin >= self.fila_ini
 
-    def total(self, attr: str) -> str:
-        """Celda TOTALES de la columna `attr` (absoluta, con la hoja)."""
-        return _ref_hoja(self.titulo, f"${_LETRA[attr]}${self.fila_tot}")
+    def total(self, attr: str) -> str | None:
+        """Celda TOTALES de la columna `attr` (absoluta, con la hoja). None si
+        la columna no está en esta variante de la hoja: quien la cite escribe
+        el VALOR del API con nota «calculado por el sistema»
+        (`_formula_cita`)."""
+        letra = self.disp.letra.get(attr)
+        if letra is None:
+            return None
+        return _ref_hoja(self.titulo, f"${letra}${self.fila_tot}")
 
     def rango(self, attr: str, *, local: bool = False) -> str:
         """Filas de vuelo de la columna `attr` (absoluto; con la hoja salvo
         `local`, para fórmulas de la propia hoja maestra)."""
-        letra = _LETRA[attr]
+        letra = self.disp.letra[attr]
         celdas = f"${letra}${self.fila_ini}:${letra}${self.fila_fin}"
         return celdas if local else _ref_hoja(self.titulo, celdas)
 
@@ -402,13 +574,24 @@ def _formula_fila(
     *,
     hay_afac: bool,
     tc_prom_filas: str | None,
+    disp: _Disposicion = _DISP_MENSUAL,
 ) -> str | None:
     """Fórmula de la celda `attr` en la fila `r` de un vuelo, o None si la
-    celda va como valor. Espejo de la fila del API (paso 2 de buildPayload)."""
+    celda va como valor. Espejo de la fila del API (paso 2 de buildPayload).
+    Las columnas se citan por su llave en `disp`; si la fórmula necesita una
+    que la variante no tiene, levanta `_ColumnaAusente` (la celda va como
+    valor)."""
 
     def c(a: str) -> str:
-        return f"{_LETRA[a]}{r}"
+        letra = disp.letra.get(a)
+        if letra is None:
+            raise _ColumnaAusente(a)
+        return f"{letra}{r}"
 
+    if disp.costo_por_hora:
+        formula = _formula_costo_por_hora(attr, c)
+        if formula is not None:
+            return formula
     if attr == "total_mxn":  # [L] = round2(I × K)
         return f"ROUND({c('total_usd')}*{c('tc_venta')},2)"
     if attr == "iva_mxn":  # [M] = round2(J × K)
@@ -446,7 +629,7 @@ def _formula_fila(
     if attr == "costo_hr_usd_siva":  # [AO] = AN / 1.16
         return f"{c('costo_hr_usd')}/{_CELDA_FACTOR_IVA}"
     if attr == "cobrado_real_mxn":  # Σ COBRO 1..4 MXN (el API cuadra la última)
-        cobros = ",".join(f"{letra}{r}" for letra in _COBRO_MXN_LETRAS)
+        cobros = ",".join(f"{letra}{r}" for letra in disp.cobro_mxn_letras)
         return f"ROUND(SUM({cobros}),2)"
     if attr == "por_cobrar_mxn":  # round2(L − cobrado avión)
         return f"ROUND({c('total_mxn')}-{c('cobrado_mxn')},2)"
@@ -455,21 +638,56 @@ def _formula_fila(
     return None
 
 
+def _formula_costo_por_hora(attr: str | None, c) -> str | None:
+    """Fórmulas del bloque COSTO POR HORA de la variante general (6-oct-2026)
+    o None si `attr` no es del bloque (o es un dato: TIEMPO, TIPO CAMBIO y
+    TOTAL PARA PROVEEDOR (PESOS) van como valor). El bloque se cita a sí
+    mismo, como la hoja «utilidades» del cliente, y cada fórmula es la
+    MISMA aritmética del API (letras de su fila entre corchetes; ROUND solo
+    donde el API hace round2): Y = costo total, z = T.C. de costos, O =
+    tiempo de vuelo. `c(llave)` da la celda de la fila."""
+    if attr == "cph_cobrado_siva_mxn":  # TOTAL S/IVA [N] = round2(L − M)
+        return f"ROUND({c('total_mxn')}-{c('iva_mxn')},2)"
+    if attr == "costo_hr_usd_siva":  # COSTO X HORA [AO] = Y / z / O / 1.16
+        return f"{c('cph_proveedor_mxn')}/{c('cph_tc')}/{c('cph_tiempo_hr')}/{_CELDA_FACTOR_IVA}"
+    if attr == "cph_iva_hr_usd":
+        # IVA X HR = COSTO HR MÁS IVA − COSTO X HORA tal como el API los manda
+        # (round2 de AN y de AO): se redondean donde el API redondea. Con la
+        # resta de las celdas completas (AN − AO) una de cada cuatro filas no
+        # daría la diferencia de los dos números a la vista y la celda se
+        # quedaba como valor (medido con 20 000 filas, 6-oct-2026).
+        return f"ROUND(ROUND({c('costo_hr_usd')},2)-ROUND({c('costo_hr_usd_siva')},2),2)"
+    if attr == "costo_hr_usd":  # COSTO HR MÁS IVA [AN] = AE / O
+        return f"{c('costo_usd')}/{c('cph_tiempo_hr')}"
+    if attr == "costo_usd":  # TOTAL PARA PROVEEDOR DLLS [AE] = Y / z
+        return f"{c('cph_proveedor_mxn')}/{c('cph_tc')}"
+    if attr == "iva_pagado_usd":  # [AG] = AE − AF, con AF = AE / 1.16
+        return f"{c('costo_usd')}-{c('costo_usd')}/{_CELDA_FACTOR_IVA}"
+    if attr == "iva_pagado_mxn":  # [AH] = AG × z
+        return f"{c('iva_pagado_usd')}*{c('cph_tc')}"
+    if attr == "cph_pagado_siva_mxn":  # TOTAL PAGADO S/IVA = Y − AH
+        return f"{c('cph_proveedor_mxn')}-{c('iva_pagado_mxn')}"
+    if attr == "remanente_mxn":  # REMANENTE [AI] = round2(L − Y)
+        return f"ROUND({c('total_mxn')}-{c('cph_proveedor_mxn')},2)"
+    return None
+
+
 def _formula_total(attr: str, maestra: _Maestra) -> str | None:
     """Fórmula de la fila TOTALES para la columna `attr` (None = valor)."""
     if not maestra.hay_filas:
         return None
-    letra = _LETRA[attr]
+    letra = maestra.disp.letra[attr]
     rango = f"{letra}{maestra.fila_ini}:{letra}{maestra.fila_fin}"
-    if attr in _TOTAL_SUMA:  # round2(Σ filas)
+    total_attr = maestra.disp.total_map.get(attr)
+    if total_attr not in _TOTALES_PROMEDIO:  # round2(Σ filas)
         return f"ROUND(SUM({rango}),2)"
     if maestra.general:
         # Consolidado: promedio de los promedios de cada libro (no está en
         # las celdas de esta hoja) — valor.
         return None
-    if attr == "tc_costos":  # tc_promedio = round2(promedio de z no nulos)
+    if total_attr == "tc_promedio":  # round2(promedio de z no nulos)
         return f"ROUND(AVERAGE({rango}),2)"
-    if attr == "costo_hr_usd":
+    if total_attr == "costo_hr_prom_usd":
         # costo_hr_prom_usd = round2(promedio de AN con costo > 0): AN > 0
         # ⟺ Y > 0 (z y horas siempre > 0 cuando AN existe).
         return f'ROUND(AVERAGEIF({rango},">0"),2)'
@@ -673,6 +891,55 @@ _NOTA_FACTURA_VUELATOUR = (
 )
 
 
+# Notas al pie de la hoja maestra que la variante general repite tal cual
+# (el texto es el de siempre; solo se nombró para no copiarlo).
+_NOTA_VENTA_AVION = (
+    "* VENTA AVIÓN de cada fila = tiempo de vuelo (tarifa × horas "
+    "cobradas) + ajuste/descuento + su IVA proporcional. IVA VENTA "
+    "AVIÓN (USD y MXN) es SOLO el IVA proporcional de la venta del "
+    "avión — el IVA de TUAs/extras/pernocta/comisión viaja con ellos. "
+    "TUAs, extras, viáticos de pernocta y la COMISIÓN DEL VENDEDOR NO "
+    "son venta del avión: son ingreso de VuelaTour (pestaña 'otros "
+    "movimientos' del Balance general). Sin cotización: horas × tarifa."
+)
+_NOTA_COBRADO_REAL = (
+    "**** COBRADO REAL = Σ de los depósitos tal cual entraron (COBRO "
+    "1..4). COBRADO AVIÓN = depósitos reales × (venta avión ÷ total "
+    "cotización): la parte de los cobros que corresponde a TUAs/extras/"
+    "pernocta/comisión del vendedor es de VuelaTour (ver 'otros "
+    "movimientos'). POR COBRAR "
+    "es la parte del avión. COBRADO AVIÓN y POR COBRAR van al TC de "
+    "venta (un depósito en pesos con su propio TC se pasa a USD con ese "
+    "TC y se re-expresa al TC de venta), así que COBRADO AVIÓN puede "
+    "diferir de COBRADO REAL sin que falte dinero."
+)
+_NOTA_ESTATUS_COBRO = (
+    "El ESTATUS DE COBRO por vuelo (cuánto se cobró, con qué fechas y "
+    "métodos, y cuánto falta) está al frente en la hoja 'cobranza' — el "
+    "bloque STATUS DE COBROS del final de esta hoja trae lo mismo en "
+    "columnas."
+)
+_NOTA_COMPARTIDO = (
+    "*** Filas 'COMPARTIDO' / con porcentaje en la RUTA (vuelo "
+    "MULTI-AVIÓN, regla 28-ago-2026): la fila trae la parte "
+    "proporcional de la VENTA del avión (repartida entre las matrículas "
+    "del vuelo en partes iguales por tramo vendido; los ferries/tramos "
+    "operativos no reparten) y en la misma proporción sus "
+    "horas cobradas, cobros y por cobrar; sus GASTOS son los de su "
+    "avión (los del tramo que voló), sin repartir. TUAs/extras/pernocta/"
+    "comisión del vendedor no son de ningún avión y no se reparten. La "
+    "nota de la celda VENTA AVIÓN USD dice el porcentaje y la base."
+)
+_NOTA_TACOS_AMBAR = (
+    "TACO INICIO / TACO FINAL en ámbar = salto en la cadena de "
+    "tacómetros (el valor esperado está en la nota de la celda) y/u "
+    "OBSERVACIÓN del equipo capturada en Tacómetros en vivo — pasa el "
+    "cursor por la celda para leer el comentario (quién y cuándo). "
+    "TIEMPO VUELO en ámbar = salto entre tramos DEL MISMO vuelo (el "
+    "tramo culpable está en la nota) — mismo amarillo que el panel."
+)
+
+
 # Notas al pie de la hoja maestra sobre los TRASLADOS al pasajero (pie **).
 # La versión «de siempre» habla solo del TUA; la ampliada (1-oct-2026, API
 # 0.0.47, pedido de Ale sobre el #192: la extensión de horario de Chetumal
@@ -737,11 +1004,191 @@ def _hay_pago_vendedor_real(om: BalanceHojaOtrosMovimientos | None) -> bool:
     return om is not None and om.hay_pago_vendedor_real is True
 
 
-def _constantes_maestra(ws: Worksheet, req: BalanceAvionRequest, general: bool) -> bool:
+# ===== Textos y notas de la variante «Balance general» (6-oct-2026) =====
+# Las notas de siempre nombran columnas que la variante ya no tiene
+# (OPERACIONES, COMISIÓN VENDEDOR, GANANCIA, COSTO TOTAL USD, COSTO X HORA
+# USD…); estas dicen lo mismo con las columnas del bloque COSTO POR HORA.
+_CPH_NOTA_AFAC = (
+    "La tarifa AFAC es POR AVIÓN y este Balance general ya no lleva la "
+    "columna PERMISO AFAC: el permiso (provisión) de cada vuelo va dentro de "
+    "COSTO TOTAL y de TOTAL PARA PROVEEDOR (PESOS) — su monto está en la "
+    "nota de esa celda. La fórmula con la tarifa de cada avión está en su "
+    "libro individual (Reportes › Balance por avión)."
+)
+_CPH_NOTA_FACTOR_IVA = (
+    "IVA de los costos (16 %): COSTO X HORA (DLLS S/IVA) = TOTAL PARA "
+    "PROVEEDOR (PESOS) ÷ TIPO CAMBIO ÷ TIEMPO CALZOS/HOBS ÷ este factor e IVA "
+    "TOTAL PAGADO (DLLS) = TOTAL PARA PROVEEDOR (DLLS) − TOTAL PARA PROVEEDOR "
+    "(DLLS) ÷ este factor."
+)
+_CPH_NOTA_BLOQUE = (
+    "BALANCE GENERAL · COSTO POR HORA: COSTO X HORA (DLLS S/IVA) = TOTAL PARA "
+    "PROVEEDOR (PESOS) ÷ TIPO CAMBIO ÷ TIEMPO CALZOS/HOBS ÷ 1.16 — el total de "
+    "todos los gastos del vuelo, entre el tiempo volado, entre el tipo de "
+    "cambio, entre 1.16 para sacar el subtotal. COSTO HR MÁS IVA = TOTAL PARA "
+    "PROVEEDOR (DLLS) ÷ TIEMPO e IVA X HR = la diferencia de las dos. TOTAL "
+    "PARA PROVEEDOR (PESOS) = COSTO TOTAL del vuelo (operación + piloto + "
+    "otros + permiso AFAC, sin combustible): el desglose está en la nota de "
+    "la celda y, por columna, en el Balance mensual. TIPO CAMBIO = el de los "
+    "costos del vuelo."
+)
+_CPH_NOTA_COMISION = (
+    "La COMISIÓN DEL VENDEDOR no es venta ni costo del avión (regla "
+    "28-ago-2026): es ingreso de VuelaTour y su pago al vendedor sale de "
+    "VuelaTour; ambos viven en 'otros movimientos' "
+)
+_CPH_NOTA_REMANENTE = (
+    " REMANENTE VENTA MENOS COMPRA = VENTA AVIÓN MXN − TOTAL PARA PROVEEDOR "
+    "(PESOS), ya sin comisión."
+)
+_CPH_NOTA_TOTALES = (
+    "Fila TOTALES: TIPO CAMBIO COSTOS, TIPO CAMBIO y COSTO HR MÁS IVA son "
+    "PROMEDIOS; COSTO X HORA, IVA X HR, TOTAL PARA PROVEEDOR (DLLS), IVA TOTAL "
+    "PAGADO y TOTAL PAGADO S/IVA son de cada vuelo y van sin total; las demás "
+    "son sumas."
+)
+_CPH_COMBUSTIBLE_COLA_TUA = (
+    " (litros y $/L incluidos) y resta una sola vez en la hoja 'balance'. Por "
+    "eso COSTO TOTAL, TOTAL PARA PROVEEDOR, COSTO X HORA y REMANENTE de las "
+    "filas van SIN combustible (y el TUA pagado tampoco resta, ver **): la "
+    "utilidad real del periodo se lee en la hoja 'balance', no en la fila. "
+    "IVA TOTAL PAGADO también deriva solo de los costos de la fila (sin gas "
+    "ni TUA)."
+)
+_CPH_COMBUSTIBLE_COLA_EXTENSION = (
+    " (litros y $/L incluidos) y resta una sola vez en la hoja 'balance'. Por "
+    "eso COSTO TOTAL, TOTAL PARA PROVEEDOR, COSTO X HORA y REMANENTE de las "
+    "filas van SIN combustible (ni el TUA pagado ni la extensión de horario "
+    "restan, ver **): la utilidad real del periodo se lee en la hoja "
+    "'balance', no en la fila. IVA TOTAL PAGADO también deriva solo de los "
+    "costos de la fila (sin gas, TUA ni extensión de horario)."
+)
+_CPH_TRASLADOS_TUA = (
+    "** El TUA pagado al aeropuerto NO es costo del avión ni resta en ningún "
+    "lado de este libro: queda solo como nota en el desglose de TOTAL PARA "
+    "PROVEEDOR (PESOS) (parte Operación: 'TUA $x**'); cobro y pago del TUA "
+    "viven en 'otros movimientos'. Los servicios FBO sí son costo (parte "
+    "Otros del desglose)."
+)
+_CPH_TRASLADOS_EXTENSION = (
+    "** TUA y extensión de horario (extensión y/o antelación de horario del "
+    "aeropuerto) son traslados al pasajero: NO son costo del avión ni restan "
+    "en ningún lado de este libro; quedan solo como nota en el desglose de "
+    "TOTAL PARA PROVEEDOR (PESOS) (parte Operación: 'TUA $x**', 'Extensión de "
+    "horario (IVA incluido) $x**'); lo cobrado y lo pagado viven en 'otros "
+    "movimientos'. Los servicios FBO sí son costo (parte Otros del desglose)."
+)
+_CPH_RENGLON_TUA = (
+    "TUA pagado del periodo (solo nota en el desglose de TOTAL PARA "
+    "PROVEEDOR, no resta en este libro):"
+)
+_CPH_RENGLON_EXTENSION = (
+    "Extensión de horario pagada del periodo (solo nota en el desglose de "
+    "TOTAL PARA PROVEEDOR, no resta en este libro):"
+)
+# «Calculado por el sistema» (regla del contrato del 6-oct-2026): una celda
+# cuya fórmula de siempre cita columnas que la variante no tiene va como
+# VALOR del API con esta nota (en la hoja maestra, en el encabezado de su
+# columna; en otra hoja, en la celda).
+_NOTA_CALCULADO_POR_SISTEMA = {
+    "costo_total_mxn": (
+        "Calculado por el sistema: COSTO TOTAL = operación + piloto + otros + "
+        "permiso AFAC (provisión) del vuelo, sin combustible. Esas columnas no "
+        "van en este Balance general: el desglose de cada vuelo está en la "
+        "nota de TOTAL PARA PROVEEDOR (PESOS) y en el Balance mensual esta "
+        "celda es la fórmula que las suma."
+    ),
+}
+_NOTA_CALCULADO_POR_SISTEMA_GENERICA = (
+    "Calculado por el sistema: la fórmula de esta columna cita columnas que "
+    "no van en este Balance general (están en el Balance mensual)."
+)
+_NOTA_CALCULADO_POR_SISTEMA_CELDA = (
+    "Calculado por el sistema: la columna de la hoja de vuelos que esta "
+    "fórmula citaría no va en este Balance general (está en el Balance "
+    "mensual)."
+)
+# Partes del COSTO TOTAL de un vuelo, en el orden de sus columnas del Balance
+# mensual: nombre en la nota, monto del API y líneas de detalle de su nota.
+_PARTES_COSTO_TOTAL = (
+    ("Operación", "op_mxn", "op_detalle"),
+    ("Piloto", "piloto_mxn", "piloto_detalle"),
+    ("Otros", "otros_mxn", "otros_detalle"),
+    ("Permiso AFAC", "permiso_afac_mxn", None),
+)
+# Caracteres por renglón de la nota del desglose (340 de ancho), para el alto.
+_CHARS_RENGLON_DESGLOSE = 52
+
+
+def _nota_desglose_costo(v: BalanceAvionVuelo) -> str | None:
+    """Nota de TOTAL PARA PROVEEDOR (PESOS) en la variante general: arriba
+    «Operación $x · Piloto $y · Otros $z · Permiso AFAC $w» (los montos que
+    el API manda; None se omite) y debajo, por parte, las MISMAS líneas de
+    las notas de OPERACIONES / PILOTO / OTROS del Balance mensual. Aquí no se
+    suma nada. None si el vuelo no trae costo ni detalle (sin nota)."""
+    partes = [
+        (nombre, getattr(v, attr), list(getattr(v, det)) if det else [])
+        for nombre, attr, det in _PARTES_COSTO_TOTAL
+    ]
+    con_monto = [(nombre, m) for nombre, m, _lineas in partes if m is not None]
+    if not any(m for _n, m in con_monto) and not any(lineas for *_x, lineas in partes):
+        return None
+    bloques = []
+    if con_monto:
+        bloques.append(" · ".join(f"{nombre} {_monto_nota(m)}" for nombre, m in con_monto))
+    for nombre, _m, lineas in partes:
+        if lineas:
+            bloques.append(f"{nombre}:\n" + "\n".join(lineas))
+    return "\n\n".join(bloques)
+
+
+def _comentario_desglose(texto: str) -> Comment:
+    """Nota del desglose (340 de ancho, como las de OPERACIONES / PILOTO /
+    OTROS del Balance mensual) con el alto según los renglones que envuelve."""
+    renglones = sum(max(1, math.ceil(len(x) / _CHARS_RENGLON_DESGLOSE)) for x in texto.split("\n"))
+    com = Comment(texto, "VuelaTour")
+    com.width = 340
+    com.height = max(70, min(300, 24 + 16 * renglones))
+    return com
+
+
+def _notas_pie_costo_por_hora(req: BalanceAvionRequest, hay_extension: bool) -> tuple[str, ...]:
+    """Notas al pie de la hoja maestra en la variante general: las de siempre
+    que siguen siendo verdad tal cual y, en lugar de las que nombran
+    columnas que la variante ya no tiene, su versión con las columnas del
+    bloque COSTO POR HORA, en el mismo orden; la del bloque nuevo va después
+    de la de VENTA."""
+    pago_vendedor = (
+        _MAESTRA_PAGO_VENDEDOR_REAL
+        if _hay_pago_vendedor_real(req.otros_movimientos)
+        else _MAESTRA_PAGO_VENDEDOR_PROVISION
+    )
+    return (
+        _NOTA_VENTA_AVION,
+        _CPH_NOTA_BLOQUE,
+        _CPH_NOTA_COMISION + pago_vendedor + _CPH_NOTA_REMANENTE,
+        _NOTA_COBRADO_REAL,
+        _CPH_NOTA_TOTALES,
+        _NOTA_ESTATUS_COBRO,
+        _NOTA_FACTURA_VUELATOUR,
+        _NOTA_COMBUSTIBLE_FILAS_SIN_GAS
+        + " del libro individual de cada avión"
+        + (_CPH_COMBUSTIBLE_COLA_EXTENSION if hay_extension else _CPH_COMBUSTIBLE_COLA_TUA),
+        _CPH_TRASLADOS_EXTENSION if hay_extension else _CPH_TRASLADOS_TUA,
+        _NOTA_COMPARTIDO,
+        _NOTA_TACOS_AMBAR,
+    )
+
+
+def _constantes_maestra(
+    ws: Worksheet, req: BalanceAvionRequest, general: bool, *, costo_por_hora: bool = False
+) -> bool:
     """Constantes del encabezado (5-oct-2026), en la fila 1 de CLAVE..ESTADO:
     «Permiso AFAC USD/hr» en B1 y «Factor IVA costos» (1.16) en D1. Devuelve
     True si hay tarifa AFAC (la columna PERMISO AFAC lleva fórmula). En el
-    GENERAL la tarifa es por avión: celda vacía y la columna como valor."""
+    GENERAL la tarifa es por avión: celda vacía y la columna como valor.
+    `costo_por_hora` (variante general, 6-oct-2026): las dos constantes se
+    conservan (COSTO X HORA cita $D$1) y sus notas hablan de sus columnas."""
     afac = None if general else req.permiso_afac_usd_hr
     hay_afac = afac is not None and afac > 0
     for col, texto in ((1, "Permiso AFAC USD/hr"), (3, "Factor IVA costos")):
@@ -757,6 +1204,8 @@ def _constantes_maestra(ws: Worksheet, req: BalanceAvionRequest, general: bool) 
             "(PROVISIÓN) de cada vuelo = ROUND(esta tarifa × TIPO CAMBIO "
             "COSTOS × HORAS COBRADAS, 2)."
         )
+    elif costo_por_hora:
+        texto_afac = _CPH_NOTA_AFAC
     elif general:
         texto_afac = (
             "La tarifa AFAC es POR AVIÓN: en el Balance general la columna "
@@ -772,80 +1221,95 @@ def _constantes_maestra(ws: Worksheet, req: BalanceAvionRequest, general: bool) 
         )
     nota_afac = Comment(texto_afac, "VuelaTour")
     nota_afac.width = 320
-    nota_afac.height = 80
+    nota_afac.height = 110 if costo_por_hora else 80
     ca.comment = nota_afac
     cf = _num(ws, 1, 4, FACTOR_IVA_COSTOS, "0.00", bold=True)
     cf.fill = PatternFill("solid", fgColor=FILL_COSTOS)
     cf.border = _border
     nota_iva = Comment(
-        "IVA de los costos (16 %): COSTO TOTAL USD S/IVA = COSTO TOTAL USD ÷ "
+        _CPH_NOTA_FACTOR_IVA
+        if costo_por_hora
+        else "IVA de los costos (16 %): COSTO TOTAL USD S/IVA = COSTO TOTAL USD ÷ "
         "este factor y COSTO X HORA USD S/IVA = COSTO X HORA USD ÷ este "
         "factor.",
         "VuelaTour",
     )
     nota_iva.width = 300
-    nota_iva.height = 70
+    nota_iva.height = 100 if costo_por_hora else 70
     cf.comment = nota_iva
     return hay_afac
 
 
-def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
-                  general: bool = False) -> _Maestra:
+def _hoja_maestra(
+    ws: Worksheet, req: BalanceAvionRequest, *, general: bool = False, costo_por_hora: bool = False
+) -> _Maestra:
     # `general` solo ajusta las notas al pie (29-ago): en el Balance general
     # las hojas 'combustible'/'Gastos Indirectos'/'permisos' ya no existen —
     # viven en el libro individual de cada avión. Desde el 5-oct-2026 también
     # decide qué fórmulas caben (la tarifa AFAC y el TC promedio de cada libro
     # no están en el consolidado). Devuelve dónde quedó la hoja para que las
     # demás la citen en sus fórmulas.
+    # `costo_por_hora` (6-oct-2026, API 0.0.64; solo con `general`): la
+    # variante «Balance general» — columnas `_COLS_GENERAL` (COSTO TOTAL y el
+    # bloque COSTO POR HORA en lugar de operaciones/piloto/otros/AFAC e
+    # indicadores). Sin ella, el libro de siempre (Balance mensual),
+    # byte-idéntico.
+    disp = _DISP_GENERAL if general and costo_por_hora else _DISP_MENSUAL
+    cols = disp.cols
     ws.title = sheet_title(f"reporte horas {req.matricula}")
-    n = len(_COLS)
+    n = len(cols)
     maestra = _Maestra(
         titulo=ws.title,
         fila_ini=3,
         fila_fin=2 + len(req.vuelos),
         fila_tot=3 + len(req.vuelos),
         general=general,
+        disp=disp,
     )
 
     # Encabezado compacto de 2 filas: grupo (merged) / columna.
     col = 1
     while col <= n:
-        grupo = _COLS[col - 1][0]
+        grupo = cols[col - 1][0]
         fin = col
-        while fin < n and _COLS[fin][0] == grupo:
+        while fin < n and cols[fin][0] == grupo:
             fin += 1
         if grupo:
-            c = ws.cell(row=1, column=col, value=grupo)
+            c = ws.cell(row=1, column=col, value=disp.titulos_grupo.get(grupo, grupo))
             c.font = Font(bold=True, color="FFFFFF", size=10)
             c.fill = PatternFill("solid", fgColor=NAVY)
             c.alignment = Alignment(horizontal="center", vertical="center")
             if fin > col:
                 ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=fin)
         col = fin + 1
-    for i, (grupo, header, _attr, _fmt) in enumerate(_COLS, start=1):
+    for i, (grupo, header, _attr, _fmt) in enumerate(cols, start=1):
         c = ws.cell(row=2, column=i, value=header)
         c.font = Font(bold=True, color=NAVY, size=8)
-        c.fill = PatternFill("solid", fgColor=_GROUP_FILLS.get(grupo, LIGHT))
+        c.fill = PatternFill("solid", fgColor=disp.fills.get(grupo, LIGHT))
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = _border
     ws.row_dimensions[2].height = 38
     # Regla A (28-ago-2026 tarde): la columna COMISIÓN VENDEDOR se conserva
-    # por layout pero llega vacía — la nota del encabezado lo explica.
-    nota_com = Comment(
-        "Vacía desde el 28-ago-2026: la comisión del vendedor ya no es venta "
-        "ni costo del avión. Es ingreso de VuelaTour y su pago al vendedor "
-        "sale de VuelaTour: ambos en 'otros movimientos' del Balance general.",
-        "VuelaTour",
-    )
-    nota_com.width = 300
-    nota_com.height = 90
-    ws.cell(row=2, column=_COMISION_COL).comment = nota_com
-    hay_afac = _constantes_maestra(ws, req, general)
+    # por layout pero llega vacía — la nota del encabezado lo explica. (La
+    # variante general no la tiene.)
+    if disp.comision_col is not None:
+        nota_com = Comment(
+            "Vacía desde el 28-ago-2026: la comisión del vendedor ya no es venta "
+            "ni costo del avión. Es ingreso de VuelaTour y su pago al vendedor "
+            "sale de VuelaTour: ambos en 'otros movimientos' del Balance general.",
+            "VuelaTour",
+        )
+        nota_com.width = 300
+        nota_com.height = 90
+        ws.cell(row=2, column=disp.comision_col).comment = nota_com
+    hay_afac = _constantes_maestra(ws, req, general, costo_por_hora=disp.costo_por_hora)
     # Fila sin TC de costos: GANANCIA USD divide entre el TC promedio CRUDO
     # del libro (z ?? tcPromedio del API).
     tc_prom_filas = maestra.tc_promedio_crudo(local=True)
 
-    # Datos: 1 fila por vuelo.
+    # Datos: 1 fila por vuelo. `calculadas` = columnas cuya fórmula de siempre
+    # cita columnas que la variante no tiene (van como valor del API).
+    calculadas: set[int] = set()
     row = 3
     for v in req.vuelos:
         cobros = _cobros_a_4(v.cobros)
@@ -870,12 +1334,12 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
         # la clave va en GRIS e itálica para distinguirlo de las matrículas.
         if v.es_externo and not avion_fill:
             avion_fill = "E5E7EB"
-        for i, (grupo, _header, attr, fmt) in enumerate(_COLS, start=1):
-            fill = _GROUP_FILLS.get(grupo)
+        for i, (grupo, _header, attr, fmt) in enumerate(cols, start=1):
+            fill = disp.fills.get(grupo)
             if i == 1 and avion_fill:
                 fill = avion_fill
             if attr is not None:
-                val = getattr(v, attr)
+                val = _valor_columna(attr, v)
                 if fmt is None:
                     cell = ws.cell(row=row, column=i, value=_fecha(val) if attr == "fecha" else val)
                     if attr == "factura_vuelatour":
@@ -894,16 +1358,24 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
                     if attr == "status_cobro" and nota_status:
                         cell.comment = _comentario_cobro(nota_status)
                 else:
-                    cell = _formula(
-                        ws,
-                        row,
-                        i,
-                        _formula_fila(
-                            attr, v, row, hay_afac=hay_afac, tc_prom_filas=tc_prom_filas
-                        ),
-                        val,
-                        fmt,
-                    )
+                    try:
+                        formula = _formula_fila(
+                            attr,
+                            v,
+                            row,
+                            hay_afac=hay_afac,
+                            tc_prom_filas=tc_prom_filas,
+                            disp=disp,
+                        )
+                    except _ColumnaAusente:
+                        # Variante general: COSTO TOTAL = operación + piloto +
+                        # otros + AFAC, columnas que ya no están ⇒ VALOR del
+                        # API, «calculado por el sistema» (nota en su
+                        # encabezado, abajo).
+                        formula = None
+                        if val is not None:
+                            calculadas.add(i)
+                    cell = _formula(ws, row, i, formula, val, fmt)
                 if attr == "horas_cobradas" and horas_menores:
                     fill = AMBER
                 # Vuelo MULTI-AVIÓN (regla B, 28-ago-2026): la VENTA de la
@@ -969,7 +1441,7 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
                     cell.comment = nota_tf
                 # Nota con el desglose del total de la celda (gastos que la
                 # componen), visible al pasar el cursor en Excel.
-                det_attr = _DETALLE_ATTR.get(attr)
+                det_attr = disp.detalle_attr.get(attr)
                 if det_attr:
                     lineas = getattr(v, det_attr, None) or []
                     if lineas:
@@ -977,8 +1449,15 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
                         nota.width = 340
                         nota.height = min(260, 40 + 16 * len(lineas))
                         cell.comment = nota
-            else:  # parcialidades de cobro (pares fecha/monto desde _COBRO1_COL)
-                idx = (i - _COBRO1_COL) // 2
+                # Variante general: el desglose operación / piloto / otros /
+                # AFAC (columnas del Balance mensual) va en UNA nota, la de
+                # TOTAL PARA PROVEEDOR (PESOS).
+                if attr == "cph_proveedor_mxn":
+                    nota_costo = _nota_desglose_costo(v)
+                    if nota_costo:
+                        cell.comment = _comentario_desglose(nota_costo)
+            else:  # parcialidades de cobro (pares fecha/monto desde COBRO 1)
+                idx = (i - disp.cobro1_col) // 2
                 cobro = cobros[idx] if idx < len(cobros) else None
                 if fmt is None:
                     cell = ws.cell(row=row, column=i, value=_fecha(cobro.fecha) if cobro else None)
@@ -992,13 +1471,26 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
                 cell.fill = PatternFill("solid", fgColor=fill)
         row += 1
 
+    # «Calculado por el sistema» (variante general): la nota va UNA vez, en
+    # el encabezado de la columna.
+    for i in sorted(calculadas):
+        nota_sis = Comment(
+            _NOTA_CALCULADO_POR_SISTEMA.get(
+                cols[i - 1][2] or "", _NOTA_CALCULADO_POR_SISTEMA_GENERICA
+            ),
+            "VuelaTour",
+        )
+        nota_sis.width = 320
+        nota_sis.height = 120
+        ws.cell(row=2, column=i).comment = nota_sis
+
     # Fila TOTALES al final (sumas y promedios YA calculados por el API; desde
     # el 5-oct-2026 como fórmulas SUM/AVERAGE visibles con ese número).
     t = req.totales
     ws.cell(row=row, column=1, value="TOTALES").font = Font(bold=True)
-    for i, (_grupo, _header, attr, fmt) in enumerate(_COLS, start=1):
+    for i, (_grupo, _header, attr, fmt) in enumerate(cols, start=1):
         cell = ws.cell(row=row, column=i)
-        total_attr = _TOTAL_MAP.get(attr) if attr else None
+        total_attr = disp.total_map.get(attr) if attr else None
         if total_attr is not None:
             cell = _formula(
                 ws,
@@ -1046,8 +1538,9 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
         ws.cell(
             row=row,
             column=1,
-            value="TUA pagado del periodo (solo nota en OPERACIONES, no resta "
-            "en este libro):",
+            value=_CPH_RENGLON_TUA
+            if disp.costo_por_hora
+            else "TUA pagado del periodo (solo nota en OPERACIONES, no resta en este libro):",
         ).font = Font(bold=True, size=9)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
         _num(ws, row, 9, tua, MONEY, bold=True)
@@ -1062,7 +1555,9 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
         ws.cell(
             row=row,
             column=1,
-            value="Extensión de horario pagada del periodo (solo nota en "
+            value=_CPH_RENGLON_EXTENSION
+            if disp.costo_por_hora
+            else "Extensión de horario pagada del periodo (solo nota en "
             "OPERACIONES, no resta en este libro):",
         ).font = Font(bold=True, size=9)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
@@ -1072,15 +1567,9 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
     row += 1
     hay_extension = _hay_extension_pagada(req)
 
-    # Notas al pie.
-    for nota in (
-        "* VENTA AVIÓN de cada fila = tiempo de vuelo (tarifa × horas "
-        "cobradas) + ajuste/descuento + su IVA proporcional. IVA VENTA "
-        "AVIÓN (USD y MXN) es SOLO el IVA proporcional de la venta del "
-        "avión — el IVA de TUAs/extras/pernocta/comisión viaja con ellos. "
-        "TUAs, extras, viáticos de pernocta y la COMISIÓN DEL VENDEDOR NO "
-        "son venta del avión: son ingreso de VuelaTour (pestaña 'otros "
-        "movimientos' del Balance general). Sin cotización: horas × tarifa.",
+    # Notas al pie (las de la variante general: `_notas_pie_costo_por_hora`).
+    notas_pie = (
+        _NOTA_VENTA_AVION,
         "COMISIÓN VENDEDOR MXN va vacía a propósito (regla 28-ago-2026): la "
         "comisión del vendedor ya no es venta ni costo del avión — es "
         "ingreso de VuelaTour y su pago al vendedor sale de VuelaTour; "
@@ -1092,21 +1581,10 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
         )
         + " GANANCIA de la fila = REMANENTE (VENTA − COSTO TOTAL), ya sin "
         "comisión.",
-        "**** COBRADO REAL = Σ de los depósitos tal cual entraron (COBRO "
-        "1..4). COBRADO AVIÓN = depósitos reales × (venta avión ÷ total "
-        "cotización): la parte de los cobros que corresponde a TUAs/extras/"
-        "pernocta/comisión del vendedor es de VuelaTour (ver 'otros "
-        "movimientos'). POR COBRAR "
-        "es la parte del avión. COBRADO AVIÓN y POR COBRAR van al TC de "
-        "venta (un depósito en pesos con su propio TC se pasa a USD con ese "
-        "TC y se re-expresa al TC de venta), así que COBRADO AVIÓN puede "
-        "diferir de COBRADO REAL sin que falte dinero.",
+        _NOTA_COBRADO_REAL,
         "TIPO CAMBIO COSTOS y COSTO X HORA USD de la fila TOTALES son PROMEDIOS "
         "(los demás son sumas).",
-        "El ESTATUS DE COBRO por vuelo (cuánto se cobró, con qué fechas y "
-        "métodos, y cuánto falta) está al frente en la hoja 'cobranza' — el "
-        "bloque STATUS DE COBROS del final de esta hoja trae lo mismo en "
-        "columnas.",
+        _NOTA_ESTATUS_COBRO,
         _NOTA_FACTURA_VUELATOUR,
         _NOTA_COMBUSTIBLE_FILAS_SIN_GAS
         + (" del libro individual de cada avión" if general else "")
@@ -1116,33 +1594,25 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
             else _NOTA_COMBUSTIBLE_COLA_TUA
         ),
         _NOTA_TRASLADOS_EXTENSION if hay_extension else _NOTA_TRASLADOS_TUA,
-        "*** Filas 'COMPARTIDO' / con porcentaje en la RUTA (vuelo "
-        "MULTI-AVIÓN, regla 28-ago-2026): la fila trae la parte "
-        "proporcional de la VENTA del avión (repartida entre las matrículas "
-        "del vuelo en partes iguales por tramo vendido; los ferries/tramos "
-        "operativos no reparten) y en la misma proporción sus "
-        "horas cobradas, cobros y por cobrar; sus GASTOS son los de su "
-        "avión (los del tramo que voló), sin repartir. TUAs/extras/pernocta/"
-        "comisión del vendedor no son de ningún avión y no se reparten. La "
-        "nota de la celda VENTA AVIÓN USD dice el porcentaje y la base.",
-        "TACO INICIO / TACO FINAL en ámbar = salto en la cadena de "
-        "tacómetros (el valor esperado está en la nota de la celda) y/u "
-        "OBSERVACIÓN del equipo capturada en Tacómetros en vivo — pasa el "
-        "cursor por la celda para leer el comentario (quién y cuándo). "
-        "TIEMPO VUELO en ámbar = salto entre tramos DEL MISMO vuelo (el "
-        "tramo culpable está en la nota) — mismo amarillo que el panel.",
-    ):
+        _NOTA_COMPARTIDO,
+        _NOTA_TACOS_AMBAR,
+    )
+    if disp.costo_por_hora:
+        notas_pie = _notas_pie_costo_por_hora(req, hay_extension)
+    for nota in notas_pie:
         ws.cell(row=row, column=1, value=nota).font = Font(color=MUTED, size=9, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=14)
         row += 1
 
     # Anchos + paneles congelados (bajo el encabezado, a la derecha de RUTA).
     anchos = {1: 16, 2: 12, 3: 34, 4: 12}
-    for i, (_g, _h, attr, _f) in enumerate(_COLS, start=1):
+    for i, (grupo, _h, attr, _f) in enumerate(cols, start=1):
         if attr in ("cobrado_real_mxn", "cobrado_mxn"):
             anchos[i] = 17
         elif attr == "factura_vuelatour":
             anchos[i] = 16
+        elif grupo == _GRUPO_COSTO_HORA:
+            anchos[i] = _ANCHO_COSTO_HORA
     for i in range(1, n + 1):
         ws.column_dimensions[get_column_letter(i)].width = anchos.get(i, 13)
     ws.freeze_panes = "D3"
@@ -1156,6 +1626,36 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
 # redondeado); None = valor (hojas de FLOTA: Σ de los USD de cada avión).
 _USD_TC_LIBRO = "tc_libro"
 _USD_TC_CELDA = "tc_celda"
+
+
+_CAMPO_PLANTILLA = re.compile(r"\{(\w+)\}")
+
+
+def _formula_cita(
+    ws: Worksheet,
+    row: int,
+    col: int,
+    maestra: _Maestra | None,
+    plantilla: str,
+    valor: float | None,
+    fmt: str = MONEY,
+    **font,
+):
+    """Celda de otra hoja que cita la fila TOTALES de la hoja maestra: cada
+    `{llave}` de `plantilla` es la celda TOTALES de esa columna («{tc_costos}»,
+    «ROUND(E5/{tiempo_vuelo},2)»). Sin maestra, el valor del API (como
+    siempre). Si la variante de la hoja no tiene alguna de esas columnas
+    (6-oct-2026), el VALOR del API con nota «calculado por el sistema» —
+    jamás una referencia a una columna que no existe."""
+    if maestra is None:
+        return _formula(ws, row, col, None, valor, fmt, **font)
+    refs = {campo: maestra.total(campo) for campo in _CAMPO_PLANTILLA.findall(plantilla)}
+    if any(ref is None for ref in refs.values()):
+        cell = _formula(ws, row, col, None, valor, fmt, **font)
+        if valor is not None:
+            cell.comment = _nota_celda(_NOTA_CALCULADO_POR_SISTEMA_CELDA)
+        return cell
+    return _formula(ws, row, col, plantilla.format(**refs), valor, fmt, **font)
 
 
 def _usd_de_mxn(modo: str | None, mxn: str, tc: str, maestra: _Maestra | None) -> str | None:
@@ -1211,15 +1711,9 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
         ws, 5, 1, f"ROUND(SUM(D8:D{ultima}),2)" if hoja.filas else None,
         hoja.total_mxn, MONEY, bold=True,
     )
-    _formula(
-        ws, 5, 2, maestra.total("tc_costos") if maestra else None,
-        req.totales.tc_promedio, TC,
-    )
+    _formula_cita(ws, 5, 2, maestra, "{tc_costos}", req.totales.tc_promedio, TC)
     _formula(ws, 5, 3, _usd_de_mxn(usd, "A5", "B5", maestra), hoja.usd, MONEY, bold=True)
-    _formula(
-        ws, 5, 4, maestra.total("tiempo_vuelo") if maestra else None,
-        req.totales.tiempo_vuelo, HORAS,
-    )
+    _formula_cita(ws, 5, 4, maestra, "{tiempo_vuelo}", req.totales.tiempo_vuelo, HORAS)
     _formula(ws, 5, 5, "ROUND(C5/D5,2)", hoja.usd_hr, MONEY)
     for c in range(1, 6):
         ws.cell(row=5, column=c).border = _border
@@ -1661,14 +2155,9 @@ def _hoja_combustible(ws: Worksheet, hoja: BalanceAvionHojaCombustible,
     _formula(ws, 5, 2, f"ROUND(SUM({litros_celdas}),2)" if rangos_cargas else None,
              hoja.litros_total, HORAS)
     _formula(ws, 5, 3, "ROUND(A5/B5,2)", hoja.precio_litro_prom, MONEY)
-    _formula(ws, 5, 4, maestra.total("tc_costos") if maestra else None,
-             req.totales.tc_promedio, TC)
+    _formula_cita(ws, 5, 4, maestra, "{tc_costos}", req.totales.tc_promedio, TC)
     _formula(ws, 5, 5, _usd_de_mxn(usd, "A5", "D5", maestra), hoja.usd, MONEY, bold=True)
-    _formula(
-        ws, 5, 6,
-        f"ROUND(E5/{maestra.total('tiempo_vuelo')},2)" if maestra else None,
-        hoja.usd_hr, MONEY,
-    )
+    _formula_cita(ws, 5, 6, maestra, "ROUND(E5/{tiempo_vuelo},2)", hoja.usd_hr, MONEY)
     for c in range(1, 7):
         ws.cell(row=5, column=c).border = _border
 
@@ -1746,7 +2235,9 @@ def _refs_balance_individual(maestra: _Maestra, con_refacciones: bool) -> dict[s
     }
     if con_refacciones:
         refs["refacciones"] = _ref_hoja("refacciones", "$C$5")
-    return refs
+    # Una columna que la hoja no tenga (`total` ⇒ None) deja su fila como
+    # valor: nunca una referencia rota.
+    return {clave: ref for clave, ref in refs.items() if ref is not None}
 
 
 @dataclass(frozen=True)
@@ -2848,6 +3339,28 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
 # (los normales); cualquier otro (RESERVA, CANCELADO…) se marca.
 _ESTADOS_NORMALES = ("CONFIRMADO", "EN_VUELO", "COMPLETADO")
 
+# PROVISIÓN en amarillo (6-oct-2026, pedido del cliente: «los que están
+# provisión podrían estar en amarillo por fi»). El API escribe la marca EN
+# MAYÚSCULAS en el concepto del egreso («pago comisión vendedor (X) ·
+# PROVISIÓN (mismo monto que lo cobrado…)») y, cuando la fila junta varios
+# egresos del vuelo, en la línea de la nota de esa celda. Solo la marca en
+# mayúsculas cuenta: el GASTO REAL dice «reemplaza la provisión» (minúsculas)
+# y esa fila NO es provisión.
+_MARCAS_PROVISION = ("PROVISIÓN", "PROVISION")
+_LEYENDA_PROVISION = "Amarillo = provisión (sin gasto real capturado)"
+# Columnas que se pintan: concepto y monto del egreso.
+_COLUMNAS_PROVISION = (3, 4)
+
+
+def _es_provision(f: BalanceOtroMovimientoFila) -> bool:
+    """¿El egreso de la fila es (o incluye) una PROVISIÓN sin gasto real?"""
+    return any(
+        marca in texto
+        for texto in (f.concepto_egreso, f.nota_egreso)
+        if texto
+        for marca in _MARCAS_PROVISION
+    )
+
 
 def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) -> None:
     """Pestaña "Otros movimientos" (28-ago, réplica de la hoja manual
@@ -2857,7 +3370,9 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
     TODOS los estados del periodo (igual que la hoja maestra): la clave
     lleva ' · ESTADO' cuando no es un estado normal y va en ROJO si es
     CANCELADO. Los montos vienen YA calculados del API — aquí solo se
-    pinta."""
+    pinta. Desde el 6-oct-2026 el egreso con PROVISIÓN (pago al vendedor sin
+    gasto real) va en amarillo — concepto y monto — con la leyenda
+    `_LEYENDA_PROVISION` al pie (solo si alguna fila la trae)."""
     ws.cell(row=1, column=1, value="OTROS MOVIMIENTOS VUELATOUR").font = Font(
         bold=True, size=12, color=NAVY
     )
@@ -2901,9 +3416,10 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
     ws.column_dimensions["F"].width = 32
     row = 4
     tot_e = tot_i = 0.0
+    hay_provision = False
 
     def pinta(f: BalanceOtroMovimientoFila) -> None:
-        nonlocal row, tot_e, tot_i
+        nonlocal row, tot_e, tot_i, hay_provision
         # Estado del vuelo (API nuevo): se anota junto a la clave cuando NO
         # es normal; CANCELADO además en rojo (igual que la hoja maestra).
         estado = (f.estado or "").strip().upper()
@@ -2937,6 +3453,12 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
             ws.cell(row=row, column=1).font = Font(color=RED)
         if isinstance(f.remanente_mxn, (int, float)) and f.remanente_mxn < 0:
             ws.cell(row=row, column=9).font = Font(color=RED)
+        # PROVISIÓN (pago al vendedor sin gasto real): concepto y monto del
+        # egreso en amarillo; la leyenda va al pie.
+        if _es_provision(f):
+            hay_provision = True
+            for col in _COLUMNAS_PROVISION:
+                ws.cell(row=row, column=col).fill = PatternFill("solid", fgColor=AMBER)
         # Una fila por vuelo: el desglose de cada celda va en su COMENTARIO
         # (el equipo lo pidió así para ahorrar espacio y entenderlo mejor).
         for col, nota in ((7, f.nota_ingreso), (4, f.nota_egreso)):
@@ -2985,6 +3507,14 @@ def _hoja_otros_movimientos(ws: Worksheet, hoja: BalanceHojaOtrosMovimientos) ->
         cell.fill = PatternFill("solid", fgColor=LIGHT)
         if row > 4:
             xlsx_formulas.escribir(cell, formulas[col], val)
+    # Leyenda del amarillo (solo si alguna fila lo trae: sin provisiones la
+    # hoja es la de siempre).
+    if hay_provision:
+        fila_ley = row + 2
+        ley = ws.cell(row=fila_ley, column=1, value=_LEYENDA_PROVISION)
+        ley.font = Font(italic=True, size=9, color=NAVY)
+        ley.fill = PatternFill("solid", fgColor=AMBER)
+        ws.merge_cells(start_row=fila_ley, start_column=1, end_row=fila_ley, end_column=3)
     ws.freeze_panes = "A4"
 
 
@@ -3014,13 +3544,24 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
     'permisos' (viven en el libro INDIVIDUAL de cada avión); el API los
     sigue calculando y restan igual en la cascada de la hoja 'balance'.
     Cada fila se identifica por su clave y el COLOR del avión
-    (aeronave.color_calendario, editable en el apartado del avión)."""
+    (aeronave.color_calendario, editable en el apartado del avión).
+    `req.variante` (6-oct-2026, API 0.0.64): «general» cambia SOLO la hoja
+    maestra (costo total + costo por hora, `_COLS_GENERAL`); «mensual» o
+    ausente = este libro tal cual, byte-idéntico."""
     wb = Workbook()
     _hoja_resumen_general(wb.active, req)
     cons = req.consolidado
     if cons is not None:
-        # La hoja maestra se titula sola ("reporte horas FLOTA").
-        maestra = _hoja_maestra(wb.create_sheet(), cons, general=True)
+        # La hoja maestra se titula sola ("reporte horas FLOTA"). Variante
+        # «general» (6-oct-2026, API 0.0.64): costo total + costo por hora en
+        # lugar del desglose de costos; «mensual» (o sin la llave): la de
+        # siempre. Las demás hojas son las mismas en las dos.
+        maestra = _hoja_maestra(
+            wb.create_sheet(),
+            cons,
+            general=True,
+            costo_por_hora=req.variante == VARIANTE_BALANCE_GENERAL,
+        )
         # Pestaña "Otros movimientos" JUNTO a "reporte horas" (pedido del
         # cliente 28-ago): se crea aquí para que quede al lado; solo si el
         # API la manda.

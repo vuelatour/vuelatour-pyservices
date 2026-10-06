@@ -601,6 +601,14 @@ _LIBROS = {
         t_inventario._general()
     ),
     "comisión general": lambda: render_balance_general_xlsx(t_comision._general(bandera=True)),
+    # Variante «Balance general» (6-oct-2026, API 0.0.64): la hoja maestra con
+    # costo total + costo por hora, mismos números del API.
+    "nuevo general · costo por hora": lambda: render_balance_general_xlsx(
+        _general().model_copy(update={"variante": "general"})
+    ),
+    "extensión general · costo por hora": lambda: render_balance_general_xlsx(
+        t_extension._general(con_llave=True).model_copy(update={"variante": "general"})
+    ),
 }
 
 

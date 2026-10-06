@@ -358,6 +358,56 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   deja fuera de su huella SOLO esas notas (sus payloads traen método y
   cuenta). Tests: `tests/test_balance_cobrado_con.py` (helpers, 2 cobros =
   2 notas + resumen, sin cobros, API viejo, general, > 4 cobros, rutas).
+- **Balance MENSUAL y Balance GENERAL con costo por hora** (6-oct-2026, API
+  0.0.64; pedido: «el que ya tenemos que se renombre a "Balance mensual" y el
+  nuevo botón sea el "Balance general"… se van a agregar estas columnas para
+  sacar el costo por hora por cada vuelo», con la fórmula «el total de todos
+  los gastos, entre el tiempo volado, entre el tipo de cambio del día, entre
+  1.16»). Campo ADITIVO `BalanceGeneralRequest.variante` ('mensual' |
+  'general', default 'mensual'; liberal: mayúsculas/espacios se normalizan,
+  null o desconocido ⇒ mensual, jamás 422). **Mensual o sin la llave ⇒ libro
+  BYTE-IDÉNTICO** (verificado miembro a miembro contra HEAD 93486c1 en los 37
+  libros de los tests del balance; huellas congeladas). **General ⇒ solo
+  cambia «reporte horas FLOTA»**: `_COLS_GENERAL` (44 columnas) = CLAVE..
+  ESTADO, VENTA y TIEMPO iguales; «COSTO TOTAL (MXN)» = COSTO TOTAL + TIPO
+  CAMBIO COSTOS; «COSTO POR HORA» = las 12 columnas de la hoja «utilidades»
+  del cliente en su orden y con sus nombres (repiten a propósito venta s/IVA,
+  tiempo, T.C. y costo total: el bloque se lee solo); STATUS DE COBROS y
+  FACTURA iguales. Fuera OPERACIONES/PILOTO/OTROS/AFAC —su desglose va en la
+  NOTA de TOTAL PARA PROVEEDOR (PESOS): «Operación $x · Piloto $y · Otros $z
+  · Permiso AFAC $w» + sus líneas de detalle (`_nota_desglose_costo`)— e
+  INDICADORES. **Columnas por LLAVE, jamás letras fijas**: `_Disposicion`
+  (letra, COBRO 1, total_map, rellenos… de cada juego; `_DISP_MENSUAL`
+  reproduce `_LETRA`/`_COBRO1_COL`/`_COMISION_COL`); las columnas que repiten
+  un dato son llaves `cph_*` (`_ORIGEN_GENERAL`, valor) e IVA X HR y TOTAL
+  PAGADO S/IVA son la resta de dos campos del API (`_valor_columna`).
+  Fórmulas = aritmética del API citando el propio bloque: COSTO X HORA
+  `=PESOS/TC/TIEMPO/$D$1` (orden del API: Y/z/O/1.16), COSTO HR MÁS IVA
+  `=DLLS/TIEMPO`, DLLS `=PESOS/TC`, IVA DLLS `=DLLS−DLLS/$D$1`, IVA PESOS
+  `=IVA DLLS×TC`, PAGADO S/IVA `=PESOS−IVA PESOS` (sin ROUND, en
+  `ENCABEZADOS_SIN_ROUND`), REMANENTE `=ROUND(VENTA AVIÓN MXN−PESOS,2)`; **IVA
+  X HR `=ROUND(ROUND(W,2)-ROUND(U,2),2)`**: la resta de las celdas completas
+  no daba la diferencia de los dos números a la vista en 1 de cada 4 filas
+  (medido) y se degradaba a valor. COSTO TOTAL cita columnas que la variante
+  no tiene ⇒ VALOR del API con nota «Calculado por el sistema…» en su
+  encabezado (`_ColumnaAusente`); otra hoja que citara una columna ausente ⇒
+  valor con nota (`_formula_cita`: jamás una referencia rota). TOTALES = los
+  del API por llave (las repetidas llevan el de su dato; promedios del
+  consolidado como valor); COSTO X HORA, IVA X HR, DLLS, IVA y PAGADO S/IVA
+  van SIN total (no se inventa). A1:D1 se conservan; el título del bloque
+  «BALANCE GENERAL · COSTO POR HORA» dice en el encabezado cuál libro es;
+  notas al pie, renglones TUA/extensión y notas de B1/D1 propias (`_CPH_*`).
+  Las demás hojas tienen los MISMOS números en las dos variantes; las citas a
+  TC/horas de la maestra caen en SU columna. **PROVISIÓN en amarillo** (las
+  dos variantes; pedido «los que están provisión podrían estar en
+  amarillo»): en 'otros movimientos' la fila cuyo egreso trae la marca
+  «PROVISIÓN» EN MAYÚSCULAS —en el concepto o, si la fila junta varios
+  egresos del vuelo, en la línea de su nota— pinta concepto y monto del
+  egreso con AMBER y al pie (TOTALES + 2, A:C) va «Amarillo = provisión (sin
+  gasto real capturado)». El gasto real dice «reemplaza la provisión» en
+  minúsculas y NO se pinta; sin provisiones la hoja es la de siempre. Tests:
+  `tests/test_balance_general_costo_hora.py` (+ dos libros de la variante en
+  `_LIBROS` de `tests/test_balance_formulas.py`).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.
