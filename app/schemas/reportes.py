@@ -1065,6 +1065,13 @@ class BalanceAvionRequest(BaseModel):
     avion_color: str | None = None
     periodo_desde: str | None = None
     periodo_hasta: str | None = None
+    # Aportación AFAC USD/hr de la ficha del avión (5-oct-2026, ADITIVO: el
+    # API ya la mandaba y aquí se ignoraba). Es la constante del encabezado
+    # de la hoja maestra con la que la columna PERMISO AFAC (PROVISIÓN) va
+    # como FÓRMULA visible (tarifa × TC costos × horas cobradas). None = el
+    # avión no la tiene configurada (o el consolidado del general, donde la
+    # tarifa es por avión): la columna queda como valor.
+    permiso_afac_usd_hr: float | None = None
     vuelos: list[BalanceAvionVuelo] = Field(default_factory=list)
     totales: BalanceAvionTotales = Field(default_factory=BalanceAvionTotales)
     gastos_indirectos: BalanceAvionHojaGastos = Field(default_factory=BalanceAvionHojaGastos)

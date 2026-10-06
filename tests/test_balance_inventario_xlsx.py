@@ -153,12 +153,14 @@ def _general(**extra) -> BalanceGeneralRequest:
 
 
 def _sheet(data: bytes, nombre: str):
-    return load_workbook(BytesIO(data))[nombre]
+    # data_only=True (5-oct-2026): las sumas del libro son FÓRMULAS visibles
+    # con el número del API en caché — se lee el número, como lo ve el cliente.
+    return load_workbook(BytesIO(data), data_only=True)[nombre]
 
 
 def test_general_con_inventario_pinta_hoja_y_no_refacciones():
     data = render_balance_general_xlsx(_general(inventario=_INVENTARIO))
-    wb = load_workbook(BytesIO(data))
+    wb = load_workbook(BytesIO(data), data_only=True)
     assert "inventario" in wb.sheetnames
     assert "refacciones" not in wb.sheetnames
 
@@ -207,7 +209,7 @@ def test_general_con_inventario_pinta_hoja_y_no_refacciones():
 def test_general_sin_inventario_conserva_refacciones():
     # API viejo (skew): sin `inventario` la hoja 'refacciones' sigue igual.
     data = render_balance_general_xlsx(_general())
-    wb = load_workbook(BytesIO(data))
+    wb = load_workbook(BytesIO(data), data_only=True)
     assert "refacciones" in wb.sheetnames
     assert "inventario" not in wb.sheetnames
 
@@ -308,7 +310,7 @@ def test_individual_conserva_su_hoja_refacciones():
     data = render_balance_avion_xlsx(
         BalanceAvionRequest(matricula="XB-ABC", refacciones=_REFACCIONES)
     )
-    wb = load_workbook(BytesIO(data))
+    wb = load_workbook(BytesIO(data), data_only=True)
     assert "refacciones" in wb.sheetnames
     assert "inventario" not in wb.sheetnames
 
@@ -382,8 +384,10 @@ def _firma_hoja(data: bytes, nombre: str = "inventario") -> str:
     """Huella del LAYOUT de una hoja (valores, formatos, fuentes, rellenos,
     alineación, bordes, merges, anchos, altos y panel fijo): cambia si
     cambia cualquier cosa visible, pero no si cambian OTRAS hojas del libro
-    (los índices de estilo del XML sí se mueven con ellas)."""
-    ws = load_workbook(BytesIO(data))[nombre]
+    (los índices de estilo del XML sí se mueven con ellas). Con la caché
+    (`data_only=True`, 5-oct-2026): los TOTALES ahora son fórmulas SUM y la
+    huella de antes sigue valiendo — la hoja SE VE idéntica."""
+    ws = load_workbook(BytesIO(data), data_only=True)[nombre]
     partes: list = []
     for fila in ws.iter_rows():
         for c in fila:
@@ -814,7 +818,7 @@ def _general_0036(inventario, refacciones=_REFACCIONES_0036):
 
 
 def _todos_los_textos(data: bytes) -> list[str]:
-    wb = load_workbook(BytesIO(data))
+    wb = load_workbook(BytesIO(data), data_only=True)
     return [t for ws in wb.worksheets for t in _textos(ws)]
 
 
@@ -1118,7 +1122,7 @@ def test_rutas_aceptan_el_payload_del_api_0036_con_nulls(monkeypatch, request):
     general["inventario"]["filas"][1]["vendido_usd_original"] = None
     res = client.post("/pdf/balance-general-xlsx", json=general, headers=headers)
     assert res.status_code == 200, res.text
-    ws = load_workbook(BytesIO(res.content))["inventario"]
+    ws = load_workbook(BytesIO(res.content), data_only=True)["inventario"]
     assert "en pesos al T.C. oficial de hoy." in _nota_pie(ws)
 
     libro = {

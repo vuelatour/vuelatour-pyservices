@@ -166,7 +166,7 @@ def _bloque_balance(ws, desde: int = 4) -> dict[str, tuple]:
 
 def test_general_renombra_hojas_de_gastos():
     data = render_balance_general_xlsx(_general(gastos_empresa=_GASTOS_EMPRESA))
-    wb = load_workbook(BytesIO(data))
+    wb = load_workbook(BytesIO(data), data_only=True)
 
     # Nombres nuevos (1-sep-2026); el viejo 'gastos VuelaTour' ya no existe.
     assert "otros gastos" in wb.sheetnames
@@ -200,7 +200,7 @@ def test_general_sin_gastos_empresa_conserva_repartidos():
     # API viejo (skew): sin `gastos_empresa` no hay hoja de empresa, pero los
     # parciales se pintan igual con el nombre nuevo.
     data = render_balance_general_xlsx(_general())
-    wb = load_workbook(BytesIO(data))
+    wb = load_workbook(BytesIO(data), data_only=True)
     assert "otros gastos" not in wb.sheetnames
     assert "gastos VuelaTour" not in wb.sheetnames
     assert "repartidos a aviones" in wb.sheetnames
@@ -210,7 +210,7 @@ def test_general_no_fusiona_y_titula_balance_general_vuelatour():
     # La fusión del 2-sep es SOLO del libro individual: el general conserva
     # 'otros gastos' + 'repartidos a aviones' y no crea "Gastos Indirectos".
     data = render_balance_general_xlsx(_general(gastos_empresa=_GASTOS_EMPRESA))
-    wb = load_workbook(BytesIO(data))
+    wb = load_workbook(BytesIO(data), data_only=True)
     assert "Gastos Indirectos" not in wb.sheetnames
     assert "otros gastos" in wb.sheetnames
     assert "repartidos a aviones" in wb.sheetnames
@@ -242,7 +242,7 @@ def test_general_bloque_balance_una_sola_fila_de_indirectos():
             ]
         )
     )
-    ws = load_workbook(BytesIO(data))["balance"]
+    ws = load_workbook(BytesIO(data), data_only=True)["balance"]
     etiquetas = [
         ws.cell(row=r, column=1).value
         for r in range(1, ws.max_row + 1)
@@ -304,7 +304,7 @@ def test_fusionar_hojas_gastos_ordena_por_fecha_y_suma_totales():
 
 def test_individual_fusiona_indirectos_y_otros_en_una_pestana():
     data = render_balance_avion_xlsx(_individual())
-    wb = load_workbook(BytesIO(data))
+    wb = load_workbook(BytesIO(data), data_only=True)
 
     # Pestaña exacta "Gastos Indirectos"; ya no existen 'gastos indirectos'
     # ni 'otros gastos' (ni la del general).
@@ -356,7 +356,7 @@ def test_individual_refacciones_va_entre_gastos_indirectos_y_permisos():
     data = render_balance_avion_xlsx(
         _individual(refacciones={"filas": [], "total_mxn": None, "usd": None})
     )
-    wb = load_workbook(BytesIO(data))
+    wb = load_workbook(BytesIO(data), data_only=True)
     assert wb.sheetnames == [
         "reporte horas XB-ABC", "cobranza", "combustible", "Gastos Indirectos",
         "refacciones", "permisos", "balance", "pendientes de captura",
@@ -373,16 +373,16 @@ def test_individual_sin_otros_no_lleva_nota_en_balance():
                 balance={"gastos_indirectos_usd": 100.0, "otros_usd": otros},
             )
         )
-        bloque = _bloque_balance(load_workbook(BytesIO(data))["balance"])
+        bloque = _bloque_balance(load_workbook(BytesIO(data), data_only=True)["balance"])
         assert bloque["(−) GASTOS INDIRECTOS USD"] == (100.0, None)
     data = render_balance_avion_xlsx(BalanceAvionRequest(matricula="XB-ABC"))
-    bloque = _bloque_balance(load_workbook(BytesIO(data))["balance"])
+    bloque = _bloque_balance(load_workbook(BytesIO(data), data_only=True)["balance"])
     assert bloque["(−) GASTOS INDIRECTOS USD"] == (None, None)
 
 
 def test_individual_resalta_solo_las_filas_de_reparto_manual():
     data = render_balance_avion_xlsx(_individual())
-    ws = load_workbook(BytesIO(data))["Gastos Indirectos"]
+    ws = load_workbook(BytesIO(data), data_only=True)["Gastos Indirectos"]
     fills = {
         ws.cell(row=r, column=3).value: ws.cell(row=r, column=3).fill
         for r in range(8, 11)

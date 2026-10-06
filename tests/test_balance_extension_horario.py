@@ -180,7 +180,9 @@ def _general(*, con_llave: bool = True) -> BalanceGeneralRequest:
 
 
 def _maestra(data: bytes, nombre: str = "reporte horas N4142R"):
-    return load_workbook(BytesIO(data))[nombre]
+    # data_only=True (5-oct-2026): las celdas calculadas son FÓRMULAS con el
+    # número del API en caché — se lee el número, como lo ve el cliente.
+    return load_workbook(BytesIO(data), data_only=True)[nombre]
 
 
 def _fila_de(ws, texto: str) -> int | None:
@@ -208,8 +210,15 @@ def _miembros(data: bytes) -> dict[str, bytes]:
 def _firma_hoja(data: bytes, nombre: str) -> str:
     """Huella del LAYOUT de una hoja (misma receta que
     test_balance_inventario_xlsx): valores, formatos, fuentes, rellenos,
-    alineación, bordes, merges, anchos, altos, panel fijo y comentarios."""
-    ws = load_workbook(BytesIO(data))[nombre]
+    alineación, bordes, merges, anchos, altos, panel fijo y comentarios.
+    Fórmulas visibles (5-oct-2026): se lee la CACHÉ (`data_only=True`, el
+    número que muestra la celda) y se quitan las constantes nuevas del
+    encabezado (A1:D1: «Permiso AFAC USD/hr» y «Factor IVA costos»), que el
+    código anterior no pintaba — así la huella de antes sigue valiendo y
+    prueba que nada más de la hoja cambió."""
+    ws = load_workbook(BytesIO(data), data_only=True)[nombre]
+    for col in range(1, 5):
+        ws._cells.pop((1, col), None)
     partes: list = []
     for fila in ws.iter_rows():
         for c in fila:

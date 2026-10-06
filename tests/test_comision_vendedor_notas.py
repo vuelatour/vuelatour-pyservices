@@ -216,7 +216,7 @@ def _dinero(pagada=..., provision: float | None = 2030.0,
 
 
 def _libro(xlsx: bytes):
-    return load_workbook(BytesIO(xlsx))
+    return load_workbook(BytesIO(xlsx), data_only=True)
 
 
 def _celda_que_empieza(ws, prefijo: str) -> str:

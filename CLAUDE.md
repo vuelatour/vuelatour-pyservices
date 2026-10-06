@@ -271,6 +271,28 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   gastos CON vuelo. Tests: `tests/test_balance_extension_horario.py`
   (montos reales, orden tras el TUA, sin TUA, columnas idénticas con y sin
   llave, pie en individual y general, skew fila/totales, rutas).
+- **Balances con FÓRMULAS visibles + caché** (5-oct-2026, pedido: «los
+  permisos de AFAC… que tenga las fórmulas visibles»). Toda celda que es
+  aritmética de celdas del libro va como fórmula que reproduce EXACTO el
+  número del API: `ROUND(…,2)` solo donde el API hace `round2` (fila de
+  vuelo L/M/N/X/Y/AI/AJ/AM, por cobrar, Σ de TOTALES y hojas) y sin ROUND
+  donde no (AE/AF/AG/AH/AN/AO). Constantes en la fila 1 de la maestra
+  (`$B$1` Permiso AFAC USD/hr del request, `$D$1` factor IVA 1.16); el TC
+  promedio CRUDO del API es `AVERAGE(V filas)` (la celda TOTALES va
+  redondeada: no se divide entre ella). Lo que depende de datos fuera del
+  libro (IVA % del cliente, prorrateos multi-avión, TC de cada gasto, tarifa
+  AFAC y promedios del GENERAL) sigue como valor. Helper `_formula(ws, …,
+  formula, valor_api, fmt)`: `valor_api` None ⇒ celda vacía sin fórmula.
+  `app/services/xlsx_formulas.py` (`guardar(wb)` en los dos renders)
+  EVALÚA cada fórmula como Excel (ROUND medio-hacia-afuera a 15 cifras) y,
+  si no se ve igual que el número del API, la DEGRADA a valor (redondeos
+  intermedios del API, empates binarios); luego inyecta el número del API
+  en el `<v>` de cada fórmula (la vista previa del teléfono no calcula) con
+  `fullCalcOnLoad`. Leído con `data_only=True` el libro es idéntico al de
+  antes (huellas congeladas del generador previo). Tests:
+  `tests/test_balance_formulas.py` (espejo de la aritmética del API +
+  evaluador independiente `tests/_evaluador_formulas.py`); los tests que
+  leen números de un balance usan `data_only=True`.
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

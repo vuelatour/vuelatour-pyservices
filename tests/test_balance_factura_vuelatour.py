@@ -106,12 +106,14 @@ def _general(vuelos=None) -> BalanceGeneralRequest:
 
 
 def _maestra_individual(req: BalanceAvionRequest | None = None):
-    wb = load_workbook(BytesIO(render_balance_avion_xlsx(req or _individual())))
+    data = render_balance_avion_xlsx(req or _individual())
+    wb = load_workbook(BytesIO(data), data_only=True)
     return wb["reporte horas XA-VGV"]
 
 
 def _maestra_general(req: BalanceGeneralRequest | None = None):
-    wb = load_workbook(BytesIO(render_balance_general_xlsx(req or _general())))
+    data = render_balance_general_xlsx(req or _general())
+    wb = load_workbook(BytesIO(data), data_only=True)
     return wb["reporte horas FLOTA"]
 
 
@@ -276,7 +278,7 @@ def test_otros_movimientos_folio_con_igual_tambien_es_texto() -> None:
         ],
         filas_sueltas=[{"concepto_egreso": "Renta", "egreso_mxn": 100.0, "factura": "=B-1"}],
     )
-    wb = load_workbook(BytesIO(render_balance_general_xlsx(req)))
+    wb = load_workbook(BytesIO(render_balance_general_xlsx(req)), data_only=True)
     ws = wb["otros movimientos"]
     celdas = {c.value: c for c in ws["J"] if c.value in ("=A-12", "A-0424", "=B-1")}
     assert set(celdas) == {"=A-12", "A-0424", "=B-1"}
@@ -367,7 +369,7 @@ def test_rutas_aceptan_el_payload_nuevo(monkeypatch, request) -> None:
         headers=headers,
     )
     assert res.status_code == 200, res.text
-    ws = load_workbook(BytesIO(res.content))["reporte horas XA-VGV"]
+    ws = load_workbook(BytesIO(res.content), data_only=True)["reporte horas XA-VGV"]
     assert _columna(ws, len(vuelos)) == [*_ESPERADO, "1234"]
 
     res = client.post(
@@ -380,5 +382,5 @@ def test_rutas_aceptan_el_payload_nuevo(monkeypatch, request) -> None:
         headers=headers,
     )
     assert res.status_code == 200, res.text
-    ws = load_workbook(BytesIO(res.content))["reporte horas FLOTA"]
+    ws = load_workbook(BytesIO(res.content), data_only=True)["reporte horas FLOTA"]
     assert _columna(ws, len(vuelos)) == [*_ESPERADO, "1234"]
