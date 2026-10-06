@@ -12,7 +12,9 @@ Ocho hojas en el orden del libro:
      combustible; el TUA pagado es SOLO nota en OPERACIONES (no resta), y
      desde el 1-oct-2026 (API 0.0.47) la extensión y/o antelación de
      horario pagada al aeropuerto también (`extension_pagada_mxn`).
-     STATUS DE COBROS trae los depósitos REALES (COBRO 1..4 y su Σ) y,
+     STATUS DE COBROS trae los depósitos REALES (COBRO 1..4 y su Σ; desde el
+     6-oct-2026 cada COBRO n MXN lleva la NOTA «cómo se cobró» y STATUS la
+     nota resumen de todos los cobros — sin columnas nuevas) y,
      aparte, COBRADO AVIÓN = la parte prorrateada al avión; cierra con
      FACTURA VUELATOUR (folio de la factura del servicio que el API ya
      resolvió, 30-sep-2026 — texto tal cual, vacía sin dato).
@@ -487,6 +489,100 @@ def _cobros_a_4(cobros: list[BalanceAvionCobro]) -> list[BalanceAvionCobro]:
     return [*cobros[:3], BalanceAvionCobro(fecha=etiqueta, monto_mxn=agg)]
 
 
+# ===== «Cómo se cobró»: NOTA de cada parcialidad (6-oct-2026, API 0.0.60) =====
+# Pedido del cliente: «al lado de la columna STATUS, si ya se pagó, que venga
+# la misma información de cómo se cobró, quién lo cobró y, si es posible, a
+# qué cuenta»; y luego: «mejor, después de cada cobro venga la nota con los
+# detalles, para no tener tantas columnas nuevas». SIN columnas nuevas: cada
+# celda COBRO n MXN lleva una nota «fecha · monto · cómo se cobró» y la
+# celda STATUS una nota resumen con todas las líneas. El «cómo se cobró» lo
+# arma el API (`cobrado_con`, fuente única `etiquetaCobradoCon`); aquí solo
+# se pinta. Un API ≤ 0.0.59 no lo manda: se compone con el método y la
+# cuenta que ya mandaba (sin quién registró). Sin método, cuenta ni registro
+# no hay nota — repetir fecha y monto no dice nada (y los libros de siempre
+# no cambian).
+_ANCHO_NOTA_COBRO = 320
+# Caracteres que caben por renglón en una nota de 320 de ancho (estimado,
+# para que el alto no recorte las líneas largas del multi-avión).
+_CHARS_RENGLON_NOTA_COBRO = 48
+
+
+def _txt_nota(s: str | None) -> str | None:
+    """Texto útil para la nota: en blanco o «—» (método sin dato) ⇒ None."""
+    if not s:
+        return None
+    s = s.strip()
+    return None if s in ("", "—", "-") else s
+
+
+def _monto_nota(m: float | None) -> str | None:
+    """12522.2 → «$12,522.20»; un reembolso (cobro negativo) → «-$500.00»."""
+    if m is None:
+        return None
+    return f"-${-m:,.2f}" if m < 0 else f"${m:,.2f}"
+
+
+def _cobrado_con(c: BalanceAvionCobro) -> str | None:
+    """«Cómo se cobró» del cobro: `cobrado_con` del API tal cual. Sin él (API
+    ≤ 0.0.59): método → cuenta, más «Registró: X» si llegara el nombre.
+    None si no hay nada que decir."""
+    armado = _txt_nota(c.cobrado_con)
+    if armado:
+        return armado
+    metodo = _txt_nota(c.metodo_etiqueta) or _txt_nota(c.metodo)
+    como = " → ".join(x for x in (metodo, _txt_nota(c.cuenta)) if x)
+    registro = _txt_nota(c.registro)
+    partes = [como] if como else []
+    if registro:
+        partes.append(f"Registró: {registro}")
+    return " · ".join(partes) or None
+
+
+def _linea_cobro(c: BalanceAvionCobro) -> str | None:
+    """Una línea «15/09/2026 · $12,522.20 · Transferencia → Scotiabank Pesos
+    · Itzi» (las partes que no vienen se omiten)."""
+    partes = (_fecha(c.fecha), _monto_nota(c.monto_mxn), _cobrado_con(c))
+    return " · ".join(x for x in partes if x) or None
+
+
+def _nota_cobro(c: BalanceAvionCobro) -> str | None:
+    """Nota de la celda COBRO n MXN de UNA parcialidad; None si el cobro no
+    dice cómo se cobró (ni método, ni cuenta, ni quién lo registró)."""
+    if not _cobrado_con(c):
+        return None
+    return _linea_cobro(c)
+
+
+def _nota_resumen_cobros(cobros: list[BalanceAvionCobro]) -> str | None:
+    """Una línea por cobro (todas, en orden) para la nota de la celda STATUS
+    y la de la 4.ª parcialidad agregada. None sin cobros o si NINGUNO dice
+    cómo se cobró."""
+    if not any(_cobrado_con(c) for c in cobros):
+        return None
+    lineas = [linea for linea in (_linea_cobro(c) for c in cobros) if linea]
+    return "\n".join(lineas) or None
+
+
+def _notas_parcialidades(cobros: list[BalanceAvionCobro]) -> list[str | None]:
+    """Nota de cada celda COBRO 1..4 MXN, en el mismo orden que `_cobros_a_4`:
+    con más de 4 cobros la 4.ª agrega el resto y su nota lleva una línea por
+    cobro agrupado."""
+    if len(cobros) <= 4:
+        return [_nota_cobro(c) for c in cobros]
+    return [*(_nota_cobro(c) for c in cobros[:3]), _nota_resumen_cobros(cobros[3:])]
+
+
+def _comentario_cobro(texto: str) -> Comment:
+    """Nota de Excel con el tamaño de las de desglose (320 × ≥ 70) y alto
+    según los renglones que envuelve."""
+    lineas = texto.split("\n")
+    renglones = sum(max(1, math.ceil(len(x) / _CHARS_RENGLON_NOTA_COBRO)) for x in lineas)
+    com = Comment(texto, "VuelaTour")
+    com.width = _ANCHO_NOTA_COBRO
+    com.height = max(70, min(260, 24 + 16 * renglones))
+    return com
+
+
 def _pct(factor: float | None) -> str:
     """0.5 → '50 %' (hasta 2 decimales, sin ceros de más)."""
     return "—" if factor is None else f"{round(factor * 100, 2):g} %"
@@ -753,6 +849,10 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
     row = 3
     for v in req.vuelos:
         cobros = _cobros_a_4(v.cobros)
+        # «Cómo se cobró» (6-oct-2026): nota de cada COBRO n MXN y resumen en
+        # STATUS. Sin método/cuenta/registro no hay nota.
+        notas_cobro = _notas_parcialidades(v.cobros)
+        nota_status = _nota_resumen_cobros(v.cobros)
         # Regla del cliente: lo cobrado nunca puede ser menor a lo volado.
         # Resalta HORAS COBRADAS en ámbar cuando el taco registró más horas
         # (solo señal visual; el pendiente del API explica el caso).
@@ -789,6 +889,10 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
                         cell.font = Font(color=MUTED, size=9)
                     elif attr == "clave" and v.es_externo:
                         cell.font = Font(italic=True, color="374151")
+                    # STATUS no cambia de texto: la nota junta TODOS los
+                    # cobros (uno por renglón) para verlos de un vistazo.
+                    if attr == "status_cobro" and nota_status:
+                        cell.comment = _comentario_cobro(nota_status)
                 else:
                     cell = _formula(
                         ws,
@@ -880,6 +984,9 @@ def _hoja_maestra(ws: Worksheet, req: BalanceAvionRequest, *,
                     cell = ws.cell(row=row, column=i, value=_fecha(cobro.fecha) if cobro else None)
                 else:
                     cell = _num(ws, row, i, cobro.monto_mxn if cobro else None, fmt)
+                    nota_cobro = notas_cobro[idx] if idx < len(notas_cobro) else None
+                    if nota_cobro:
+                        cell.comment = _comentario_cobro(nota_cobro)
             cell.border = _border
             if fill:
                 cell.fill = PatternFill("solid", fgColor=fill)

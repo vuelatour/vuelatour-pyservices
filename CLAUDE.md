@@ -331,6 +331,33 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `tests/test_balance_empresa_vuelatour.py` (payload con la forma REAL del
   API y espía del registro de `xlsx_formulas`: una fórmula degradada deja
   el mismo número y solo el registro la delata).
+- **Nota «cómo se cobró» en cada parcialidad del balance** (6-oct-2026,
+  API 0.0.60; pedido: «al lado de la columna STATUS, si ya se pagó, que
+  venga cómo se cobró, quién lo cobró y a qué cuenta», y luego «mejor,
+  después de cada cobro venga la nota… para no tener tantas columnas
+  nuevas»). **SIN columnas nuevas**: en `_hoja_maestra` (libro individual y
+  «reporte horas FLOTA») cada celda COBRO n MXN lleva una NOTA (autor
+  «VuelaTour», 320 de ancho, alto ≥ 70 según renglones —
+  `_comentario_cobro`) «15/09/2026 · $12,522.20 · Transferencia →
+  Scotiabank Pesos · Itzi» y la celda STATUS (mismo texto) una nota resumen
+  con TODOS los cobros, uno por renglón. Payload ADITIVO en
+  `BalanceAvionCobro`: `cobrado_con` (texto YA armado por el API, fuente
+  única `etiquetaCobradoCon`; se pinta tal cual), `metodo_etiqueta`,
+  `registro` (validador liberal: blanco o no-texto ⇒ None). Helpers puros:
+  `_nota_cobro(c)` = fecha · monto · `_cobrado_con(c)`; sin `cobrado_con`
+  (API ≤ 0.0.59) se compone `metodo_etiqueta`/`metodo` → `cuenta` (+
+  «Registró: X» si llegara `registro`); **sin método, cuenta ni registro ⇒
+  sin nota** (los payloads de prueba con solo fecha/monto no cambian).
+  `_nota_resumen_cobros(cobros)` (STATUS y la 4.ª agregada: una línea por
+  cobro, None si ninguno dice cómo se cobró); `_notas_parcialidades` sigue
+  el orden de `_cobros_a_4` (con más de 4 la nota de la 4.ª lleva una línea
+  por cobro agrupado). Nada se mueve: ni columnas, ni fórmulas, ni la hoja
+  'cobranza'. **Libro sin cobros ⇒ byte-idéntico** (miembro a miembro contra
+  HEAD 4125973, huellas congeladas); con cobros solo cambian
+  `xl/comments*.xml` y el VML. `tests/test_balance_empresa_vuelatour.py`
+  deja fuera de su huella SOLO esas notas (sus payloads traen método y
+  cuenta). Tests: `tests/test_balance_cobrado_con.py` (helpers, 2 cobros =
+  2 notas + resumen, sin cobros, API viejo, general, > 4 cobros, rutas).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

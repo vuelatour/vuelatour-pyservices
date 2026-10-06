@@ -721,6 +721,26 @@ class BalanceAvionCobro(BaseModel):
     # Dólares · Scotiabank Pesos). Opcionales: un API viejo no los manda.
     comision_mxn: float | None = None
     cuenta: str | None = None
+    # 6-oct-2026 (API 0.0.60, pedido del cliente: «cómo se cobró, quién lo
+    # cobró y a qué cuenta»): etiqueta legible del método (con el mismo
+    # sufijo de «parte de esta fila» en multi-avión), nombre de quien
+    # registró el cobro y el texto YA armado por el API
+    # («Transferencia → Scotiabank Pesos · Itzi», fuente única
+    # `etiquetaCobradoCon`). Solo se pintan como NOTA de la celda COBRO n
+    # MXN y en la nota resumen de STATUS. Opcionales: un API ≤ 0.0.59 no
+    # los manda y la nota se compone con `metodo`/`cuenta`.
+    metodo_etiqueta: str | None = None
+    registro: str | None = None
+    cobrado_con: str | None = None
+
+    @field_validator("metodo_etiqueta", "registro", "cobrado_con", mode="before")
+    @classmethod
+    def _texto_liberal(cls, v: Any) -> Any:
+        """Texto informativo: en blanco o algo que no es texto ⇒ None. Jamás
+        un 422 que tumbe el balance entero por una nota."""
+        if isinstance(v, str):
+            return v.strip() or None
+        return None
 
 
 class BalanceAvionVuelo(BaseModel):

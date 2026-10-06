@@ -21,10 +21,13 @@ from io import BytesIO
 
 import pytest
 from openpyxl import load_workbook
+from openpyxl.utils import column_index_from_string
 
 from app.schemas.reportes import BalanceGeneralRequest
 from app.services import xlsx_formulas
 from app.services.balance_avion_xlsx import (
+    _COBRO_MXN_LETRAS,
+    _LETRA,
     _NOTA_BLOQUE_EMPRESA,
     _NOTA_EMPRESA_BASE,
     _RESUMEN_BLOQUE_EMPRESA,
@@ -188,19 +191,35 @@ def _miembros(data: bytes) -> dict[str, bytes]:
     return {n: z.read(n) for n in sorted(z.namelist()) if n != "docProps/core.xml"}
 
 
+# Columnas de la hoja maestra con la nota «cómo se cobró» (STATUS y COBRO n MXN).
+_COLS_NOTA_COBRO = {
+    column_index_from_string(letra) for letra in (_LETRA["status_cobro"], *_COBRO_MXN_LETRAS)
+}
+
+
 def _firma_libro(data: bytes) -> str:
     """Huella del LAYOUT de TODAS las hojas (misma receta que
     test_balance_extension_horario, con las fórmulas tal cual): valores o
     fórmulas, formatos, fuentes, rellenos, alineación, bordes, comentarios,
     merges, anchos, altos y panel fijo. No depende de cómo serialice el XML
-    la versión de openpyxl instalada."""
+    la versión de openpyxl instalada.
+
+    Las notas «cómo se cobró» (6-oct-2026, posteriores a estas huellas: los
+    cobros de estos payloads traen método y cuenta) se dejan fuera — van en
+    STATUS y COBRO n MXN de las filas de vuelo de las hojas maestras y las
+    congela su propio test (`tests/test_balance_cobrado_con.py`); todo lo
+    demás, comentarios incluidos, sigue contando."""
     wb = load_workbook(BytesIO(data))
     partes: list = []
     for ws in wb.worksheets:
         partes.append(ws.title)
+        maestra = ws.title.startswith("reporte horas")
         for fila in ws.iter_rows():
             for c in fila:
                 f = c.font
+                nota = c.comment.text if c.comment else None
+                if maestra and c.row >= 3 and c.column in _COLS_NOTA_COBRO:
+                    nota = None
                 partes.append([
                     c.coordinate, repr(c.value), c.number_format,
                     bool(f.b), bool(f.i), f.sz,
@@ -208,7 +227,7 @@ def _firma_libro(data: bytes) -> str:
                     c.fill.fgColor.rgb if c.fill.fill_type else None,
                     c.alignment.horizontal, c.alignment.vertical,
                     bool(c.alignment.wrap_text), c.border.left.style,
-                    c.comment.text if c.comment else None,
+                    nota,
                 ])  # fmt: skip
         partes.append(sorted(str(r) for r in ws.merged_cells.ranges))
         partes.append(sorted((k, d.width) for k, d in ws.column_dimensions.items()))
