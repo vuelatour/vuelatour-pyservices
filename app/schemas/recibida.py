@@ -39,6 +39,11 @@ class FacturaRecibidaParsed(BaseModel):
     # ADITIVOS (5-oct-2026): atributos `Serie`/`Folio` del Comprobante, sin
     # espacios; vacío o ausente ⇒ None. Son el «número de factura» que la
     # conciliación muestra en la columna «Notas». Un API que no los lea se
-    # comporta igual que antes.
+    # comporta igual que antes. OJO: las llaves `serie`/`folio` SIEMPRE se
+    # emiten en la respuesta (null si faltan); el cron de relectura del API
+    # (`recibidas-releer-folio`) usa su PRESENCIA para sellar
+    # `folio_releido_at` — nunca `exclude_none` en `/facturacion/parse-recibida`
+    # (si no, relee los mismos XML cada 10 min sin fin). Test de la ruta en
+    # `tests/test_recibida_serie_folio.py`.
     serie: str | None = Field(default=None, description="Serie del CFDI (atributo Serie)")
     folio: str | None = Field(default=None, description="Folio del CFDI (atributo Folio)")

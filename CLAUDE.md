@@ -905,7 +905,15 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   DTD/ENTITY antes de tocar el parser (XXE / billion laughs), candado que
   funciona aunque la dependencia falte. Valida UUID del timbre, versión y
   —si el API manda `rfcs_propios`— que el receptor sea de la empresa:
-  `valido=false` + `motivo` en vez de un objeto a medias.
+  `valido=false` + `motivo` en vez de un objeto a medias. Desde el
+  5-oct-2026 devuelve también `serie`/`folio` (atributos del Comprobante,
+  recortados, vacío ⇒ None; `serie`/`folio` en minúscula en los 3.2): el
+  número de factura de la columna «Notas» del Excel de conciliación.
+  **Las llaves `serie`/`folio` SIEMPRE se emiten (null si faltan)**: el cron
+  de relectura del API (`recibidas-releer-folio`) usa su PRESENCIA para
+  sellar `folio_releido_at` — nunca `exclude_none` en
+  `/facturacion/parse-recibida` (sin ellas relee los mismos XML cada 10 min
+  sin fin). Tests: `tests/test_recibida_serie_folio.py` (parser y ruta).
 - Tests de IA: NINGUNO llama a Claude. `tests/conftest.py` expone el
   fixture `claude_fake(modulo, payload)` que parchea el `_client` de ese
   módulo (`estado_cuenta`, `anthropic_vision`, `gasto_vuelo`,
