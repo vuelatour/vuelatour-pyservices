@@ -244,8 +244,14 @@ def _firma_hoja(data: bytes, nombre: str) -> str:
 # verificó que los .xlsx completos salían byte-idénticos (todos los miembros
 # del zip salvo docProps/core.xml). Si una cambia, un API 0.0.46 —o un
 # periodo sin extensiones— ya no ve su libro de siempre.
-_FIRMA_INDIVIDUAL_SIN_LLAVE = "caea831da37e6e8c97184dd2d8510f74a9ec725e2a969449038a1533d385efbf"
-_FIRMA_GENERAL_SIN_LLAVE = "88a80db60c6a4638b0bbbe9d94b57fe99b4bdbee07942e4243b0bb1e5e3114d6"
+# Regeneradas A PROPÓSITO el 6-oct-2026 (API 0.0.65, comisiones a cargo del
+# avión): sin los campos nuevos solo cambian los encabezados «COMISIONES
+# MXN» y «COBRADO AVIÓN MXN (prorrateado, antes de comisiones)», la nota del
+# primero y las notas al pie que los explican (y, en el general, «COMISIONES
+# MXN» del RESUMEN y sus notas) — comparado celda por celda contra el código
+# anterior: ningún número ni fórmula cambió.
+_FIRMA_INDIVIDUAL_SIN_LLAVE = "5dde1a2efb9238b9e67ecc78ad6bec2a643ec2546d50e229aef44d8c588d099a"
+_FIRMA_GENERAL_SIN_LLAVE = "135c00deb300e3330e6b3da2cc6a47ea07f54e10fa6ce2efa1d75e5e343b1aee"
 
 
 # ---------------------------------------------------------------------------

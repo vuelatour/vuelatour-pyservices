@@ -380,8 +380,14 @@ def test_fila_con_dos_cobros_lleva_dos_notas_y_el_resumen_en_status() -> None:
 # desglose incluidos). Además se verificó que, fuera de los comentarios
 # (xl/comments/comment1.xml y su dibujo VML), los miembros del .xlsx salían
 # byte-idénticos.
-_FIRMA_INDIVIDUAL_CON_COBROS = "95b5d2c61bc2ba04a382f9392c87f91eccd2a571464fd3e318f50ba10e2c9d95"
-_FIRMA_GENERAL_CON_COBROS = "ec4e8713c82b0d65f701823219db281d10238f80c501a805f90a17f9a24b03e7"
+# Regeneradas A PROPÓSITO el 6-oct-2026 (API 0.0.65, comisiones a cargo del
+# avión): sin los campos nuevos solo cambian los encabezados «COMISIONES
+# MXN» y «COBRADO AVIÓN MXN (prorrateado, antes de comisiones)», la nota del
+# primero y las notas al pie que los explican (y, en el general, «COMISIONES
+# MXN» del RESUMEN y sus notas) — comparado celda por celda contra el código
+# anterior: ningún número ni fórmula cambió.
+_FIRMA_INDIVIDUAL_CON_COBROS = "d2dad5e7f07030e923def5b642c1db6fa471e05129f475bad93432f47f888897"
+_FIRMA_GENERAL_CON_COBROS = "c614aaa87e7d74791970501cb093ae6515e5e4dd5178e326470bb9e5d86b46e6"
 
 
 def test_nada_se_mueve_solo_cambian_las_notas_de_status_y_cobros() -> None:
@@ -418,8 +424,14 @@ def test_nada_se_mueve_solo_cambian_las_notas_de_status_y_cobros() -> None:
 # verificó que los .xlsx completos salían byte-idénticos (todos los miembros
 # del zip salvo docProps/core.xml). Si una cambia, un periodo sin cobros ya
 # no ve su libro de siempre.
-_FIRMA_INDIVIDUAL_SIN_COBROS = "f027e88f4a21822e699281c82f3b5e2634a56fb20b064f00e474a0b735bb1b58"
-_FIRMA_GENERAL_SIN_COBROS = "5a3dda62c5eac432792c5e6593f2f3cb182e9b9951c7a8d93243d3fd6296b980"
+# Regeneradas A PROPÓSITO el 6-oct-2026 (API 0.0.65, comisiones a cargo del
+# avión): sin los campos nuevos solo cambian los encabezados «COMISIONES
+# MXN» y «COBRADO AVIÓN MXN (prorrateado, antes de comisiones)», la nota del
+# primero y las notas al pie que los explican (y, en el general, «COMISIONES
+# MXN» del RESUMEN y sus notas) — comparado celda por celda contra el código
+# anterior: ningún número ni fórmula cambió.
+_FIRMA_INDIVIDUAL_SIN_COBROS = "b3a819f372e83e9683a6cc72a4fe7fe8a0c98940d0797724b70fee9a11c2f30a"
+_FIRMA_GENERAL_SIN_COBROS = "b792d74f39510b7bc1bddc12594c1c91e4d1ee8f65fd5f43c2c90dd6c3cd22d2"
 
 
 def test_sin_cobros_el_libro_es_el_de_siempre() -> None:

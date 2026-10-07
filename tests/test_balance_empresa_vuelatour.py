@@ -242,22 +242,28 @@ def _firma_libro(data: bytes) -> str:
 # completos salían byte-idénticos (todos los miembros del zip salvo
 # docProps/core.xml). Si una cambia, un API 0.0.58 ya no ve su libro de
 # siempre.
+# Regeneradas A PROPÓSITO el 6-oct-2026 (API 0.0.65, comisiones a cargo del
+# avión): sin los campos nuevos solo cambian los encabezados «COMISIONES
+# MXN» y «COBRADO AVIÓN MXN (prorrateado, antes de comisiones)», la nota del
+# primero y las notas al pie que los explican (y, en el general, «COMISIONES
+# MXN» del RESUMEN y sus notas) — comparado celda por celda contra el código
+# anterior: ningún número ni fórmula cambió.
 _FIRMAS_SIN_EMPRESA = {
     "socio empresa en dos aviones": (
         {},
-        "28b3b186a50dd9665222fcabf3965a441012dccdf4c8336b6c3697e0c7861f3d",
+        "03599a3e7bcf6a4c1f11381076d5667497edd0c3801a41838c470c17924d4469",
     ),
     "sin socio empresa": (
         {"socios": _SOCIOS_SIN_EMPRESA},
-        "4822200b323eeb1deba59522f88b74e130cfc47695691dd0e1c16c2ea415cf2d",
+        "87c855c8d56c5b0ab8857e19a504bab4a4e394beda20a5d4fd0a801b4581757a",
     ),
     "sin hoja otros gastos": (
         {"otros_gastos": False},
-        "2b9fae9dec1a78494dadec56c52d02f4228a070d5f8450dc01ff2e3cbbad63e2",
+        "9fcde8cff1165c41d62a634fe40861dba7bb7303a1227190375b84220b793bd6",
     ),
     "sin inventario": (
         {"inventario": False},
-        "95e4d0be2052107bfb28cfd5aa896f0d7bb6e0669ba37215016bdaf31c19a3a4",
+        "a0972dfc6487ada92a563078c52a8953935f8a08e3d06e2ade094879db660c53",
     ),
 }
 

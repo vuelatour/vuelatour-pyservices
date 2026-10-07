@@ -379,7 +379,8 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   ella solo las letras con que la citan y la nota de 'repartidos a aviones',
   que en la general dice que el TUA pagado queda en el desglose de TOTAL PARA
   PROVEEDOR (PESOS): `_CPH_NOTA_REPARTIDOS_A_AVIONES`; la de siempre
-  nombraba OPERACIONES): `_COLS_GENERAL` (44 columnas) = CLAVE..
+  nombraba OPERACIONES): `_COLS_GENERAL` (44 columnas; 45 desde COMISIONES,
+  ver la entrada siguiente) = CLAVE..
   ESTADO, VENTA y TIEMPO iguales; «COSTO TOTAL (MXN)» = COSTO TOTAL + TIPO
   CAMBIO COSTOS; «COSTO POR HORA» = las 12 columnas de la hoja «utilidades»
   del cliente en su orden y con sus nombres (repiten a propósito venta s/IVA,
@@ -454,6 +455,63 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   hoja es la de siempre. Tests:
   `tests/test_balance_general_costo_hora.py` (+ dos libros de la variante en
   `_LIBROS` de `tests/test_balance_formulas.py`).
+- **COMISIONES a cargo del avión** (6-oct-2026, API 0.0.65; pedido: «cuando
+  hay una comisión de un banco, en la parte de total cobrado no refleja el
+  monto real que entró a la cuenta» y «la comisión del banco y vendedor se
+  puede ir a la columna de (comisiones del vendedor) pero cambiar el nombre a
+  "comisiones" y poner notas el tipo de comisión y si hay más de una»;
+  respuestas: la del vendedor la absorbe el avión, lo cobrado al cliente por
+  ella sigue siendo ingreso de VuelaTour, desde septiembre 2026 por fecha del
+  vuelo). **Los números los calcula el API** (fuente única
+  `comisionesDelVuelo`, la misma del reparto a socios); aquí se pintan.
+  Campos ADITIVOS: cobro `neto_mxn`; vuelo `comisiones_mxn`,
+  `comisiones_detalle` (liberal: null/no-lista ⇒ [], solo textos no vacíos),
+  `comision_banco_avion_mxn`, `comision_vendedor_prov_mxn`; totales
+  `comisiones_mxn`. (1) «COMISIÓN VENDEDOR MXN» → **«COMISIONES MXN»** (llave
+  `comisiones_mxn`, misma posición AC en el mensual/individual; en la
+  variante general, AL FINAL del bloque COSTO POR HORA —las 12 del cliente
+  siguen juntas— y el bloque pasa a 13 columnas) con su nota de encabezado
+  y, por celda, `_nota_comisiones`: `comisiones_detalle` tal cual con «N
+  conceptos» arriba si hay más de una línea y el API no lo trae (regex
+  `_ENCABEZADO_CONCEPTOS`); sin detalle, una línea por parte del API. Valor
+  `_comisiones(x)` = `comisiones_mxn` o, sin él (API ≤ 0.0.64),
+  `comision_vendedor_mxn` (null en filas, 0 en TOTALES: su libro no cambia;
+  `_valor_total` para TOTALES). (2) **GANANCIA MXN = ROUND(REMANENTE −
+  COMISIONES, 2)** y, en la variante general, **REMANENTE VENTA MENOS COMPRA
+  = ROUND(VENTA − PROVEEDOR − COMISIONES, 2)** (llave `cph_remanente_mxn`, su
+  número es `ganancia_mxn` del API vía `_ORIGEN_GENERAL`, TOTALES = Σ
+  ganancia; nota en su encabezado) SOLO en filas con comisiones; sin ellas
+  (vuelo anterior o API previo) la fórmula de siempre (`=AA3` /
+  `ROUND(K−AA,2)`), byte-idéntica. GANANCIA USD y la cascada de 'balance'
+  citan esa ganancia: quedan después de comisiones solas. (3) **COBRO n MXN
+  = `_neto_cobro`** (neto o monto); la nota: si `cobrado_con` ya trae el
+  desglose del API (`_MARCA_BRUTO`: «Bruto $…»/«neto $…» CON monto —«Registró:
+  Neto» es un apodo, no la marca) va «fecha · cobrado_con»; si no,
+  `_bruto_neto` («Bruto $X · comisión banco $C · neto $N») ocupa el lugar del
+  monto; un cobro sin método/cuenta/registro pero con neto ≠ bruto también
+  lleva nota (`_cuenta_algo`). La 4.ª parcialidad agrega netos.
+  COBRADO REAL sigue siendo `ROUND(SUM(COBRO n))` (el API manda Σ netos);
+  encabezado COBRADO AVIÓN = «COBRADO AVIÓN MXN\n(prorrateado, antes\nde
+  comisiones) ****» (saltos explícitos: en una línea envolvía a 4 renglones
+  y se recortaba en la fila de 38 pt). (4) 'cobranza': detalle «$19,380.00
+  neto (bruto $20,400.00)» (`_monto_detalle_cobranza`) y `_NOTA_COBRANZA_NETO`
+  al pie SOLO si algún cobro trae `neto_mxn`. (5) RESUMEN: «COMISIONES MXN» y
+  GANANCIA `ROUND(E−F−G−H,2)` cuando el avión trae comisiones ≠ 0 (con 0, la
+  de siempre); el API debe mandar en `resumen[].comisiones_mxn` la Σ de
+  COMISIONES del libro (si no, la celda queda como valor). Textos: notas al
+  pie `_NOTA_COMISIONES` + fragmento de la bandera + `_NOTA_GANANCIA`
+  (mensual) o `_CPH_NOTA_REMANENTE` (general), `_RESUMEN_COMISIONES`,
+  `_NOTA_COBRADO_REAL` (netos y «antes de comisiones»). 'otros movimientos'
+  (R5) y el Libro Dinero no cambian aquí: sus filas llegan armadas. **API
+  previo ⇒ el libro de siempre salvo encabezados y sus textos**: verificado
+  celda por celda (valor, fórmula, caché, formato, relleno, bordes, notas)
+  en los 244 libros de los tests del balance contra el código anterior;
+  huellas regeneradas A PROPÓSITO en `test_balance_general_costo_hora`
+  (`_FIRMAS_HOY`, `_MIEMBROS_HOY`: cambian sheet1/sheet2/comment1/VML1),
+  `test_balance_formulas` (`_FIRMAS_ANTES`), `test_balance_cobrado_con`,
+  `test_balance_empresa_vuelatour` y `test_balance_extension_horario`. Tests:
+  `tests/test_balance_comisiones.py` (espejo del API con la regla por fila
+  vía `ajusta_fila` de `_libro_api`; fórmulas verificadas sin degradar).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

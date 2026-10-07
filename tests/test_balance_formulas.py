@@ -177,14 +177,27 @@ def _hoja_api(filas: list[tuple], tc_prom: float | None, horas: float, *, litros
 
 
 def _libro_api(
-    matricula: str, afac: float | None, specs: list[dict], hojas: dict, socios: list
+    matricula: str,
+    afac: float | None,
+    specs: list[dict],
+    hojas: dict,
+    socios: list,
+    *,
+    ajusta_fila=None,
 ) -> dict:
-    """El payload de UN avión (buildPayload) con totales, hojas y cascada."""
+    """El payload de UN avión (buildPayload) con totales, hojas y cascada.
+    `ajusta_fila(fila, spec, tc_prom)` (6-oct-2026, comisiones a cargo del
+    avión, `test_balance_comisiones`) retoca cada fila ANTES de los totales
+    y la cascada; sin él, el payload de siempre."""
     zs = [s["z"] for s in specs if s["z"] is not None]
     tc_prom = _suma(zs) / len(zs) if zs else None
     filas = [_fila_api(s, afac=afac, tc_prom=tc_prom) for s in specs]
+    if ajusta_fila is not None:
+        filas = [ajusta_fila(f, s, tc_prom) for f, s in zip(filas, specs, strict=True)]
     an = [f.pop("_an") for f in filas]
     totales = {campo: r2(_suma(f[campo] for f in filas)) for campo in _SUMAS}
+    if any("comisiones_mxn" in f for f in filas):  # API 0.0.65
+        totales["comisiones_mxn"] = r2(_suma(f.get("comisiones_mxn") for f in filas))
     totales["tc_promedio"] = r2(tc_prom) if tc_prom is not None else None
     an_validos = [x for x in an if x is not None]
     totales["costo_hr_prom_usd"] = r2(_promedio(an_validos)) if an_validos else None
@@ -366,6 +379,8 @@ def _flota(libros: list[dict]) -> dict:
     totales = {
         campo: sum_t(campo) for campo in [*_SUMAS, "total_cotizacion_mxn", "comision_banco_mxn"]
     }
+    if all("comisiones_mxn" in p["totales"] for p in libros):  # API 0.0.65
+        totales["comisiones_mxn"] = sum_t("comisiones_mxn")
     totales["tc_promedio"] = avg_t("tc_promedio")
     totales["costo_hr_prom_usd"] = avg_t("costo_hr_prom_usd")
     horas = totales["tiempo_vuelo"]
@@ -438,8 +453,8 @@ def _flota(libros: list[dict]) -> dict:
     }
 
 
-def _general_payload() -> dict:
-    libros = [_payload_tst(), _payload_dos()]
+def _general_payload(libros: list[dict] | None = None) -> dict:
+    libros = libros if libros is not None else [_payload_tst(), _payload_dos()]
     cons = _flota(libros)
     resumen, acc = (
         [],
@@ -469,7 +484,8 @@ def _general_payload() -> dict:
             "venta_mxn": t["total_mxn"],
             "costo_mxn": t["costo_total_mxn"],
             "combustible_mxn": comb,
-            "comisiones_mxn": t["comision_vendedor_mxn"],
+            # API 0.0.65: Σ COMISIONES del libro; antes, comision_vendedor_mxn.
+            "comisiones_mxn": t.get("comisiones_mxn", t["comision_vendedor_mxn"]),
             "ganancia_mxn": r2(t["ganancia_mxn"] - comb),
             "cobrado_mxn": t["cobrado_mxn"],
             "por_cobrar_mxn": t["por_cobrar_mxn"],
@@ -702,7 +718,7 @@ def test_fila_normal_formulas_exactas() -> None:
         "PILOTO",
         "OTROS",
         "TIPO CAMBIO\nCOSTOS",
-        "COBRADO AVIÓN\nMXN (prorrateado) ****",
+        "COBRADO AVIÓN MXN\n(prorrateado, antes\nde comisiones) ****",
     ):
         valor = _formula(ws, 3, encabezado)
         assert not (isinstance(valor, str) and valor.startswith("=")), encabezado
@@ -969,13 +985,17 @@ def _firma_valores(data: bytes) -> str:
 # Calculadas con el generador ANTERIOR a este cambio (HEAD 8560f57, sin
 # fórmulas) sobre los mismos payloads: el libro con fórmulas, leído con su
 # caché, muestra exactamente los números de antes.
+# Recalculadas el 6-oct-2026 (API 0.0.65) SOLO por los textos de COMISIONES
+# (encabezados «COMISIONES MXN» y «COBRADO AVIÓN MXN (prorrateado, antes de
+# comisiones)» y las notas al pie que los explican): comparadas celda por
+# celda contra las de antes, ningún número cambió.
 _FIRMAS_ANTES = {
-    "tst": "bec9b5bb97ed7e6c1239780d2e06d175e45ca9ff8507009f76db16b05d290ebc",
-    "dos": "c65974859fdb78e1e9f50e8893770c0c504efb0f01aad4f7f7ae8d2820aea57b",
-    "general": "76307f5e832a7ef50bdae876dfb635c325b3ad3128e7ccccd5d9caf325991538",
+    "tst": "468b0e1d198e97f6677649f69c8251e6087c6de1abd46c5b9831cc1905c3b2a1",
+    "dos": "0e66f2168336235fe45bb987d2906a2a05e5bed0a72053e145f8eca6489c88b6",
+    "general": "4a123e1f7c32876a4e866a019510ec4d353b29717a04a3f59a110701c785798c",
     # Con la caché en `repr` (17 cifras) esta daba 5472c557…: % COBRADO
     # difería del generador anterior en el último bit.
-    "pct17": "1ef5fea33c44a79129424208a48f6e021035d3cd2807060ef02cc273996e4667",
+    "pct17": "179b9207b41bbe28a7c09ef3fd6481a7ddf156e7e91478843469814974408b1b",
 }
 
 

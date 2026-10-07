@@ -108,7 +108,6 @@ FUERA = [
     "IVA PAGADO\nMXN",
     "REMANENTE\nVENTA−COSTO MXN",
     "DIF. IVA\nHACIENDA MXN",
-    "COMISIÓN\nVENDEDOR MXN",
     "GANANCIA\nMXN",
     "GANANCIA\nUSD",
     "COSTO X HORA\nUSD",
@@ -269,17 +268,20 @@ def test_juego_de_columnas_del_balance_general() -> None:
         "COSTO TOTAL\nMXN",
         "TIPO CAMBIO\nCOSTOS",
         *COSTO_POR_HORA,
+        # 6-oct-2026 (API 0.0.65): COMISIONES al final del bloque; las 12 del
+        # cliente siguen juntas y en su orden.
+        "COMISIONES\nMXN",
         *mensual[mensual.index("STATUS") :],
     ]
-    assert len(encabezados) == 44
+    assert len(encabezados) == 45
     assert not set(FUERA) & set(encabezados)
     grupos = [c[0] for c in _COLS_GENERAL]
     assert grupos[16:18] == ["COSTO TOTAL (MXN)"] * 2
-    assert grupos[18:30] == ["COSTO POR HORA"] * 12
+    assert grupos[18:31] == ["COSTO POR HORA"] * 13
     claves = [c[2] for c in _COLS_GENERAL if c[2]]
     assert len(claves) == len(set(claves))
     assert _DISP_GENERAL.cols == tuple(_COLS_GENERAL)
-    assert _DISP_GENERAL.costo_por_hora and _DISP_GENERAL.comision_col is None
+    assert _DISP_GENERAL.costo_por_hora and _DISP_GENERAL.comision_col == 31
 
 
 # Letras del juego de siempre (Balance mensual y libro individual), ESCRITAS A
@@ -295,7 +297,7 @@ _LETRAS_MENSUAL = {
     "op_mxn": "Q", "piloto_mxn": "R", "otros_mxn": "S", "permiso_afac_mxn": "T",
     "costo_total_mxn": "U", "tc_costos": "V",
     "costo_usd": "W", "costo_usd_siva": "X", "iva_pagado_usd": "Y", "iva_pagado_mxn": "Z",
-    "remanente_mxn": "AA", "dif_iva_mxn": "AB", "comision_vendedor_mxn": "AC",
+    "remanente_mxn": "AA", "dif_iva_mxn": "AB", "comisiones_mxn": "AC",
     "ganancia_mxn": "AD", "ganancia_usd": "AE",
     "costo_hr_usd": "AF", "costo_hr_usd_siva": "AG",
     "status_cobro": "AH",
@@ -309,7 +311,7 @@ def test_el_juego_de_siempre_no_se_movio() -> None:
     assert _DISP_MENSUAL.letra == _LETRAS_MENSUAL
     assert _DISP_MENSUAL.cobro1_col == 35  # COBRO 1 FECHA = AI
     assert _DISP_MENSUAL.cobro_mxn_letras == ("AJ", "AL", "AN", "AP")
-    assert _DISP_MENSUAL.comision_col == 29  # COMISIÓN VENDEDOR MXN = AC
+    assert _DISP_MENSUAL.comision_col == 29  # COMISIONES MXN = AC (6-oct-2026)
     assert _DISP_MENSUAL.total_map is _TOTAL_MAP
     assert not _DISP_MENSUAL.costo_por_hora
 
@@ -344,7 +346,7 @@ def test_valor_de_cada_columna_sale_del_api() -> None:
 def test_encabezado_dice_balance_general_y_conserva_las_constantes() -> None:
     wb, _ = _libros(render_balance_general_xlsx(_general()))
     ws = wb[MAESTRA]
-    assert ws.max_column == 44
+    assert ws.max_column == 45
     assert [c.value for c in ws[2]] == [c[1] for c in _COLS_GENERAL]
     grupos = {c.value: c.coordinate for c in ws[1] if c.column > 4 and c.value}
     assert list(grupos) == [
@@ -356,7 +358,7 @@ def test_encabezado_dice_balance_general_y_conserva_las_constantes() -> None:
     ]
     assert _TITULO_GRUPO_COSTO_HORA == "BALANCE GENERAL · COSTO POR HORA"
     inicio = _letra(ws, COSTO_POR_HORA[0])
-    fin = _letra(ws, COSTO_POR_HORA[-1])
+    fin = _letra(ws, "COMISIONES\nMXN")  # el bloque cierra con COMISIONES
     assert f"{inicio}1:{fin}1" in {str(r) for r in ws.merged_cells.ranges}
     # A1:D1: las constantes de siempre (COSTO X HORA cita $D$1).
     assert (ws["A1"].value, ws["B1"].value) == ("Permiso AFAC USD/hr", None)
@@ -493,7 +495,17 @@ def test_desglose_del_costo_en_la_nota_de_total_para_proveedor() -> None:
     # COSTO TOTAL va como valor «calculado por el sistema» (nota en su encabezado).
     encabezado = ws.cell(row=2, column=_col(ws, "COSTO TOTAL\nMXN"))
     assert encabezado.comment.text.startswith("Calculado por el sistema: COSTO TOTAL = operación")
-    assert [c.coordinate for c in ws[2] if c.comment] == [encabezado.coordinate]
+    # Las otras dos notas de encabezado (6-oct-2026): REMANENTE ya después de
+    # comisiones y la regla de COMISIONES.
+    remanente = ws.cell(row=2, column=_col(ws, COSTO_POR_HORA[-1]))
+    comisiones = ws.cell(row=2, column=_col(ws, "COMISIONES\nMXN"))
+    assert remanente.comment.text.startswith("REMANENTE VENTA MENOS COMPRA = VENTA AVIÓN MXN")
+    assert comisiones.comment.text.startswith("COMISIONES (regla de septiembre 2026")
+    assert [c.coordinate for c in ws[2] if c.comment] == [
+        encabezado.coordinate,
+        remanente.coordinate,
+        comisiones.coordinate,
+    ]
 
 
 def test_nota_del_desglose_partes_y_detalle() -> None:
@@ -730,20 +742,26 @@ def test_notas_al_pie_hablan_de_las_columnas_del_balance_general() -> None:
     assert any(x.startswith("BALANCE GENERAL · COSTO POR HORA: COSTO X HORA") for x in textos)
     assert "entre 1.16 para sacar el subtotal" in pie
     assert "REMANENTE VENTA MENOS COMPRA = VENTA AVIÓN MXN − TOTAL PARA PROVEEDOR" in pie
+    assert "TOTAL PARA PROVEEDOR (PESOS) − COMISIONES MXN" in pie  # 6-oct-2026
     assert "quedan solo como nota en el desglose de TOTAL PARA PROVEEDOR (PESOS)" in pie
     assert (
         "TUA pagado del periodo (solo nota en el desglose de TOTAL PARA PROVEEDOR, no resta en "
         "este libro):"
     ) in textos
     # Ninguna nota nombra columnas que esta hoja ya no tiene.
-    assert not any(x.startswith("COMISIÓN VENDEDOR MXN va vacía") for x in textos)
     assert "celda OPERACIONES" not in pie and "GANANCIA de la fila" not in pie
     assert "COSTO X HORA USD de la fila TOTALES" not in pie
-    # El Balance mensual conserva las suyas.
+    # El Balance mensual conserva las suyas (la de COMISIONES cierra con
+    # GANANCIA de la fila, columna que el general no tiene).
     ws_m = _libros(render_balance_general_xlsx(t_extension._general()))[0][MAESTRA]
-    assert any(
-        isinstance(c.value, str) and c.value.startswith("COMISIÓN VENDEDOR MXN va vacía")
+    comisiones_m = [
+        c.value
         for c in ws_m["A"]
+        if isinstance(c.value, str) and c.value.startswith("COMISIONES MXN (regla de septiembre")
+    ]
+    assert len(comisiones_m) == 1
+    assert comisiones_m[0].endswith(
+        "GANANCIA de la fila = REMANENTE (VENTA − COSTO TOTAL) − COMISIONES."
     )
 
 
@@ -992,18 +1010,26 @@ def test_otro_juego_de_columnas_sigue_cuadrando(caso, monkeypatch, registros) ->
 # 5) Balance MENSUAL: el libro de hoy, byte a byte.
 # ---------------------------------------------------------------------------
 
-# Huellas calculadas con el código ANTERIOR a este cambio (HEAD 93486c1,
+# Huellas calculadas con el código ANTERIOR a la variante (HEAD 93486c1,
 # 6-oct-2026) sobre los mismos payloads. Además se verificó que los 37 libros
 # de los tests del balance (individuales y generales) salían byte-idénticos
 # —todos los miembros del .xlsx salvo docProps/core.xml— salvo los 3 con una
 # fila PROVISIÓN, donde solo cambia 'otros movimientos' (el amarillo).
+# REGENERADAS A PROPÓSITO el 6-oct-2026 (API 0.0.65, comisiones a cargo del
+# avión): con un payload SIN los campos nuevos solo cambian los encabezados
+# «COMISIONES MXN» (antes COMISIÓN VENDEDOR MXN) y «COBRADO AVIÓN MXN
+# (prorrateado, antes de comisiones)», la nota del primero, las notas al pie
+# de COMISIONES / GANANCIA y de COBRADO REAL (****) y, en el RESUMEN, «COMISIONES
+# MXN» y sus dos notas — comparado celda por celda (valor, fórmula, caché,
+# formato, fuente, relleno, bordes y notas) contra el código anterior en los
+# 244 libros de los tests del balance: ningún número ni fórmula cambió.
 _FIRMAS_HOY = {
-    "fórmulas": "7dcf19e716a271f873ef46bea9a179ac5f9401d7008703103a1ad1634666bf19",
-    "empresa": "a3fdaea1040978760ed02d6bc187edbad7cdbbb0da4a7a1289f8f278f18f9b72",
-    "pago real": "f1b3ac2829c5da84c2db68f256308d6027387c62e833239767f02937e0145d52",
+    "fórmulas": "f249c29f2a6ee416b016341e2d169f8100bc6528f2a4eee6c4a4a7980b4e8eac",
+    "empresa": "5ab8ec78af3a299ba32f6b802b07f1d5cbb9b6d241beb6b71141eac30a7f48da",
+    "pago real": "9291b674d3fcf9d2a29ee550d1154d574ad7bd1a28da55c0af1cb1e7c57927f3",
 }
 _FIRMA_HOY_PROVISION_SIN_OTROS_MOVIMIENTOS = (
-    "7a3c12df7d64abb45e8b37ddd566a41535f122169f592cbc03811eaa51f594d6"
+    "a88e5ac61af1ffe7c4be47326d338661dc819b40139ae506a0cbb26248b73b83"
 )
 _CASOS_MENSUAL = {
     "fórmulas": tf._general,
@@ -1019,9 +1045,13 @@ _CASOS_MENSUAL = {
 # primeros 16 hex de su sha256 (64 bits, de sobra para notar un byte movido).
 # Se calcularon renderizando estos payloads con el código ANTERIOR a la
 # variante (`git archive 93486c1 app tests`, con sus propios helpers de
-# tests) y openpyxl 3.1.5; el código nuevo da exactamente los mismos. Si
-# falla SOLO porque cambió la versión de openpyxl (y `_FIRMAS_HOY` sigue
-# igual), se regeneran con ese árbol de 93486c1 y la versión nueva.
+# tests) y openpyxl 3.1.5; el código de la variante daba exactamente los
+# mismos. Regenerados el 6-oct-2026 con el código de las COMISIONES (ver
+# `_FIRMAS_HOY`): cambian SOLO la hoja de vuelos (sheet2), el RESUMEN (sheet1),
+# las notas de la hoja de vuelos (comment1) y su dibujo VML; los demás
+# miembros, idénticos a los de 93486c1. Si falla SOLO porque cambió la versión
+# de openpyxl (y `_FIRMAS_HOY` sigue igual), se regeneran con el árbol del
+# commit de las comisiones y la versión nueva.
 _OPENPYXL_HUELLAS = "3.1.5"
 _MIEMBROS_HOY = {
     "fórmulas": {
@@ -1029,18 +1059,18 @@ _MIEMBROS_HOY = {
         "_rels/.rels": "c545941ba36c15fc",
         "docProps/app.xml": "209fca6b00afe72a",
         "xl/_rels/workbook.xml.rels": "fee7f7835a21adf6",
-        "xl/comments/comment1.xml": "1f01ffd50cbe956e",
+        "xl/comments/comment1.xml": "b5b243721e1df8dd",
         "xl/comments/comment2.xml": "a623ddcb4e5ebb3c",
-        "xl/drawings/commentsDrawing1.vml": "f3fd6ba45292a07d",
+        "xl/drawings/commentsDrawing1.vml": "f36086122355d4f6",
         "xl/drawings/commentsDrawing2.vml": "a3fb237fe6d57d83",
         "xl/styles.xml": "c00b3c833322f4b3",
         "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
         "xl/workbook.xml": "e9b5be0ab87733e4",
         "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
         "xl/worksheets/_rels/sheet9.xml.rels": "06a3b87cfefe7f5f",
-        "xl/worksheets/sheet1.xml": "ed85f7783357e4ef",
+        "xl/worksheets/sheet1.xml": "6635ba00695e0a12",
         "xl/worksheets/sheet10.xml": "b134206c4fd136b1",
-        "xl/worksheets/sheet2.xml": "9db705574eaea0cd",
+        "xl/worksheets/sheet2.xml": "c4a62b238ad091c1",
         "xl/worksheets/sheet3.xml": "bb3dc0f4f2b56702",
         "xl/worksheets/sheet4.xml": "b4271af6eb64e959",
         "xl/worksheets/sheet5.xml": "0122d2728a5bfe58",
@@ -1054,18 +1084,18 @@ _MIEMBROS_HOY = {
         "_rels/.rels": "c545941ba36c15fc",
         "docProps/app.xml": "209fca6b00afe72a",
         "xl/_rels/workbook.xml.rels": "fee7f7835a21adf6",
-        "xl/comments/comment1.xml": "1f01ffd50cbe956e",
+        "xl/comments/comment1.xml": "b5b243721e1df8dd",
         "xl/comments/comment2.xml": "51429da7b4342562",
-        "xl/drawings/commentsDrawing1.vml": "f3fd6ba45292a07d",
+        "xl/drawings/commentsDrawing1.vml": "f36086122355d4f6",
         "xl/drawings/commentsDrawing2.vml": "14fe3cbfa808de3c",
         "xl/styles.xml": "2354a5c4769e8a1b",
         "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
         "xl/workbook.xml": "e9b5be0ab87733e4",
         "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
         "xl/worksheets/_rels/sheet9.xml.rels": "06a3b87cfefe7f5f",
-        "xl/worksheets/sheet1.xml": "b0d80f991bd39ac2",
+        "xl/worksheets/sheet1.xml": "d65600dbee93b893",
         "xl/worksheets/sheet10.xml": "245576c8b1d18f98",
-        "xl/worksheets/sheet2.xml": "9db705574eaea0cd",
+        "xl/worksheets/sheet2.xml": "c4a62b238ad091c1",
         "xl/worksheets/sheet3.xml": "bb3dc0f4f2b56702",
         "xl/worksheets/sheet4.xml": "b4271af6eb64e959",
         "xl/worksheets/sheet5.xml": "0122d2728a5bfe58",
@@ -1079,17 +1109,17 @@ _MIEMBROS_HOY = {
         "_rels/.rels": "c545941ba36c15fc",
         "docProps/app.xml": "209fca6b00afe72a",
         "xl/_rels/workbook.xml.rels": "7676081832cc25e3",
-        "xl/comments/comment1.xml": "5da58ad45ce720b4",
+        "xl/comments/comment1.xml": "17e4d4da93f41a8b",
         "xl/comments/comment2.xml": "4538ed5560018e12",
-        "xl/drawings/commentsDrawing1.vml": "d883bb9ec4031f10",
+        "xl/drawings/commentsDrawing1.vml": "286be680ad384252",
         "xl/drawings/commentsDrawing2.vml": "ed0e12dacd2b3460",
         "xl/styles.xml": "c6184aacbdeea286",
         "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
         "xl/workbook.xml": "6c579d04c9cd1373",
         "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
         "xl/worksheets/_rels/sheet3.xml.rels": "06a3b87cfefe7f5f",
-        "xl/worksheets/sheet1.xml": "3affe542cc6fd992",
-        "xl/worksheets/sheet2.xml": "946870294a3621b2",
+        "xl/worksheets/sheet1.xml": "e2ee0c8f121430fb",
+        "xl/worksheets/sheet2.xml": "1c413913d781b1c0",
         "xl/worksheets/sheet3.xml": "495b31f28f184ace",
         "xl/worksheets/sheet4.xml": "fb8f4d129040df3f",
         "xl/worksheets/sheet5.xml": "9095ac67c5861e2b",

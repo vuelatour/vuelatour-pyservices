@@ -18,6 +18,11 @@ con las banderas que el API manda cuando hay pagos reales:
 Sin bandera el Excel es IDÉNTICO al de antes (las leyendas de hoy siguen
 siendo verdaderas mientras no haya gasto real): aquí se compara contra el
 texto viejo LITERAL. El libro INDIVIDUAL nunca cambia.
+
+6-oct-2026 (API 0.0.65, comisiones a cargo del avión): las notas del RESUMEN
+y de la hoja maestra hablan ahora de la columna COMISIONES (antes «COMISIÓN
+VENDEDOR MXN va vacía a propósito…»); la bandera sigue cambiando SOLO el
+fragmento del pago al vendedor.
 """
 
 from io import BytesIO
@@ -63,21 +68,31 @@ OM_FILA2_VIEJA = (
     "aparecen: no son resultado (29-ago: los gastos de empresa viven en "
     "la hoja 'otros gastos' — antes llamada 'gastos VuelaTour')."
 )
+# Desde el 6-oct-2026 (API 0.0.65) la base de estas dos notas es la de la
+# columna COMISIONES; el fragmento final (pago apareado) es el de siempre.
 RESUMEN_NOTA_VIEJA = (
-    "COMISIONES VENDEDOR va vacía a propósito (regla 28-ago-2026): la "
-    "comisión del vendedor ya no es venta ni costo de ningún avión — es "
-    "INGRESO de VuelaTour y su pago al vendedor sale de VuelaTour; los "
-    "dos viven en 'otros movimientos' (ingreso cobrado y pago apareado "
-    "como PROVISIÓN a la fecha del vuelo)."
+    "COMISIONES = las de la columna COMISIONES de la hoja de vuelos de cada "
+    "avión (regla de septiembre 2026, por fecha del vuelo: su parte de la "
+    "comisión bancaria de los cobros y la comisión del vendedor como "
+    "PROVISIÓN; en vuelos anteriores no hay). Lo cobrado al cliente por la "
+    "comisión del vendedor sigue siendo INGRESO de VuelaTour y su pago al "
+    "vendedor sale de VuelaTour; los dos viven en 'otros movimientos' "
+    "(ingreso cobrado y pago apareado como PROVISIÓN a la fecha del vuelo)."
 )
 MAESTRA_NOTA_VIEJA = (
-    "COMISIÓN VENDEDOR MXN va vacía a propósito (regla 28-ago-2026): la "
-    "comisión del vendedor ya no es venta ni costo del avión — es "
-    "ingreso de VuelaTour y su pago al vendedor sale de VuelaTour; "
-    "ambos viven en 'otros movimientos' (el pago apareado como "
-    "PROVISIÓN a la fecha del vuelo). GANANCIA de la fila = REMANENTE "
-    "(VENTA − COSTO TOTAL), ya sin comisión."
+    "COMISIONES MXN (regla de septiembre 2026, por fecha del vuelo) = lo que "
+    "absorbe el avión: su parte de la comisión bancaria de los cobros y la "
+    "comisión del vendedor como PROVISIÓN (lo cobrado al cliente por ese "
+    "concepto, comisión + IVA); la nota de cada celda dice cuáles son y en los "
+    "vuelos anteriores va vacía. Lo cobrado al cliente por la comisión del "
+    "vendedor sigue siendo ingreso de VuelaTour y su pago al vendedor sale de "
+    "VuelaTour; ambos viven en 'otros movimientos' (el pago apareado como "
+    "PROVISIÓN a la fecha del vuelo). GANANCIA de la fila = REMANENTE (VENTA − "
+    "COSTO TOTAL) − COMISIONES."
 )
+# Prefijos con que se encuentran en la columna A.
+RESUMEN_PREFIJO = "COMISIONES = las de la columna COMISIONES"
+MAESTRA_PREFIJO = "COMISIONES MXN (regla de septiembre 2026"
 DINERO_FILA2_VIEJA = (
     "Ingreso de VuelaTour (no del avión): TUAs, extras, pernocta y "
     "comisión del vendedor cobrados (con su IVA) vs lo pagado. El pago de "
@@ -233,8 +248,8 @@ def _celda_que_empieza(ws, prefijo: str) -> str:
 def _leyendas_general(xlsx: bytes) -> tuple[str, str, str]:
     wb = _libro(xlsx)
     om = wb["otros movimientos"]["A2"].value
-    resumen = _celda_que_empieza(wb["RESUMEN flota"], "COMISIONES VENDEDOR va vacía")
-    maestra = _celda_que_empieza(wb["reporte horas FLOTA"], "COMISIÓN VENDEDOR MXN va vacía")
+    resumen = _celda_que_empieza(wb["RESUMEN flota"], RESUMEN_PREFIJO)
+    maestra = _celda_que_empieza(wb["reporte horas FLOTA"], MAESTRA_PREFIJO)
     return om, resumen, maestra
 
 
@@ -277,10 +292,8 @@ def test_general_sin_otros_movimientos_resumen_y_maestra_de_hoy() -> None:
     req.consolidado.otros_movimientos = None
     wb = _libro(render_balance_general_xlsx(req))
     assert "otros movimientos" not in wb.sheetnames
-    assert _celda_que_empieza(wb["RESUMEN flota"], "COMISIONES VENDEDOR") == RESUMEN_NOTA_VIEJA
-    assert (
-        _celda_que_empieza(wb["reporte horas FLOTA"], "COMISIÓN VENDEDOR MXN") == MAESTRA_NOTA_VIEJA
-    )
+    assert _celda_que_empieza(wb["RESUMEN flota"], RESUMEN_PREFIJO) == RESUMEN_NOTA_VIEJA
+    assert _celda_que_empieza(wb["reporte horas FLOTA"], MAESTRA_PREFIJO) == MAESTRA_NOTA_VIEJA
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +325,7 @@ def test_individual_nunca_cambia_aunque_traiga_la_bandera() -> None:
     )
     wb = _libro(render_balance_avion_xlsx(req))
     assert "otros movimientos" not in wb.sheetnames
-    maestra = _celda_que_empieza(wb["reporte horas N4142R"], "COMISIÓN VENDEDOR MXN")
+    maestra = _celda_que_empieza(wb["reporte horas N4142R"], MAESTRA_PREFIJO)
     assert maestra == MAESTRA_NOTA_VIEJA
 
 

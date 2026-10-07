@@ -732,6 +732,12 @@ class BalanceAvionCobro(BaseModel):
     metodo_etiqueta: str | None = None
     registro: str | None = None
     cobrado_con: str | None = None
+    # 6-oct-2026 (API 0.0.65, regla «comisiones a cargo del avión» desde
+    # septiembre 2026): lo que ENTRÓ a la cuenta = `monto_mxn` (bruto) −
+    # `comision_mxn`. El API lo manda solo en vuelos dentro de la vigencia;
+    # con él la celda COBRO n MXN pinta el NETO y su nota dice bruto,
+    # comisión y neto. None (API ≤ 0.0.64 o vuelo anterior) ⇒ `monto_mxn`.
+    neto_mxn: float | None = None
 
     @field_validator("metodo_etiqueta", "registro", "cobrado_con", mode="before")
     @classmethod
@@ -828,7 +834,9 @@ class BalanceAvionVuelo(BaseModel):
     dif_iva_mxn: float | None = None
     # Regla A (28-ago-2026 tarde): la comisión del vendedor ya NO es venta
     # ni costo del avión (es ingreso y pago de VuelaTour: 'otros
-    # movimientos'). El API la manda None; la columna se conserva por layout.
+    # movimientos'). El API la manda None (también el 0.0.65, por
+    # compatibilidad): la columna COMISIONES MXN pinta `comisiones_mxn` y
+    # solo cae a este campo con un API ≤ 0.0.64.
     comision_vendedor_mxn: float | None = None
     ganancia_mxn: float | None = None
     ganancia_usd: float | None = None
@@ -907,6 +915,33 @@ class BalanceAvionVuelo(BaseModel):
     # ≤ 0.0.46) el libro es byte-idéntico al de siempre.
     extension_pagada_mxn: float | None = None
 
+    # --- COMISIONES a cargo del avión (6-oct-2026, API 0.0.65; pedido: «la
+    # comisión del banco y vendedor se puede ir a la columna de comisiones
+    # del vendedor pero cambiar el nombre a "comisiones" y poner notas el
+    # tipo de comisión… para que el monto real total cobrado ya sea después
+    # de cualquier comisión»). Vigencia por fecha del vuelo (septiembre 2026,
+    # clave `comisiones_al_avion_desde` del API). El API las calcula con su
+    # fuente única `comisionesDelVuelo`; aquí solo se pintan. ---
+    # Total de la celda COMISIONES MXN = parte del avión de la comisión
+    # bancaria de los cobros + comisión del vendedor como PROVISIÓN. None
+    # (vuelo anterior o API ≤ 0.0.64) ⇒ celda vacía y GANANCIA = REMANENTE.
+    comisiones_mxn: float | None = None
+    # Una línea por concepto, YA armada por el API (nota de la celda).
+    comisiones_detalle: list[str] = Field(default_factory=list)
+    # Las dos partes del total (informativas: si no llega el detalle, la
+    # nota se compone con ellas).
+    comision_banco_avion_mxn: float | None = None
+    comision_vendedor_prov_mxn: float | None = None
+
+    @field_validator("comisiones_detalle", mode="before")
+    @classmethod
+    def _detalle_liberal(cls, v: Any) -> Any:
+        """Nota informativa: null o algo que no es lista ⇒ []; se quedan solo
+        las líneas de texto no vacías. Jamás un 422 por una nota."""
+        if not isinstance(v, (list, tuple)):
+            return []
+        return [x.strip() for x in v if isinstance(x, str) and x.strip()]
+
 
 class BalanceAvionTotales(BaseModel):
     """Fila TOTALES de la hoja maestra: sumas y promedios YA calculados."""
@@ -947,6 +982,10 @@ class BalanceAvionTotales(BaseModel):
     # como el TUA. Viaja solo con suma ≠ 0 (libro de cada avión y
     # `consolidado` del general); sin la llave no se pinta nada nuevo.
     extension_pagada_mxn: float | None = None
+    # Σ comisiones_mxn de las filas (6-oct-2026, API 0.0.65): TOTALES de la
+    # columna COMISIONES MXN. Sin ella (API ≤ 0.0.64) la celda lleva
+    # `comision_vendedor_mxn`, como siempre.
+    comisiones_mxn: float | None = None
 
 
 class BalanceAvionGastoFila(BaseModel):
@@ -1133,9 +1172,12 @@ class BalanceGeneralResumenFila(BaseModel):
     costo_mxn: float | None = None
     # "Gasto de combustible" del mes.
     combustible_mxn: float | None = None
-    # Comisiones de vendedor: desde el 28-ago-2026 tarde (regla A) llegan
-    # None/0 — la comisión es ingreso y pago de VuelaTour, no del avión.
-    # La columna se conserva por layout.
+    # Comisiones del avión (columna COMISIONES MXN, 6-oct-2026): desde la
+    # regla de septiembre 2026 (API 0.0.65) = Σ COMISIONES de la hoja de
+    # vuelos del avión (parte del avión de la comisión bancaria + provisión
+    # de la comisión del vendedor) y GANANCIA ya va después de ellas. Un API
+    # ≤ 0.0.64 manda None/0 (regla A del 28-ago-2026: la comisión del
+    # vendedor era solo de VuelaTour).
     comisiones_mxn: float | None = None
     # VENTA − COSTO TOTAL − COMBUSTIBLE = GANANCIA (leyenda impresa).
     ganancia_mxn: float | None = None
