@@ -70,6 +70,7 @@ from app.services.balance_avion_xlsx import (
     _antes_de_comisiones,
     _avion_cubre_al_vendedor,
     _cascada_con_comisiones,
+    _comentario_cobro,
     _con_regla,
     _fila_antes_de_comisiones,
     render_balance_avion_xlsx,
@@ -255,12 +256,25 @@ def test_fila_con_comisiones_vuelve_a_la_de_antes_de_la_regla() -> None:
     assert antes.ganancia_usd == r2(52896.25 / 17.32) == 3054.06
     # El vuelo del API no se toca (es una copia).
     assert (v.ganancia_mxn, v.ganancia_usd, v.comisiones_mxn) == (49034.75, 2831.11, 3861.5)
-    # Sin comisiones (vuelo anterior, API previo o regla con 0): la MISMA fila.
-    for sin in (
-        BalanceAvionVuelo(remanente_mxn=100.0, ganancia_mxn=100.0, ganancia_usd=5.0),
-        BalanceAvionVuelo(remanente_mxn=100.0, comisiones_mxn=0.0, ganancia_mxn=100.0),
+    # Sin comisiones (vuelo anterior o API previo): la MISMA fila.
+    sin = BalanceAvionVuelo(remanente_mxn=100.0, ganancia_mxn=100.0, ganancia_usd=5.0)
+    assert _fila_antes_de_comisiones(sin) is sin
+    # Regla con 0 explícito (el API manda null, pero el esquema lo admite; y
+    # un API ≤ 0.0.64 con `comision_vendedor_mxn` 0): la fila SIN la llave,
+    # igual a la de null — si no, GANANCIA MXN citaba la columna que el
+    # general no tiene (revisión 7-oct-2026). Nada más cambia.
+    for cero in (
+        BalanceAvionVuelo(
+            remanente_mxn=100.0, comisiones_mxn=0.0, ganancia_mxn=100.0, ganancia_usd=5.0
+        ),
+        BalanceAvionVuelo(
+            remanente_mxn=100.0, comision_vendedor_mxn=0.0, ganancia_mxn=100.0, ganancia_usd=5.0
+        ),
     ):
-        assert _fila_antes_de_comisiones(sin) is sin
+        limpia = _fila_antes_de_comisiones(cero)
+        assert limpia is not cero
+        assert limpia == sin
+        assert (cero.comisiones_mxn, cero.comision_vendedor_mxn) != (None, None)  # copia
     # Sin T.C. de costos el API la convirtió con el T.C. promedio del libro de
     # SU avión, que esta hoja no tiene: vacía, jamás un número que no es.
     sin_tc = BalanceAvionVuelo(
@@ -295,6 +309,88 @@ def test_totales_antes_de_comisiones() -> None:
     assert req.totales.ganancia_mxn == 1400.25
     previo = tf._individual_tst()
     assert _antes_de_comisiones(previo) is previo
+
+
+def test_regla_con_cero_deja_los_totales_del_api() -> None:
+    """Filas de la regla con COMISIONES en 0 explícito y ninguna ≠ 0: solo
+    esas filas pierden la llave; los TOTALES son los del API (el MISMO
+    objeto: su GANANCIA ya es el remanente, como con null)."""
+    req = BalanceAvionRequest(
+        vuelos=[
+            BalanceAvionVuelo(
+                remanente_mxn=1000.0,
+                comisiones_mxn=0.0,
+                ganancia_mxn=1000.0,
+                tc_costos=20.0,
+                ganancia_usd=50.0,
+            ),
+            BalanceAvionVuelo(remanente_mxn=500.25, ganancia_mxn=500.25, ganancia_usd=25.01),
+        ],
+        totales=BalanceAvionTotales(
+            remanente_mxn=1500.25, comisiones_mxn=0.0, ganancia_mxn=1500.25, ganancia_usd=75.01
+        ),
+    )
+    antes = _antes_de_comisiones(req)
+    assert antes.totales is req.totales
+    assert antes.vuelos[1] is req.vuelos[1]
+    assert antes.vuelos[0].comisiones_mxn is None
+    assert antes.vuelos[0].model_dump(exclude={"comisiones_mxn"}) == req.vuelos[0].model_dump(
+        exclude={"comisiones_mxn"}
+    )
+
+
+def _con_cero(p: dict, clave: str = "#403 · Traslado") -> dict:
+    """El payload con COMISIONES en 0 explícito en la fila `clave` (en el
+    consolidado y en el libro de su avión) en lugar del null del API."""
+    filas = [*p["consolidado"]["vuelos"], *(f for a in p["aviones"] for f in a["vuelos"])]
+    tocadas = 0
+    for f in filas:
+        if f["clave"] == clave:
+            f["comisiones_mxn"] = 0.0
+            tocadas += 1
+    assert tocadas >= 2, clave
+    return p
+
+
+def _columna(ws, encabezado: str) -> str:
+    return next(c.column_letter for c in ws[2] if c.value == encabezado)
+
+
+@pytest.mark.parametrize("variante", ["mensual", "general"])
+def test_fila_con_comisiones_en_cero_se_pinta_como_la_de_null(variante, registros) -> None:
+    """#403 (vuelo de la regla sin comisiones) con COMISIONES en 0 explícito
+    en lugar de null: el general sale BYTE A BYTE igual. Antes, en el mensual,
+    GANANCIA MXN citaba la columna COMISIONES que la hoja ya no tiene: la
+    celda iba como valor y el encabezado perdía su nota por la de «calculado
+    por el sistema» (revisión 7-oct-2026)."""
+    data_null = _render(_payload(variante))
+    degradadas_null = registros[-1].degradadas()
+    data_cero = _render(_con_cero(_payload(variante)))
+    assert registros[-1].degradadas() == degradadas_null
+    assert verificar_libro(data_cero)
+    assert _miembros(data_cero) == _miembros(data_null)
+    if variante == "mensual":
+        ws = _wb(data_cero)[0][MAESTRA]
+        fila = next(c.row for c in ws["A"] if c.value == "#403 · Traslado")
+        col = _columna(ws, "GANANCIA\nMXN")
+        assert ws[f"{col}{fila}"].value == f"=AA{fila}"
+        assert ws[f"{col}2"].comment.text == _NOTA_ENCABEZADO_GANANCIA_FLOTA
+
+
+def test_libro_sin_comisiones_con_un_cero_es_el_de_siempre(registros) -> None:
+    """Periodo sin comisiones ≠ 0 (el espejo del API previo a la regla) y una
+    fila con COMISIONES en 0 explícito: el Balance general es el de siempre,
+    byte a byte (TOTALES del API, sin fórmulas degradadas de más)."""
+    base = tf._general_payload()
+    data = render_balance_general_xlsx(BalanceGeneralRequest.model_validate(base))
+    degradadas = registros[-1].degradadas()
+    con_cero = tf._general_payload()
+    fila = con_cero["consolidado"]["vuelos"][0]
+    assert "comisiones_mxn" not in fila
+    fila["comisiones_mxn"] = 0.0
+    data_cero = render_balance_general_xlsx(BalanceGeneralRequest.model_validate(con_cero))
+    assert registros[-1].degradadas() == degradadas
+    assert _miembros(data_cero) == _miembros(data)
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +645,33 @@ def test_textos_nuevos_con_la_regla_del_api(texto) -> None:
     assert _con_regla(texto, None) == texto
     con = _con_regla(texto, REGLA_API)
     assert "septiembre" not in con and REGLA_API in con
+
+
+def test_notas_de_la_cascada_no_prometen_cuadres_que_no_siempre_se_dan() -> None:
+    """Revisión 7-oct-2026. La nota de «(−) COMISIONES» decía «Son las mismas
+    que descuenta el reparto a socios»: no es así cuando un vuelo que aún no
+    se completa ya tiene un anticipo con comisión bancaria (caso real: #314 de
+    N4142R, CONFIRMADO del 15-sep-2026, $5,000 de comisión) — el balance
+    cuenta ese cobro y el reparto, que solo lee vuelos completados o
+    cancelados, no. La de «antes de comisiones» tampoco cuadra siempre al
+    centavo con la suma de GANANCIA USD de la hoja de vuelos (T.C. de costos
+    por fila contra la cifra USD del reparto; sin T.C. de costos la celda va
+    vacía). Las dos lo dicen, sin cortarse en la nota."""
+    com = _NOTA_CASCADA_COMISIONES
+    assert "Son las mismas" not in com
+    assert "Por vuelo es la misma cifra que descuenta el reparto a socios" in com
+    assert "el total puede no coincidir con el del reparto" in com
+    assert "anticipo con comisión bancaria" in com
+    assert "(solo lee vuelos completados o cancelados)" in com
+    antes = _NOTA_CASCADA_ANTES_COMISIONES
+    assert "Puede no cuadrar al centavo con la suma de GANANCIA USD" in antes
+    assert "T.C. de costos (sin él, la celda va vacía)" in antes
+    # Con la etiqueta del API solo cambia el nombre de la regla.
+    con = _con_regla(com, REGLA_API)
+    assert "el total puede no coincidir con el del reparto" in con and REGLA_API in con
+    # La nota crece con el texto y no llega al tope de alto (no se corta).
+    for texto in (com, con, antes):
+        assert _comentario_cobro(texto).height < 260
 
 
 def test_nota_de_la_cascada_con_la_regla_del_api() -> None:

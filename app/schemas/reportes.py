@@ -1099,10 +1099,13 @@ class BalanceAvionBalanceBloque(BaseModel):
     # ellas; para seguir cuadrando con lo que ve el socio, la cascada de cada
     # avión del general las muestra en dos líneas: `utilidad_antes_comisiones
     # _usd` (= `utilidad_antes_usd` + `comisiones_usd`) y `comisiones_usd`
-    # (lo que absorbe el avión: el MISMO número que descuenta el reparto a
-    # socios). El API las calcula; aquí solo se pintan. None (API ≤ 0.0.65) o
-    # comisiones en 0 ⇒ la cascada de siempre. El libro INDIVIDUAL las ignora:
-    # ahí ya restan, por vuelo, en su columna COMISIONES.
+    # (lo que absorbe el avión: por vuelo, la MISMA cifra que descuenta el
+    # reparto a socios; el TOTAL puede diferir del reparto cuando un vuelo que
+    # aún no se completa tiene un anticipo con comisión bancaria — el balance
+    # cuenta su cobro y el reparto no lee el vuelo, solo COMPLETADOS y
+    # CANCELADOS). El API las calcula; aquí solo se pintan. None (API ≤
+    # 0.0.65) o comisiones en 0 ⇒ la cascada de siempre. El libro INDIVIDUAL
+    # las ignora: ahí ya restan, por vuelo, en su columna COMISIONES.
     comisiones_usd: float | None = None
     utilidad_antes_comisiones_usd: float | None = None
 

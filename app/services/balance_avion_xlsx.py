@@ -634,9 +634,17 @@ def _fila_antes_de_comisiones(v: BalanceAvionVuelo) -> BalanceAvionVuelo:
     que el API mandaba antes de la regla; sin T.C. de costos va vacía (el API
     la convierte con el T.C. promedio del libro de SU avión, que esta hoja no
     tiene: mejor vacía que un número que no es). Sin comisiones, la fila tal
-    cual (su GANANCIA ya es el remanente)."""
-    if not _monto_no_cero(_comisiones(v)):
+    cual (su GANANCIA ya es el remanente). Con COMISIONES en 0 explícito (el
+    API manda null, pero el esquema admite la «regla con 0»), una copia SIN
+    la llave, que se pinta igual que la de null: si no, GANANCIA MXN citaba
+    la columna COMISIONES, que esta hoja no tiene, y la celda se iba como
+    valor con la nota «calculado por el sistema» en su encabezado (revisión
+    7-oct-2026)."""
+    comisiones = _comisiones(v)
+    if comisiones is None:
         return v
+    if comisiones == 0:
+        return v.model_copy(update={"comisiones_mxn": None, "comision_vendedor_mxn": None})
     ganancia_usd = None
     if v.remanente_mxn is not None and v.tc_costos:
         ganancia_usd = xlsx_formulas.redondear_excel(
@@ -664,11 +672,16 @@ def _antes_de_comisiones(req: BalanceAvionRequest) -> BalanceAvionRequest:
     restando en la cascada de su bloque de la hoja 'balance' (el número del
     API) y, por vuelo, en la columna COMISIONES de su libro INDIVIDUAL. Sin
     filas con comisiones (vuelos anteriores a la regla o un API previo), el
-    libro tal cual — byte a byte. Solo PRESENTACIÓN: ningún número del API
-    se recalcula, se elige el de antes de comisiones."""
+    libro tal cual — byte a byte. Con filas de COMISIONES en 0 explícito y
+    ninguna ≠ 0, solo esas filas cambian de objeto (sin la llave) y los
+    TOTALES son los del API: su GANANCIA ya es el remanente, como con null.
+    Solo PRESENTACIÓN: ningún número del API se recalcula, se elige el de
+    antes de comisiones."""
     vuelos = [_fila_antes_de_comisiones(v) for v in req.vuelos]
     if all(nueva is vieja for nueva, vieja in zip(vuelos, req.vuelos, strict=True)):
         return req
+    if not any(_monto_no_cero(_comisiones(v)) for v in req.vuelos):
+        return req.model_copy(update={"vuelos": vuelos})
     ganancia_usd = 0.0
     for v in vuelos:
         if v.ganancia_usd is not None:
@@ -2794,20 +2807,39 @@ _FILA_INDIRECTOS = "(−) GASTOS INDIRECTOS USD"
 # COMISIONES visibles en la cascada del Balance GENERAL (7-oct-2026, API
 # 0.0.66): la hoja de vuelos de ese libro va antes de comisiones, así que el
 # bloque de cada avión arranca antes de ellas y las resta en una línea; de
-# UTILIDAD ANTES DE GASTOS para abajo, los números de siempre del API (los de
-# su libro individual y los del reparto a socios).
+# UTILIDAD ANTES DE GASTOS para abajo, los números de siempre del API (los
+# mismos de su libro individual).
+# Las dos notas NO prometen cuadres que no siempre se dan (revisión 7-oct-2026):
+# - «(−) COMISIONES»: por vuelo es la cifra en USD del reparto a socios
+#   (`comisionesDelVuelo`), pero el TOTAL puede no coincidir con el del
+#   reparto: el anticipo con comisión bancaria de un vuelo que aún no se
+#   completa cuenta en el balance y no en el reparto, que solo lee vuelos
+#   COMPLETADOS o CANCELADOS (caso real: el #314 de N4142R, CONFIRMADO del
+#   15-sep-2026, cobro de $100,000 con $5,000 de comisión bancaria);
+# - «antes de comisiones»: puede no cuadrar al centavo con la Σ de GANANCIA
+#   USD de los vuelos del avión en la hoja de vuelos, que convierte cada
+#   remanente con su T.C. de costos (y queda vacía sin él), mientras que la
+#   comisión va con la cifra USD del reparto (la bancaria al T.C. de su
+#   cobro; la provisión del vendedor, en los USD cotizados).
 _FILA_ANTES_COMISIONES = "UTILIDAD ANTES DE GASTOS USD (antes de comisiones)"
 _FILA_COMISIONES = "(−) COMISIONES (banco + vendedor) USD"
 _NOTA_CASCADA_ANTES_COMISIONES = (
     "Utilidad de los vuelos del avión ANTES de comisiones = UTILIDAD ANTES DE "
     "GASTOS + COMISIONES (la hoja de vuelos de este libro va antes de "
-    "comisiones)."
+    "comisiones). Puede no cuadrar al centavo con la suma de GANANCIA USD de "
+    "sus vuelos en esa hoja: ahí cada vuelo convierte su remanente con su T.C. "
+    "de costos (sin él, la celda va vacía) y aquí las comisiones van con su "
+    "cifra en USD por vuelo, la del reparto a socios."
 )
 _NOTA_CASCADA_COMISIONES = (
     "Comisiones que absorbe el avión (regla de septiembre 2026, por fecha del "
     "vuelo): su parte de la comisión bancaria de sus cobros y la provisión de "
     "la comisión del vendedor, en USD — las de la columna COMISIONES de su "
-    "libro individual. Son las mismas que descuenta el reparto a socios."
+    "libro individual. Por vuelo es la misma cifra que descuenta el reparto a "
+    "socios, pero el total puede no coincidir con el del reparto: por ejemplo, "
+    "si un vuelo que aún no se completa ya tiene un anticipo con comisión "
+    "bancaria, este balance cuenta ese cobro y su comisión, y el reparto no "
+    "(solo lee vuelos completados o cancelados)."
 )
 
 

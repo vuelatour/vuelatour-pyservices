@@ -585,8 +585,17 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   usa el T.C. promedio del libro de SU avión, que el consolidado no tiene—;
   TOTALES: GANANCIA MXN = `totales.remanente_mxn` y GANANCIA USD = Σ de las
   filas tal como se ven (sumadas en orden, como SUM). Sin filas con
-  comisiones, el MISMO objeto. REMANENTE VENTA MENOS COMPRA
-  (`cph_remanente_mxn`, `_ORIGEN_GENERAL` → `remanente_mxn`) =
+  comisiones, el MISMO objeto. **COMISIONES en 0 explícito = null**
+  (revisión 7-oct-2026): el API manda null, pero el esquema admite la «regla
+  con 0» y `_formula_fila` decide con `_comisiones(v) is None` — con 0.0
+  GANANCIA MXN citaba la columna COMISIONES que esta hoja no tiene
+  (`_ColumnaAusente`): la celda iba como VALOR y la nota del encabezado se
+  cambiaba por «Calculado por el sistema…», falsa. Hoy
+  `_fila_antes_de_comisiones` devuelve esa fila SIN la llave
+  (`comisiones_mxn`/`comision_vendedor_mxn` None) y, si ninguna fila trae
+  comisiones ≠ 0, `_antes_de_comisiones` deja los TOTALES del API: libro
+  byte-idéntico al de null (el individual no pasa por aquí). REMANENTE
+  VENTA MENOS COMPRA (`cph_remanente_mxn`, `_ORIGEN_GENERAL` → `remanente_mxn`) =
   `ROUND(VENTA − PROVEEDOR, 2)` siempre (definición del cliente). Notas:
   encabezado de GANANCIA MXN y de REMANENTE (`_NOTAS_ENCABEZADO_SIN_
   COMISIONES`), pie `_NOTA_COMISIONES_FLOTA` + `_NOTA_GANANCIA_FLOTA` /
@@ -604,7 +613,21 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   envuelve) y UTILIDAD ANTES DE GASTOS = `ROUND(antes − comisiones, 2)` con
   el número de siempre; DESPUÉS, COBRADA y socios, idénticos. Sin los campos,
   con comisiones en 0 o con uno solo: la cascada de siempre. El libro
-  INDIVIDUAL los ignora (byte-idéntico: ya resta en su columna). (3) Señal
+  INDIVIDUAL los ignora (byte-idéntico: ya resta en su columna). **Las notas
+  de esas dos líneas NO prometen cuadres que no siempre se dan** (revisión
+  7-oct-2026): `_NOTA_CASCADA_COMISIONES` decía «Son las mismas que descuenta
+  el reparto a socios» y no es así — por vuelo es la misma cifra USD
+  (`comisionesDelVuelo`), pero el anticipo con comisión bancaria de un vuelo
+  que aún no se completa cuenta en el balance y no en el reparto, que solo
+  lee COMPLETADOS y CANCELADOS (caso real: #314 de N4142R, CONFIRMADO del
+  15-sep-2026, $100,000 con $5,000 de comisión; también #375/#376 de XA-VGV
+  en octubre); hoy dice que el total puede no coincidir y por qué.
+  `_NOTA_CASCADA_ANTES_COMISIONES` avisa que puede no cuadrar al centavo con
+  la Σ de GANANCIA USD de los vuelos del avión en la hoja de vuelos (ahí cada
+  remanente va con su T.C. de costos y queda vacía sin él; aquí la comisión
+  va con la cifra USD del reparto). Si algún día se quiere el cuadre exacto,
+  el API debe mandar por fila `ganancia_antes_comisiones_usd` y sumar eso:
+  aquí no se recalcula. (3) Señal
   del API 0.0.66 = algún `aviones[].balance.comisiones_usd`
   (`_avion_cubre_al_vendedor`): con vuelos de la regla, la fila 2 de 'otros
   movimientos', la base del bloque VUELATOUR (empresa) y la nota del RESUMEN
@@ -621,8 +644,13 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   con comisiones); las del individual, intactas (12 libros byte a byte).
   Deploy: pyservices → API 0.0.66. Pendiente que NO es de aquí: la nota al
   pie del libro individual sigue diciendo que el pago al vendedor «sale de
-  VuelaTour» (el contrato congeló ese libro). Tests:
-  `tests/test_balance_comisiones_general.py` (+ los casos del general en
+  VuelaTour» (el contrato congeló ese libro) y la del PDF del reparto
+  (`reparto_pdf._nota_otros_ingresos`) que VuelaTour «le paga al vendedor»;
+  con el API 0.0.66, en los vuelos completados de la regla ese pago lo cubre
+  el avión con su provisión. Se ajustan cuando el cliente lo confirme (la
+  señal sería `balance.comisiones_usd` en el payload individual, aceptando a
+  propósito el cambio de huella del individual solo para esos payloads).
+  Tests: `tests/test_balance_comisiones_general.py` (+ los casos del general en
   `test_balance_comisiones`, `test_balance_general_costo_hora`,
   `test_balance_factura_vuelatour`, `test_balance_cobrado_con`,
   `test_comision_vendedor_notas`).
