@@ -23,6 +23,12 @@ texto viejo LITERAL. El libro INDIVIDUAL nunca cambia.
 y de la hoja maestra hablan ahora de la columna COMISIONES (antes «COMISIÓN
 VENDEDOR MXN va vacía a propósito…»); la bandera sigue cambiando SOLO el
 fragmento del pago al vendedor.
+
+7-oct-2026 (API 0.0.66): la hoja de vuelos del GENERAL ya no lleva la columna
+COMISIONES; su nota dice dónde están y remite a la leyenda de 'otros
+movimientos' para el pago al vendedor, así que la bandera ya no la cambia
+(sigue cambiando la fila 2 de 'otros movimientos' y la nota del RESUMEN, que
+ahora remite al libro individual). La del libro INDIVIDUAL, intacta.
 """
 
 from io import BytesIO
@@ -70,13 +76,17 @@ OM_FILA2_VIEJA = (
 )
 # Desde el 6-oct-2026 (API 0.0.65) la base de estas dos notas es la de la
 # columna COMISIONES; el fragmento final (pago apareado) es el de siempre.
+# 7-oct-2026 (API 0.0.66): la del RESUMEN remite a la columna COMISIONES del
+# libro individual (la hoja de vuelos del general ya no la lleva).
 RESUMEN_NOTA_VIEJA = (
-    "COMISIONES = las de la columna COMISIONES de la hoja de vuelos de cada "
+    "COMISIONES = las de la columna COMISIONES del libro individual de cada "
     "avión (regla de septiembre 2026, por fecha del vuelo: su parte de la "
     "comisión bancaria de los cobros y la comisión del vendedor como "
-    "PROVISIÓN; en vuelos anteriores no hay). Lo cobrado al cliente por la "
-    "comisión del vendedor sigue siendo INGRESO de VuelaTour y su pago al "
-    "vendedor sale de VuelaTour; los dos viven en 'otros movimientos' "
+    "PROVISIÓN; en vuelos anteriores no hay); en este libro no van en la hoja "
+    "de vuelos (ahí la GANANCIA va antes de comisiones): restan aquí y en la "
+    "cascada de cada avión de la hoja 'balance'. Lo cobrado al cliente por la "
+    "comisión del vendedor sigue siendo INGRESO de VuelaTour; ese ingreso y el "
+    "pago al vendedor viven en 'otros movimientos' "
     "(ingreso cobrado y pago apareado como PROVISIÓN a la fecha del vuelo)."
 )
 MAESTRA_NOTA_VIEJA = (
@@ -90,9 +100,25 @@ MAESTRA_NOTA_VIEJA = (
     "PROVISIÓN a la fecha del vuelo). GANANCIA de la fila = REMANENTE (VENTA − "
     "COSTO TOTAL) − COMISIONES."
 )
+# Nota de la hoja de vuelos del GENERAL desde el 7-oct-2026: sin la columna
+# COMISIONES y sin el fragmento del pago apareado (remite a la leyenda de
+# 'otros movimientos'): con y sin bandera, la misma.
+MAESTRA_GENERAL_NOTA = (
+    "COMISIONES (regla de septiembre 2026, por fecha del vuelo): las que "
+    "absorbe cada avión —su parte de la comisión bancaria de sus cobros y la "
+    "comisión del vendedor como PROVISIÓN— no van en esta hoja: están en la "
+    "columna COMISIONES del libro individual de cada avión (Reportes › Balance "
+    "por avión) y ya van restadas en la cascada de cada avión de la hoja "
+    "'balance'. Lo cobrado al cliente por la comisión del vendedor es ingreso "
+    "de VuelaTour: ese ingreso, el pago al vendedor y la parte de VuelaTour de "
+    "la comisión bancaria viven en 'otros movimientos' (su leyenda explica "
+    "cada línea). GANANCIA de la fila = REMANENTE (VENTA − COSTO TOTAL), antes "
+    "de comisiones."
+)
 # Prefijos con que se encuentran en la columna A.
 RESUMEN_PREFIJO = "COMISIONES = las de la columna COMISIONES"
 MAESTRA_PREFIJO = "COMISIONES MXN (regla de septiembre 2026"
+MAESTRA_GENERAL_PREFIJO = "COMISIONES (regla de septiembre 2026"
 DINERO_FILA2_VIEJA = (
     "Ingreso de VuelaTour (no del avión): TUAs, extras, pernocta y "
     "comisión del vendedor cobrados (con su IVA) vs lo pagado. El pago de "
@@ -132,11 +158,9 @@ RESUMEN_FRAG_NUEVO = (
     "(ingreso cobrado y pago apareado: el gasto real «Comisión del vendedor» o, "
     "mientras no se capture, la PROVISIÓN a la fecha del vuelo)."
 )
+# Fragmento de la nota de la hoja maestra del libro INDIVIDUAL (la única que
+# lo lleva desde el 7-oct-2026; antes, con la bandera, también la del general).
 MAESTRA_FRAG_VIEJO = "(el pago apareado como PROVISIÓN a la fecha del vuelo)."
-MAESTRA_FRAG_NUEVO = (
-    "(el pago apareado: el gasto real «Comisión del vendedor» o, mientras no se "
-    "capture, la PROVISIÓN a la fecha del vuelo)."
-)
 DINERO_FRAG_VIEJO = (
     "El pago de la comisión al vendedor va apareado en su fila como PROVISIÓN a "
     "la fecha del vuelo mientras no exista el gasto real (regla 28-ago-2026)."
@@ -249,7 +273,7 @@ def _leyendas_general(xlsx: bytes) -> tuple[str, str, str]:
     wb = _libro(xlsx)
     om = wb["otros movimientos"]["A2"].value
     resumen = _celda_que_empieza(wb["RESUMEN flota"], RESUMEN_PREFIJO)
-    maestra = _celda_que_empieza(wb["reporte horas FLOTA"], MAESTRA_PREFIJO)
+    maestra = _celda_que_empieza(wb["reporte horas FLOTA"], MAESTRA_GENERAL_PREFIJO)
     return om, resumen, maestra
 
 
@@ -283,7 +307,7 @@ def test_general_sin_bandera_leyendas_identicas_a_hoy(bandera) -> None:
     om, resumen, maestra = _leyendas_general(render_balance_general_xlsx(_general(bandera)))
     assert om == OM_FILA2_VIEJA
     assert resumen == RESUMEN_NOTA_VIEJA
-    assert maestra == MAESTRA_NOTA_VIEJA
+    assert maestra == MAESTRA_GENERAL_NOTA
 
 
 def test_general_sin_otros_movimientos_resumen_y_maestra_de_hoy() -> None:
@@ -293,7 +317,8 @@ def test_general_sin_otros_movimientos_resumen_y_maestra_de_hoy() -> None:
     wb = _libro(render_balance_general_xlsx(req))
     assert "otros movimientos" not in wb.sheetnames
     assert _celda_que_empieza(wb["RESUMEN flota"], RESUMEN_PREFIJO) == RESUMEN_NOTA_VIEJA
-    assert _celda_que_empieza(wb["reporte horas FLOTA"], MAESTRA_PREFIJO) == MAESTRA_NOTA_VIEJA
+    maestra = _celda_que_empieza(wb["reporte horas FLOTA"], MAESTRA_GENERAL_PREFIJO)
+    assert maestra == MAESTRA_GENERAL_NOTA
 
 
 # ---------------------------------------------------------------------------
@@ -301,13 +326,15 @@ def test_general_sin_otros_movimientos_resumen_y_maestra_de_hoy() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_general_con_bandera_pinta_las_tres_leyendas_nuevas() -> None:
+def test_general_con_bandera_pinta_las_leyendas_nuevas() -> None:
     om, resumen, maestra = _leyendas_general(
         render_balance_general_xlsx(_general(True, filas=[_FILA_PROVISION, _FILA_PAGO_REAL]))
     )
     assert om == _cambia(OM_FILA2_VIEJA, OM_FRAG_VIEJO, OM_FRAG_NUEVO)
     assert resumen == _cambia(RESUMEN_NOTA_VIEJA, RESUMEN_FRAG_VIEJO, RESUMEN_FRAG_NUEVO)
-    assert maestra == _cambia(MAESTRA_NOTA_VIEJA, MAESTRA_FRAG_VIEJO, MAESTRA_FRAG_NUEVO)
+    # 7-oct-2026: la nota de la hoja de vuelos del general ya no habla del
+    # pago al vendedor (remite a la leyenda de arriba): no cambia con la bandera.
+    assert maestra == MAESTRA_GENERAL_NOTA
     # El camino que confundió al cliente queda escrito en la hoja.
     assert "«Comisión del vendedor»" in om
     assert "quedaría duplicado en la hoja 'otros gastos'" in om
@@ -327,6 +354,7 @@ def test_individual_nunca_cambia_aunque_traiga_la_bandera() -> None:
     assert "otros movimientos" not in wb.sheetnames
     maestra = _celda_que_empieza(wb["reporte horas N4142R"], MAESTRA_PREFIJO)
     assert maestra == MAESTRA_NOTA_VIEJA
+    assert maestra.count(MAESTRA_FRAG_VIEJO) == 1
 
 
 def test_otros_movimientos_pinta_el_concepto_del_gasto_real_tal_cual() -> None:

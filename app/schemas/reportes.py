@@ -1091,6 +1091,20 @@ class BalanceAvionBalanceBloque(BaseModel):
     por_cobrar_usd: float | None = None
     utilidad_cobrada_usd: float | None = None
     socios: list[BalanceAvionSocio] = Field(default_factory=list)
+    # COMISIONES a cargo del avión en la cascada del Balance GENERAL
+    # (7-oct-2026, API 0.0.66; pedido: «estas comisiones se están duplicando
+    # en la general, ya que las tenemos en "Otros movimientos"… deben
+    # aparecer en el individual de los avioncitos»). La hoja de vuelos del
+    # general ya no lleva la columna COMISIONES y su GANANCIA va ANTES de
+    # ellas; para seguir cuadrando con lo que ve el socio, la cascada de cada
+    # avión del general las muestra en dos líneas: `utilidad_antes_comisiones
+    # _usd` (= `utilidad_antes_usd` + `comisiones_usd`) y `comisiones_usd`
+    # (lo que absorbe el avión: el MISMO número que descuenta el reparto a
+    # socios). El API las calcula; aquí solo se pintan. None (API ≤ 0.0.65) o
+    # comisiones en 0 ⇒ la cascada de siempre. El libro INDIVIDUAL las ignora:
+    # ahí ya restan, por vuelo, en su columna COMISIONES.
+    comisiones_usd: float | None = None
+    utilidad_antes_comisiones_usd: float | None = None
 
 
 class BalanceOtroMovimientoFila(BaseModel):
@@ -1207,10 +1221,12 @@ class BalanceGeneralResumenFila(BaseModel):
     combustible_mxn: float | None = None
     # Comisiones del avión (columna COMISIONES MXN, 6-oct-2026): desde la
     # regla de septiembre 2026 (API 0.0.65) = Σ COMISIONES de la hoja de
-    # vuelos del avión (parte del avión de la comisión bancaria + provisión
-    # de la comisión del vendedor) y GANANCIA ya va después de ellas. Un API
-    # ≤ 0.0.64 manda None/0 (regla A del 28-ago-2026: la comisión del
-    # vendedor era solo de VuelaTour).
+    # vuelos del libro INDIVIDUAL del avión (parte del avión de la comisión
+    # bancaria + provisión de la comisión del vendedor) y GANANCIA ya va
+    # después de ellas — el RESUMEN conserva la columna aunque la hoja de
+    # vuelos del general ya no la lleve (7-oct-2026). Un API ≤ 0.0.64 manda
+    # None/0 (regla A del 28-ago-2026: la comisión del vendedor era solo de
+    # VuelaTour).
     comisiones_mxn: float | None = None
     # VENTA − COSTO TOTAL − COMBUSTIBLE = GANANCIA (leyenda impresa).
     ganancia_mxn: float | None = None
@@ -1467,10 +1483,12 @@ class BalanceGeneralRequest(BaseModel):
     # byte-idéntico al de antes).
     empresa: BalanceEmpresaBloque | None = None
     # Variante del libro (6-oct-2026, API 0.0.64): 'mensual' = el libro de
-    # siempre, BYTE-IDÉNTICO (también sin la llave: un API ≤ 0.0.63 no la
-    # manda); 'general' = la hoja «reporte horas FLOTA» resumida a COSTO
-    # TOTAL + las 12 columnas del costo por hora de la hoja «utilidades» del
-    # cliente. Ningún número del payload depende de la variante.
+    # siempre (también sin la llave: un API ≤ 0.0.63 no la manda); 'general'
+    # = la hoja «reporte horas FLOTA» resumida a COSTO TOTAL + las 12
+    # columnas del costo por hora de la hoja «utilidades» del cliente. Ningún
+    # número del payload depende de la variante. Desde el 7-oct-2026 (API
+    # 0.0.66) la hoja de vuelos de las DOS va sin la columna COMISIONES (vive
+    # en el libro individual).
     variante: Literal["mensual", "general"] = VARIANTE_BALANCE_MENSUAL
     # Nombre de la regla de COMISIONES (6-oct-2026, ADITIVO; ver
     # `BalanceAvionRequest.regla_comisiones`): nota del RESUMEN y, si el

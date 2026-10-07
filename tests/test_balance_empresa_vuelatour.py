@@ -26,7 +26,7 @@ from openpyxl.utils import column_index_from_string
 from app.schemas.reportes import BalanceGeneralRequest
 from app.services import xlsx_formulas
 from app.services.balance_avion_xlsx import (
-    _DISP_MENSUAL,
+    _DISP_FLOTA,
     _NOTA_BLOQUE_EMPRESA,
     _NOTA_EMPRESA_BASE,
     _RESUMEN_BLOQUE_EMPRESA,
@@ -190,10 +190,12 @@ def _miembros(data: bytes) -> dict[str, bytes]:
     return {n: z.read(n) for n in sorted(z.namelist()) if n != "docProps/core.xml"}
 
 
-# Columnas de la hoja maestra con la nota «cómo se cobró» (STATUS y COBRO n MXN).
+# Columnas de la hoja maestra con la nota «cómo se cobró» (STATUS y COBRO n
+# MXN). Estos libros son el Balance general: desde el 7-oct-2026 su hoja de
+# vuelos no lleva COMISIONES (`_DISP_FLOTA`, una columna menos a la izquierda).
 _COLS_NOTA_COBRO = {
     column_index_from_string(letra)
-    for letra in (_DISP_MENSUAL.letra["status_cobro"], *_DISP_MENSUAL.cobro_mxn_letras)
+    for letra in (_DISP_FLOTA.letra["status_cobro"], *_DISP_FLOTA.cobro_mxn_letras)
 }
 
 
@@ -248,22 +250,28 @@ def _firma_libro(data: bytes) -> str:
 # primero y las notas al pie que los explican (y, en el general, «COMISIONES
 # MXN» del RESUMEN y sus notas) — comparado celda por celda contra el código
 # anterior: ningún número ni fórmula cambió.
+# Regeneradas A PROPÓSITO el 7-oct-2026 (API 0.0.66): la hoja de vuelos del
+# general ya no lleva COMISIONES (lo de su derecha corre una columna, también
+# las notas de cobro que se dejan fuera) y cambian las notas que lo explican
+# (pie, encabezado de GANANCIA y RESUMEN) — comparado celda por celda contra
+# HEAD 4189a1e quitando esa columna: ningún número ni fórmula cambió más allá
+# de la letra que corre.
 _FIRMAS_SIN_EMPRESA = {
     "socio empresa en dos aviones": (
         {},
-        "03599a3e7bcf6a4c1f11381076d5667497edd0c3801a41838c470c17924d4469",
+        "7ca19e330f4c727b5148c85293cb4dadb46c99431df1104ea5aae2666fe0fe00",
     ),
     "sin socio empresa": (
         {"socios": _SOCIOS_SIN_EMPRESA},
-        "87c855c8d56c5b0ab8857e19a504bab4a4e394beda20a5d4fd0a801b4581757a",
+        "fa224f6480ede86f7ba42050a5dacffaa17c19e676ae83d3f8518ba709b094da",
     ),
     "sin hoja otros gastos": (
         {"otros_gastos": False},
-        "9fcde8cff1165c41d62a634fe40861dba7bb7303a1227190375b84220b793bd6",
+        "3da060aa088dc3c98542402674324f503678b56e94e978396419a86c5d6a1e25",
     ),
     "sin inventario": (
         {"inventario": False},
-        "a0972dfc6487ada92a563078c52a8953935f8a08e3d06e2ade094879db660c53",
+        "55618290b0ecf98c98a11096549163a3b749975b7bbe866122855cb0929e85cd",
     ),
 }
 

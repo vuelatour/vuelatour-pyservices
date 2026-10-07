@@ -918,10 +918,12 @@ def test_general_maestra_tarifa_por_avion_y_promedios_como_valor() -> None:
         valor = ws[f"T{fila}"].value
         assert not (isinstance(valor, str) and valor.startswith("=")), fila
     sin_tc = next(f for f in filas if ws[f"A{f}"].value == "#403 · Traslado")
-    assert ws[f"AE{sin_tc}"].value == req.consolidado.vuelos[sin_tc - 3].ganancia_usd
+    # Sin la columna COMISIONES (AC) desde el 7-oct-2026: GANANCIA USD = AD y
+    # COSTO X HORA USD = AE en la hoja de vuelos del general.
+    assert ws[f"AD{sin_tc}"].value == req.consolidado.vuelos[sin_tc - 3].ganancia_usd
     tot = 3 + len(req.consolidado.vuelos)
     assert ws[f"V{tot}"].value == req.consolidado.totales.tc_promedio
-    assert ws[f"AF{tot}"].value == req.consolidado.totales.costo_hr_prom_usd
+    assert ws[f"AE{tot}"].value == req.consolidado.totales.costo_hr_prom_usd
     assert ws[f"K{tot}"].value == f"=ROUND(SUM(K3:K{tot - 1}),2)"
     assert wv["reporte horas FLOTA"][f"K{tot}"].value == req.consolidado.totales.total_mxn
 
@@ -998,10 +1000,16 @@ def _firma_valores(data: bytes) -> str:
 # (encabezados «COMISIONES MXN» y «COBRADO AVIÓN MXN (prorrateado, antes de
 # comisiones)» y las notas al pie que los explican): comparadas celda por
 # celda contra las de antes, ningún número cambió.
+# 7-oct-2026 (API 0.0.66): recalculada SOLO la del general — su hoja de
+# vuelos ya no lleva COMISIONES (lo de su derecha corre una columna) y
+# cambian las notas que lo explican (pie, encabezado de GANANCIA, RESUMEN).
+# Comparada celda por celda contra la de HEAD 4189a1e quitando esa columna:
+# ningún número cambió (este payload no trae comisiones). Las tres del
+# libro individual no se movieron.
 _FIRMAS_ANTES = {
     "tst": "468b0e1d198e97f6677649f69c8251e6087c6de1abd46c5b9831cc1905c3b2a1",
     "dos": "0e66f2168336235fe45bb987d2906a2a05e5bed0a72053e145f8eca6489c88b6",
-    "general": "4a123e1f7c32876a4e866a019510ec4d353b29717a04a3f59a110701c785798c",
+    "general": "82ca976de801490f91d6c4f1b82975542d1c887006b85a0f0cd5c027890491d7",
     # Con la caché en `repr` (17 cifras) esta daba 5472c557…: % COBRADO
     # difería del generador anterior en el último bit.
     "pct17": "179b9207b41bbe28a7c09ef3fd6481a7ddf156e7e91478843469814974408b1b",

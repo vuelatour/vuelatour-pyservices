@@ -35,6 +35,7 @@ from app.schemas.reportes import (
 )
 from app.services.balance_avion_xlsx import (
     _COLS,
+    _DISP_FLOTA,
     _DISP_MENSUAL,
     _comentario_cobro,
     _nota_cobro,
@@ -49,6 +50,19 @@ COL_STATUS = next(i for i, c in enumerate(_COLS, start=1) if c[2] == "status_cob
 COLS_FECHA = [_DISP_MENSUAL.cobro1_col + 2 * k for k in range(4)]
 COLS_MXN = [_DISP_MENSUAL.cobro1_col + 1 + 2 * k for k in range(4)]
 COLS_NOTA = {COL_STATUS, *COLS_MXN}
+# Hoja de vuelos del Balance general (7-oct-2026, sin la columna COMISIONES):
+# STATUS y los COBRO n corren una columna a la izquierda.
+COL_STATUS_FLOTA = next(
+    i for i, c in enumerate(_DISP_FLOTA.cols, start=1) if c[2] == "status_cobro"
+)
+COLS_MXN_FLOTA = [_DISP_FLOTA.cobro1_col + 1 + 2 * k for k in range(4)]
+COLS_NOTA_FLOTA = {COL_STATUS_FLOTA, *COLS_MXN_FLOTA}
+
+
+def _cols_nota(ws) -> set[int]:
+    """Columnas con la nota «cómo se cobró» de ESTA hoja de vuelos."""
+    return COLS_NOTA_FLOTA if ws.title == "reporte horas FLOTA" else COLS_NOTA
+
 
 # Cobros con la forma que manda el API 0.0.60 (nombres reales de quienes
 # registran en prod; cuentas tal como las teclea la oficina).
@@ -182,7 +196,7 @@ def _notas_de_cobro(ws) -> dict[tuple[int, int], str]:
         (c.row, c.column): c.comment.text
         for fila in ws.iter_rows(min_row=FILA)
         for c in fila
-        if c.column in COLS_NOTA and c.comment
+        if c.column in _cols_nota(ws) and c.comment
     }
 
 
@@ -201,7 +215,7 @@ def _firma_libro(data: bytes, *, sin_notas_cobro: bool = False) -> str:
             for c in fila:
                 f = c.font
                 nota = c.comment.text if c.comment else None
-                if sin_notas_cobro and maestra and c.row >= FILA and c.column in COLS_NOTA:
+                if sin_notas_cobro and maestra and c.row >= FILA and c.column in _cols_nota(ws):
                     nota = None
                 partes.append([
                     c.coordinate, repr(c.value), c.number_format,
@@ -386,8 +400,14 @@ def test_fila_con_dos_cobros_lleva_dos_notas_y_el_resumen_en_status() -> None:
 # primero y las notas al pie que los explican (y, en el general, «COMISIONES
 # MXN» del RESUMEN y sus notas) — comparado celda por celda contra el código
 # anterior: ningún número ni fórmula cambió.
+# La del GENERAL, regenerada A PROPÓSITO el 7-oct-2026 (API 0.0.66): su hoja
+# de vuelos ya no lleva COMISIONES — lo de su derecha corre una columna (las
+# notas de cobro que se dejan fuera también: `_cols_nota`), nota nueva en el
+# encabezado de GANANCIA y notas al pie y del RESUMEN que lo explican;
+# comparada celda por celda contra HEAD 4189a1e quitando esa columna. La del
+# libro individual no se movió.
 _FIRMA_INDIVIDUAL_CON_COBROS = "d2dad5e7f07030e923def5b642c1db6fa471e05129f475bad93432f47f888897"
-_FIRMA_GENERAL_CON_COBROS = "c614aaa87e7d74791970501cb093ae6515e5e4dd5178e326470bb9e5d86b46e6"
+_FIRMA_GENERAL_CON_COBROS = "e120d9303c3d9d3e6e63ec64358d4ca7ed435bf050ce4cd90a772686f0ee8e52"
 
 
 def test_nada_se_mueve_solo_cambian_las_notas_de_status_y_cobros() -> None:
@@ -413,7 +433,8 @@ def test_nada_se_mueve_solo_cambian_las_notas_de_status_y_cobros() -> None:
     # Las demás notas, idénticas.
     comunes = set(_comentarios(sin))
     assert {k: v for k, v in _comentarios(con).items() if k in comunes} == _comentarios(sin)
-    # Sin columnas nuevas: 47 columnas y los encabezados de siempre.
+    # Sin columnas nuevas: 47 columnas y los encabezados de siempre (libro
+    # individual; la hoja de vuelos del general lleva 46 desde el 7-oct-2026).
     ws = _maestra(con)
     assert ws.max_column == len(_COLS) == 47
     assert [ws.cell(row=2, column=i).value for i in range(1, 48)] == [c[1] for c in _COLS]
@@ -430,8 +451,9 @@ def test_nada_se_mueve_solo_cambian_las_notas_de_status_y_cobros() -> None:
 # primero y las notas al pie que los explican (y, en el general, «COMISIONES
 # MXN» del RESUMEN y sus notas) — comparado celda por celda contra el código
 # anterior: ningún número ni fórmula cambió.
+# La del GENERAL, regenerada A PROPÓSITO el 7-oct-2026 (ver arriba).
 _FIRMA_INDIVIDUAL_SIN_COBROS = "b3a819f372e83e9683a6cc72a4fe7fe8a0c98940d0797724b70fee9a11c2f30a"
-_FIRMA_GENERAL_SIN_COBROS = "b792d74f39510b7bc1bddc12594c1c91e4d1ee8f65fd5f43c2c90dd6c3cd22d2"
+_FIRMA_GENERAL_SIN_COBROS = "463eff493b49f1345148aa844c1cc382e1c95d018451367b949941c501047250"
 
 
 def test_sin_cobros_el_libro_es_el_de_siempre() -> None:
@@ -467,12 +489,15 @@ def test_api_viejo_sin_cobrado_con_compone_metodo_y_cuenta() -> None:
 def test_balance_general_reporte_horas_flota() -> None:
     data = render_balance_general_xlsx(_general(_vuelos()))
     ws = _maestra(data, "reporte horas FLOTA")
+    # Sin la columna COMISIONES (7-oct-2026): STATUS y COBRO n, una a la izquierda.
+    assert COL_STATUS_FLOTA == COL_STATUS - 1
+    assert [c - 1 for c in COLS_MXN] == COLS_MXN_FLOTA
     assert _notas_de_cobro(ws) == {
-        (FILA, COLS_MXN[0]): LINEA_TRANSFER,
-        (FILA, COLS_MXN[1]): LINEA_PAYWISE,
-        (FILA, COL_STATUS): f"{LINEA_TRANSFER}\n{LINEA_PAYWISE}",
-        (FILA + 2, COLS_MXN[0]): LINEA_EFECTIVO,
-        (FILA + 2, COL_STATUS): LINEA_EFECTIVO,
+        (FILA, COLS_MXN_FLOTA[0]): LINEA_TRANSFER,
+        (FILA, COLS_MXN_FLOTA[1]): LINEA_PAYWISE,
+        (FILA, COL_STATUS_FLOTA): f"{LINEA_TRANSFER}\n{LINEA_PAYWISE}",
+        (FILA + 2, COLS_MXN_FLOTA[0]): LINEA_EFECTIVO,
+        (FILA + 2, COL_STATUS_FLOTA): LINEA_EFECTIVO,
     }
     # Ni la 'cobranza' ni otra hoja ganan notas: solo la maestra.
     con = _comentarios(data)
@@ -556,4 +581,4 @@ def test_rutas_aceptan_el_payload_nuevo(monkeypatch, request) -> None:
     )
     assert res.status_code == 200, res.text
     ws = _maestra(res.content, "reporte horas FLOTA")
-    assert _nota(ws, FILA, COLS_MXN[1]) == LINEA_PAYWISE
+    assert _nota(ws, FILA, COLS_MXN_FLOTA[1]) == LINEA_PAYWISE

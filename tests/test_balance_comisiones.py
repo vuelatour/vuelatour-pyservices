@@ -37,6 +37,16 @@ la vigencia es configurable; sin él, «septiembre 2026»), y 'otros
 movimientos' y el bloque VUELATOUR (empresa) explican la línea «a cargo del
 avión» y la parte de VuelaTour de la comisión bancaria cuando el periodo
 trae vuelos de la regla.
+
+7-oct-2026 (API 0.0.66; pedido: «estas comisiones se están duplicando en la
+general, ya que las tenemos en "Otros movimientos"… deben aparecer en el
+individual de los avioncitos»): la columna COMISIONES vive SOLO en el libro
+individual (aquí, sin cambios). La hoja de vuelos del Balance general (las
+dos variantes) va sin ella y ANTES de comisiones: GANANCIA = REMANENTE y
+REMANENTE VENTA MENOS COMPRA = VENTA − PROVEEDOR; el RESUMEN conserva su
+columna. Los casos del general de este archivo lo congelan; la cascada con
+las dos líneas de comisiones y las leyendas del API 0.0.66, en
+`tests/test_balance_comisiones_general.py`.
 """
 
 from __future__ import annotations
@@ -65,19 +75,27 @@ from app.schemas.reportes import (
 from app.services import xlsx_formulas
 from app.services.balance_avion_xlsx import (
     _COLS,
+    _COLS_FLOTA,
     _COLS_GENERAL,
+    _CPH_NOTA_REMANENTE,
+    _DISP_FLOTA,
     _DISP_GENERAL,
     _DISP_MENSUAL,
     _EMPRESA_REGLA_COMISIONES,
     _GRUPO_COSTO_HORA,
     _NOTA_BLOQUE_EMPRESA,
     _NOTA_COBRADO_REAL,
+    _NOTA_COBRADO_REAL_FLOTA,
     _NOTA_COBRANZA_NETO,
+    _NOTA_COBRANZA_NETO_FLOTA,
     _NOTA_COMISIONES,
+    _NOTA_COMISIONES_FLOTA,
     _NOTA_EMPRESA_BASE,
     _NOTA_ENCABEZADO_COMISIONES,
+    _NOTA_ENCABEZADO_GANANCIA_FLOTA,
     _NOTA_ENCABEZADO_REMANENTE,
     _NOTA_GANANCIA,
+    _NOTA_GANANCIA_FLOTA,
     _OM_REGLA_COMISIONES,
     _RESUMEN_COMISIONES,
     _bruto_neto,
@@ -452,9 +470,10 @@ def test_columna_comisiones_con_api_previo_y_nuevo() -> None:
     nuevo = BalanceAvionTotales(comisiones_mxn=5849.67, comision_vendedor_mxn=0.0)
     assert _valor_total(nuevo, "comisiones_mxn") == 5849.67 == _comisiones(nuevo)
     assert _valor_total(BalanceAvionTotales(ganancia_mxn=1.5), "ganancia_mxn") == 1.5
-    # REMANENTE VENTA MENOS COMPRA del Balance general = GANANCIA del API.
+    # REMANENTE VENTA MENOS COMPRA del Balance general = el REMANENTE del API,
+    # antes de comisiones (7-oct-2026; del 6 al 7-oct era la GANANCIA).
     v = BalanceAvionVuelo(remanente_mxn=100.0, ganancia_mxn=80.0)
-    assert _valor_columna("cph_remanente_mxn", v) == 80.0
+    assert _valor_columna("cph_remanente_mxn", v) == 100.0
 
 
 def test_monto_del_detalle_de_cobranza() -> None:
@@ -467,29 +486,36 @@ def test_monto_del_detalle_de_cobranza() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3) Juegos de columnas: COMISIONES en la misma posición y al final del bloque.
+# 3) Juegos de columnas: COMISIONES solo en el libro individual (7-oct-2026).
 # ---------------------------------------------------------------------------
 
 
-def test_comisiones_en_los_dos_juegos() -> None:
+def test_comisiones_solo_en_el_juego_del_libro_individual() -> None:
     mensual = [c[1] for c in _COLS]
     assert mensual[28] == COMISIONES == _COLS[_DISP_MENSUAL.comision_col - 1][1]
     assert _DISP_MENSUAL.letra["comisiones_mxn"] == "AC"  # misma posición de siempre
     assert "COMISIÓN\nVENDEDOR MXN" not in mensual
     assert COBRADO_AVION in mensual
-    # Balance general: última columna del bloque COSTO POR HORA, después de
-    # REMANENTE (las 12 del cliente siguen juntas y en su orden).
+    # Balance general, variante mensual: el juego de siempre SIN COMISIONES
+    # (ni la vieja COMISIÓN VENDEDOR), lo demás en su orden.
+    flota = [c[1] for c in _COLS_FLOTA]
+    assert flota == [h for h in mensual if h != COMISIONES]
+    assert _DISP_FLOTA.comision_col is None
+    assert "comisiones_mxn" not in _DISP_FLOTA.letra
+    # Variante general: el bloque COSTO POR HORA vuelve a cerrar con
+    # REMANENTE (las 12 del cliente) y REMANENTE es el del API.
     general = [c[1] for c in _COLS_GENERAL]
-    i = general.index(COMISIONES)
-    assert general[i - 1] == REMANENTE_CPH and general[i + 1] == "STATUS"
+    assert COMISIONES not in general and "COMISIÓN\nVENDEDOR MXN" not in general
+    i = general.index(REMANENTE_CPH)
+    assert general[i + 1] == "STATUS"
     assert _COLS_GENERAL[i][0] == _GRUPO_COSTO_HORA
-    assert _DISP_GENERAL.comision_col == i + 1
-    assert _DISP_GENERAL.total_map["comisiones_mxn"] == "comisiones_mxn"
-    assert _DISP_GENERAL.total_map["cph_remanente_mxn"] == "ganancia_mxn"
+    assert _DISP_GENERAL.comision_col is None
+    assert "comisiones_mxn" not in _DISP_GENERAL.total_map
+    assert _DISP_GENERAL.total_map["cph_remanente_mxn"] == "remanente_mxn"
 
 
 # ---------------------------------------------------------------------------
-# 4) Libro individual (y Balance mensual) con la regla vigente.
+# 4) Libro individual con la regla vigente (el 7-oct-2026 no cambió).
 # ---------------------------------------------------------------------------
 
 
@@ -600,10 +626,13 @@ def test_cobranza_neto_con_su_nota() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_general_mensual_resumen_ganancia_menos_comisiones(registros) -> None:
+def test_general_mensual_sin_comisiones_y_ganancia_antes_de_ellas(registros) -> None:
+    """7-oct-2026: el RESUMEN conserva COMISIONES y su GANANCIA después de
+    ellas; la hoja de vuelos de la flota ya no las lleva y su GANANCIA va
+    ANTES de comisiones (= REMANENTE, la fórmula de antes del 6-oct)."""
     req = _general()
     data = render_balance_general_xlsx(req)
-    # Solo la degradada de siempre (COSTO TOTAL del #405).
+    # Solo la degradada de siempre (COSTO TOTAL del #405, que sigue en U).
     assert registros[-1].degradadas() == [(MAESTRA, "U9")]
     assert verificar_libro(data)
     wb, wv = _libros(data)
@@ -614,16 +643,56 @@ def test_general_mensual_resumen_ganancia_menos_comisiones(registros) -> None:
         assert rv[f"H{fila}"].value == r.comisiones_mxn
         assert rv[f"I{fila}"].value == r.ganancia_mxn
     assert rv["H6"].value == req.resumen_totales.comisiones_mxn == 5849.67
-    assert any(x.startswith("COMISIONES = las de la columna COMISIONES") for x in _pie(rs))
+    assert any(
+        x.startswith("COMISIONES = las de la columna COMISIONES del libro individual")
+        for x in _pie(rs)
+    )
     assert any("COMBUSTIBLE − COMISIONES" in x for x in _pie(rs))
-    # La hoja de vuelos de la flota: mismas reglas que el libro individual.
+    # La hoja de vuelos de la flota: sin COMISIONES (todo lo de su derecha
+    # corre una columna: GANANCIA MXN = AC, GANANCIA USD = AD).
     ws, wsv = wb[MAESTRA], wv[MAESTRA]
+    assert [c.value for c in ws[2]] == [c[1] for c in _COLS_FLOTA]
+    assert (ws["AC2"].value, ws["AD2"].value) == (GANANCIA, "GANANCIA\nUSD")
+    assert ws["AC2"].comment.text == _NOTA_ENCABEZADO_GANANCIA_FLOTA
     cons = req.consolidado
+    con_comisiones = []
     for k, v in enumerate(cons.vuelos):
         f = 3 + k
-        assert _celda(ws, f, COMISIONES).value == v.comisiones_mxn
-        assert _celda(wsv, f, GANANCIA).value == v.ganancia_mxn
-    assert wsv[f"AC{_tot(ws)}"].value == cons.totales.comisiones_mxn == 5849.67
+        assert ws[f"AC{f}"].value == f"=AA{f}", v.clave  # GANANCIA = REMANENTE
+        assert wsv[f"AC{f}"].value == v.remanente_mxn, v.clave
+        usd = wsv[f"AD{f}"].value
+        if v.comisiones_mxn is None:
+            assert usd == v.ganancia_usd, v.clave  # sin comisiones: la del API
+            continue
+        con_comisiones.append(v.clave)
+        # Con comisiones: la de antes de la regla, remanente ÷ T.C. de costos.
+        assert ws[f"AD{f}"].value == f"=ROUND(AC{f}/V{f},2)", v.clave
+        assert usd == r2(v.remanente_mxn / v.tc_costos), v.clave
+        assert usd > v.ganancia_usd and v.remanente_mxn > v.ganancia_mxn, v.clave
+    assert con_comisiones == [
+        "#401 · Cliente Uno",
+        "#402 · Cliente Dos",
+        "#402 · Cliente Dos",
+        "#407 · Cliente Cinco",
+        "#405 · Cliente Cuatro",
+    ]
+    # TOTALES: GANANCIA MXN = Σ REMANENTE del API; GANANCIA USD = Σ de las
+    # filas tal como se ven. Las comisiones del API (5,849.67) no se pintan.
+    tot = _tot(ws)
+    t = cons.totales
+    assert ws[f"AC{tot}"].value == f"=ROUND(SUM(AC3:AC{tot - 1}),2)"
+    assert wsv[f"AC{tot}"].value == t.remanente_mxn == r2(t.ganancia_mxn + 5849.67)
+    assert ws[f"AD{tot}"].value == f"=ROUND(SUM(AD3:AD{tot - 1}),2)"
+    filas_usd = [wsv[f"AD{f}"].value for f in range(3, tot)]
+    assert wsv[f"AD{tot}"].value == r2(tf._suma(filas_usd)) > t.ganancia_usd
+    assert t.comisiones_mxn == 5849.67
+    assert 5849.67 not in [c.value for c in wsv[tot]]
+    # Notas al pie: las del Balance general (sin columna COMISIONES).
+    pie = _pie(ws)
+    assert _NOTA_COMISIONES_FLOTA + _NOTA_GANANCIA_FLOTA in pie
+    assert _NOTA_COBRADO_REAL_FLOTA in pie
+    assert not any(x.startswith("COMISIONES MXN (regla") for x in pie)
+    assert not any("− COMISIONES." in x for x in pie)
 
 
 def test_resumen_sin_comisiones_conserva_su_formula() -> None:
@@ -638,46 +707,45 @@ def test_resumen_sin_comisiones_conserva_su_formula() -> None:
     assert sin.comisiones_mxn is None
 
 
-def test_variante_general_remanente_despues_de_comisiones(registros) -> None:
+def test_variante_general_remanente_antes_de_comisiones(registros) -> None:
+    """Variante general (7-oct-2026): el bloque COSTO POR HORA vuelve a las
+    12 columnas del cliente y REMANENTE VENTA MENOS COMPRA = ROUND(VENTA −
+    PROVEEDOR, 2), su definición, con el REMANENTE del API: antes de
+    comisiones también en las filas que las traen."""
     req = _general("general")
     data = render_balance_general_xlsx(req)
     assert registros[-1].degradadas() == []
     assert verificar_libro(data)
     wb, wv = _libros(data)
     ws, wsv = wb[MAESTRA], wv[MAESTRA]
-    assert ws.max_column == len(_COLS_GENERAL) == 45
-    com, rem = _col(ws, COMISIONES), _col(ws, REMANENTE_CPH)
-    assert com == rem + 1 == _DISP_GENERAL.comision_col
-    # El título del bloque cubre las 13 columnas.
+    assert ws.max_column == len(_COLS_GENERAL) == 44
+    assert COMISIONES not in [c.value for c in ws[2]]
+    rem = _col(ws, REMANENTE_CPH)
+    assert ws.cell(row=2, column=rem + 1).value == "STATUS"
+    # El título del bloque cubre las 12 columnas del cliente.
     inicio = get_column_letter(_col(ws, "TOTAL COBRADO\nS/IVA (PESOS)"))
-    assert f"{inicio}1:{get_column_letter(com)}1" in {str(r) for r in ws.merged_cells.ranges}
-    assert ws.cell(row=2, column=com).comment.text == _NOTA_ENCABEZADO_COMISIONES
+    assert f"{inicio}1:{get_column_letter(rem)}1" in {str(r) for r in ws.merged_cells.ranges}
     assert ws.cell(row=2, column=rem).comment.text == _NOTA_ENCABEZADO_REMANENTE
     k = get_column_letter(_col(ws, "VENTA AVIÓN\nMXN"))
     y = get_column_letter(_col(ws, "TOTAL PARA\nPROVEEDOR (PESOS)"))
-    ae = get_column_letter(com)
+    con_comisiones = 0
     for i, v in enumerate(req.consolidado.vuelos):
         f = 3 + i
-        formula = ws.cell(row=f, column=rem).value
-        if v.comisiones_mxn is None:
-            assert formula == f"=ROUND({k}{f}-{y}{f},2)", v.clave
-        else:
-            assert formula == f"=ROUND({k}{f}-{y}{f}-{ae}{f},2)", v.clave
-        # El número: la GANANCIA del API (remanente − comisiones).
-        assert wsv.cell(row=f, column=rem).value == v.ganancia_mxn, v.clave
-        assert wsv.cell(row=f, column=com).value == v.comisiones_mxn, v.clave
-        nota = ws.cell(row=f, column=com).comment
-        assert (nota.text if nota else None) == _nota_comisiones(v), v.clave
+        assert ws.cell(row=f, column=rem).value == f"=ROUND({k}{f}-{y}{f},2)", v.clave
+        # El número: el REMANENTE del API (antes de comisiones).
+        assert wsv.cell(row=f, column=rem).value == v.remanente_mxn, v.clave
+        con_comisiones += v.comisiones_mxn is not None
+    assert con_comisiones == 5
     tot = _tot(ws)
     t = req.consolidado.totales
     letra = get_column_letter(rem)
     assert ws.cell(row=tot, column=rem).value == f"=ROUND(SUM({letra}3:{letra}{tot - 1}),2)"
-    assert wsv.cell(row=tot, column=rem).value == t.ganancia_mxn
-    assert wsv.cell(row=tot, column=com).value == t.comisiones_mxn
-    # Notas al pie: COMISIONES y REMANENTE después de comisiones.
+    assert wsv.cell(row=tot, column=rem).value == t.remanente_mxn
+    # Notas al pie: COMISIONES no van en esta hoja y REMANENTE va antes.
     pie = "\n".join(_pie(ws))
-    assert "REMANENTE VENTA MENOS COMPRA = VENTA AVIÓN MXN − TOTAL PARA PROVEEDOR (PESOS) − " in pie
-    assert _NOTA_COMISIONES in pie and "GANANCIA de la fila" not in pie
+    assert _NOTA_COMISIONES_FLOTA + _CPH_NOTA_REMANENTE in pie
+    assert _CPH_NOTA_REMANENTE.endswith("(PESOS), antes de comisiones.")
+    assert "GANANCIA de la fila" not in pie and "− COMISIONES MXN" not in pie
 
 
 # ---------------------------------------------------------------------------
@@ -719,7 +787,8 @@ def test_fila_vigente_sin_comisiones_con_la_forma_del_api() -> None:
     """#403: vuelo de la regla SIN comisiones. El API manda `comisiones_mxn`
     null, las dos partes en 0 y el detalle [] (no 0.0 / null): COMISIONES
     vacía y sin nota, GANANCIA = REMANENTE (`=AA`) y, en la variante
-    general, REMANENTE VENTA MENOS COMPRA = VENTA − PROVEEDOR."""
+    general (que desde el 7-oct-2026 no lleva COMISIONES), REMANENTE VENTA
+    MENOS COMPRA = VENTA − PROVEEDOR."""
     fila = next(f for f in _libro_tst()["vuelos"] if f["clave"] == "#403 · Traslado")
     assert fila["comisiones_mxn"] is None
     assert (fila["comision_banco_avion_mxn"], fila["comision_vendedor_prov_mxn"]) == (0, 0)
@@ -734,17 +803,17 @@ def test_fila_vigente_sin_comisiones_con_la_forma_del_api() -> None:
     k = get_column_letter(_col(gen, "VENTA AVIÓN\nMXN"))
     y = get_column_letter(_col(gen, "TOTAL PARA\nPROVEEDOR (PESOS)"))
     assert _celda(gen, f, REMANENTE_CPH).value == f"=ROUND({k}{f}-{y}{f},2)"
-    com = _celda(gen, f, COMISIONES)
-    assert com.value is None and com.comment is None
+    assert COMISIONES not in [c.value for c in gen[2]]
 
 
 @pytest.mark.parametrize("variante", ["mensual", "general"])
 def test_fila_externos_cobro_neto_sin_llaves_de_comisiones(variante, registros) -> None:
     """#504 (libro EXTERNOS): el API manda el NETO del cobro y COBRADO REAL =
     Σ netos, pero NINGUNA llave de comisiones. COBRO 1 = neto con su nota,
-    COBRADO REAL con su fórmula SUM, COMISIONES vacía y GANANCIA = REMANENTE.
-    Los totales de la flota llevan COMISIONES porque ALGÚN libro las trae
-    (`libros.some(...)` del API; EXTERNOS no)."""
+    COBRADO REAL con su fórmula SUM y GANANCIA = REMANENTE. Los totales de la
+    flota traen COMISIONES porque ALGÚN libro las trae (`libros.some(...)`
+    del API; EXTERNOS no), pero desde el 7-oct-2026 la hoja de vuelos del
+    general ya no las pinta (ni la columna)."""
     ext = _libro_externos()
     fila = ext["vuelos"][0]
     assert {"comisiones_mxn", "comisiones_detalle", "comision_banco_avion_mxn"}.isdisjoint(fila)
@@ -758,7 +827,7 @@ def test_fila_externos_cobro_neto_sin_llaves_de_comisiones(variante, registros) 
     # Solo la degradada de siempre (COSTO TOTAL del #405, mensual).
     esperadas = [(MAESTRA, f"U{_fila_de(ws, '#405 · Cliente Cuatro')}")]
     assert registros[-1].degradadas() == (esperadas if variante == "mensual" else [])
-    disp = _DISP_GENERAL if variante == "general" else _DISP_MENSUAL
+    disp = _DISP_GENERAL if variante == "general" else _DISP_FLOTA
     f = _fila_de(ws, "#504 · Externo")
     cobro1 = ws[f"{disp.cobro_mxn_letras[0]}{f}"]
     assert cobro1.value == 17100.0
@@ -769,8 +838,7 @@ def test_fila_externos_cobro_neto_sin_llaves_de_comisiones(variante, registros) 
     cobros = ",".join(f"{letra}{f}" for letra in disp.cobro_mxn_letras)
     assert _celda(ws, f, COBRADO_REAL).value == f"=ROUND(SUM({cobros}),2)"
     assert _celda(wsv, f, COBRADO_REAL).value == 17100.0
-    com = _celda(ws, f, COMISIONES)
-    assert com.value is None and com.comment is None
+    assert COMISIONES not in [c.value for c in ws[2]]
     if variante == "mensual":
         assert _celda(ws, f, GANANCIA).value == f"={_ref(ws, f, REMANENTE)}"
         assert _celda(wsv, f, GANANCIA).value == 9000.0
@@ -783,18 +851,24 @@ def test_fila_externos_cobro_neto_sin_llaves_de_comisiones(variante, registros) 
     assert t.comisiones_mxn == r2(
         _libro_tst()["totales"]["comisiones_mxn"] + _libro_dos()["totales"]["comisiones_mxn"]
     )
-    assert wsv.cell(row=_tot(ws), column=_col(ws, COMISIONES)).value == t.comisiones_mxn
+    # GANANCIA (mensual) / REMANENTE (general) de TOTALES: el REMANENTE del
+    # API, antes de comisiones.
+    antes = GANANCIA if variante == "mensual" else REMANENTE_CPH
+    assert wsv.cell(row=_tot(ws), column=_col(ws, antes)).value == t.remanente_mxn
     # 'cobranza': neto con el bruto al lado y la nota de los netos, que ya no
-    # dice que el avión absorbe todas las comisiones (EXTERNOS no).
+    # dice que el avión absorbe todas las comisiones (EXTERNOS no); en el
+    # general, la que dice dónde quedó la columna COMISIONES.
     cob = wb["cobranza"]
     assert any(
         isinstance(c.value, str) and "$17,100.00 neto (bruto $18,000.00)" in c.value
         for fila_c in cob.iter_rows()
         for c in fila_c
     )
-    assert _NOTA_COBRANZA_NETO in _pie(cob)
-    assert "EXTERNOS" in _NOTA_COBRANZA_NETO
-    assert "las comisiones las absorbe el avión" not in _NOTA_COBRANZA_NETO
+    assert _NOTA_COBRANZA_NETO_FLOTA in _pie(cob)
+    assert _NOTA_COBRANZA_NETO not in _pie(cob)
+    for nota in (_NOTA_COBRANZA_NETO, _NOTA_COBRANZA_NETO_FLOTA):
+        assert "EXTERNOS" in nota
+        assert "las comisiones las absorbe el avión" not in nota
 
 
 # Etiqueta de la regla como la arma el API con una vigencia distinta del 1.º
@@ -862,10 +936,13 @@ def test_libros_con_la_regla_del_api() -> None:
     resumen = _pie(g["RESUMEN flota"])
     assert any(x.startswith(_con_regla(_RESUMEN_COMISIONES, REGLA_API)) for x in resumen)
     gm = g[MAESTRA]
-    nota = gm.cell(row=2, column=_DISP_GENERAL.comision_col).comment.text
-    assert nota == _con_regla(_NOTA_ENCABEZADO_COMISIONES, REGLA_API)
-    assert _con_regla(_NOTA_COBRADO_REAL, REGLA_API) in _pie(gm)
-    assert _con_regla(_NOTA_COBRANZA_NETO, REGLA_API) in _pie(g["cobranza"])
+    # Sin COMISIONES en la hoja (7-oct-2026): la nota de REMANENTE nombra la
+    # regla del API.
+    nota = gm.cell(row=2, column=_col(gm, REMANENTE_CPH)).comment.text
+    assert nota == _con_regla(_NOTA_ENCABEZADO_REMANENTE, REGLA_API)
+    assert REGLA_API in nota and "septiembre" not in nota
+    assert _con_regla(_NOTA_COBRADO_REAL_FLOTA, REGLA_API) in _pie(gm)
+    assert _con_regla(_NOTA_COBRANZA_NETO_FLOTA, REGLA_API) in _pie(g["cobranza"])
     assert _OM_REGLA_COMISIONES.format(regla=REGLA_API) in g["otros movimientos"]["A2"].value
     for hoja in ("RESUMEN flota", MAESTRA, "cobranza", "otros movimientos"):
         assert not any("septiembre 2026" in x for x in _pie(g[hoja])), hoja
@@ -934,7 +1011,8 @@ def test_api_previo_ganancia_remanente_y_cobros_de_siempre() -> None:
         assert ws[f"AC{f}"].value is None and ws[f"AC{f}"].comment is None
     assert ws["AJ3"].value == 30000.0 and ws["AL3"].value == 30030.0  # brutos
     assert ws["AC9"].value == "=ROUND(SUM(AC3:AC8),2)"  # 0 de comision_vendedor_mxn
-    # Variante general: REMANENTE con la fórmula de siempre (VENTA − PROVEEDOR).
+    # Variante general: REMANENTE con la fórmula de siempre (VENTA − PROVEEDOR)
+    # y, desde el 7-oct-2026, sin la columna COMISIONES.
     variante = tf._general().model_copy(update={"variante": "general"})
     gen = load_workbook(BytesIO(render_balance_general_xlsx(variante)))[MAESTRA]
     rem = _col(gen, REMANENTE_CPH)
@@ -942,7 +1020,7 @@ def test_api_previo_ganancia_remanente_y_cobros_de_siempre() -> None:
     y = get_column_letter(_col(gen, "TOTAL PARA\nPROVEEDOR (PESOS)"))
     for f in range(3, _tot(gen)):
         assert gen.cell(row=f, column=rem).value == f"=ROUND({k}{f}-{y}{f},2)", f
-        assert gen.cell(row=f, column=_col(gen, COMISIONES)).value is None, f
+    assert COMISIONES not in [c.value for c in gen[2]]
 
 
 def test_campos_nuevos_en_null_no_cambian_ni_un_byte() -> None:
@@ -992,4 +1070,4 @@ def test_rutas_aceptan_el_payload_del_api(monkeypatch, request) -> None:
     )
     assert res.status_code == 200, res.text
     ws = load_workbook(BytesIO(res.content))[MAESTRA]
-    assert ws.cell(row=2, column=_DISP_GENERAL.comision_col).value == COMISIONES
+    assert [c.value for c in ws[2]] == [c[1] for c in _COLS_GENERAL]  # sin COMISIONES

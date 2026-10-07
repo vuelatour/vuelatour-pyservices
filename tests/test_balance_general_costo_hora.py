@@ -20,6 +20,12 @@ Revisión del 6-oct-2026: el libro de hoy se congela también por BYTES (la
 huella de layout no veía notas, bordes ni fuentes) y la regla «jamás letras
 fijas» se prueba con OTROS juegos de columnas y el libro completo (sin eso,
 una fórmula con letras fijas pasaba toda la suite).
+
+7-oct-2026 (API 0.0.66): la hoja de vuelos de las DOS variantes va sin la
+columna COMISIONES (pedido: «se están duplicando en la general»): el bloque
+COSTO POR HORA vuelve a sus 12 columnas y la variante mensual usa
+`_COLS_FLOTA` (el juego de siempre sin COMISIONES). Las huellas del Balance
+mensual se regeneraron A PROPÓSITO (ver `_FIRMAS_HOY`).
 """
 
 from __future__ import annotations
@@ -34,7 +40,7 @@ import openpyxl
 import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import column_index_from_string, get_column_letter
 
 from app.config import get_settings
 from app.main import app
@@ -47,9 +53,11 @@ from app.schemas.reportes import (
 from app.services import balance_avion_xlsx, xlsx_formulas
 from app.services.balance_avion_xlsx import (
     _COLS,
+    _COLS_FLOTA,
     _COLS_GENERAL,
     _CPH_NOTA_REPARTIDOS_A_AVIONES,
     _CPH_NOTA_TOTALES,
+    _DISP_FLOTA,
     _DISP_GENERAL,
     _DISP_MENSUAL,
     _GRUPO_COSTO_HORA,
@@ -268,23 +276,26 @@ def test_juego_de_columnas_del_balance_general() -> None:
         "COSTO TOTAL\nMXN",
         "TIPO CAMBIO\nCOSTOS",
         *COSTO_POR_HORA,
-        # 6-oct-2026 (API 0.0.65): COMISIONES al final del bloque; las 12 del
-        # cliente siguen juntas y en su orden.
-        "COMISIONES\nMXN",
+        # Del 6 al 7-oct-2026 (API 0.0.65) aquí iba COMISIONES; desde el API
+        # 0.0.66 el Balance general ya no la lleva (vive en el libro
+        # individual): el bloque son las 12 del cliente.
         *mensual[mensual.index("STATUS") :],
     ]
-    assert len(encabezados) == 45
+    assert len(encabezados) == 44
     assert not set(FUERA) & set(encabezados)
+    assert "COMISIONES\nMXN" not in encabezados
     grupos = [c[0] for c in _COLS_GENERAL]
     assert grupos[16:18] == ["COSTO TOTAL (MXN)"] * 2
-    assert grupos[18:31] == ["COSTO POR HORA"] * 13
+    assert grupos[18:30] == ["COSTO POR HORA"] * 12
+    assert grupos[30] == "STATUS DE COBROS"
     claves = [c[2] for c in _COLS_GENERAL if c[2]]
     assert len(claves) == len(set(claves))
     assert _DISP_GENERAL.cols == tuple(_COLS_GENERAL)
-    assert _DISP_GENERAL.costo_por_hora and _DISP_GENERAL.comision_col == 31
+    assert _DISP_GENERAL.costo_por_hora and _DISP_GENERAL.comision_col is None
 
 
-# Letras del juego de siempre (Balance mensual y libro individual), ESCRITAS A
+# Letras del juego de siempre (libro individual; hasta el 7-oct-2026 también
+# el Balance mensual, que hoy va sin COMISIONES: `_DISP_FLOTA`), ESCRITAS A
 # MANO: las del libro de hoy. Ya no hay mapas de letras a nivel de módulo
 # (`_LETRA`, `_COBRO1_COL`… se retiraron en la revisión del 6-oct-2026: una
 # fórmula nueva escrita con ellos apuntaría, en silencio, a las letras del
@@ -314,6 +325,27 @@ def test_el_juego_de_siempre_no_se_movio() -> None:
     assert _DISP_MENSUAL.comision_col == 29  # COMISIONES MXN = AC (6-oct-2026)
     assert _DISP_MENSUAL.total_map is _TOTAL_MAP
     assert not _DISP_MENSUAL.costo_por_hora
+
+
+def test_balance_mensual_es_el_juego_de_siempre_sin_comisiones() -> None:
+    """7-oct-2026 (API 0.0.66): la hoja de vuelos del Balance mensual (libro
+    de flota) deja la columna COMISIONES: hasta AB nada se mueve y de AC en
+    adelante todo corre una columna (letras escritas a mano)."""
+    assert _DISP_FLOTA.cols == tuple(_COLS_FLOTA)
+    assert [c[2] for c in _COLS_FLOTA] == [c[2] for c in _COLS if c[2] != "comisiones_mxn"]
+    esperadas = {}
+    for llave, letra in _LETRAS_MENSUAL.items():
+        if llave == "comisiones_mxn":
+            continue
+        col = column_index_from_string(letra)
+        esperadas[llave] = letra if col < 29 else get_column_letter(col - 1)
+    assert _DISP_FLOTA.letra == esperadas
+    assert (_DISP_FLOTA.letra["ganancia_mxn"], _DISP_FLOTA.letra["ganancia_usd"]) == ("AC", "AD")
+    assert _DISP_FLOTA.cobro1_col == 34  # COBRO 1 FECHA = AH
+    assert _DISP_FLOTA.cobro_mxn_letras == ("AI", "AK", "AM", "AO")
+    assert _DISP_FLOTA.comision_col is None
+    assert _DISP_FLOTA.total_map is _TOTAL_MAP
+    assert not _DISP_FLOTA.costo_por_hora
 
 
 def test_valor_de_cada_columna_sale_del_api() -> None:
@@ -346,7 +378,7 @@ def test_valor_de_cada_columna_sale_del_api() -> None:
 def test_encabezado_dice_balance_general_y_conserva_las_constantes() -> None:
     wb, _ = _libros(render_balance_general_xlsx(_general()))
     ws = wb[MAESTRA]
-    assert ws.max_column == 45
+    assert ws.max_column == 44
     assert [c.value for c in ws[2]] == [c[1] for c in _COLS_GENERAL]
     grupos = {c.value: c.coordinate for c in ws[1] if c.column > 4 and c.value}
     assert list(grupos) == [
@@ -358,7 +390,7 @@ def test_encabezado_dice_balance_general_y_conserva_las_constantes() -> None:
     ]
     assert _TITULO_GRUPO_COSTO_HORA == "BALANCE GENERAL · COSTO POR HORA"
     inicio = _letra(ws, COSTO_POR_HORA[0])
-    fin = _letra(ws, "COMISIONES\nMXN")  # el bloque cierra con COMISIONES
+    fin = _letra(ws, COSTO_POR_HORA[-1])  # el bloque cierra con REMANENTE
     assert f"{inicio}1:{fin}1" in {str(r) for r in ws.merged_cells.ranges}
     # A1:D1: las constantes de siempre (COSTO X HORA cita $D$1).
     assert (ws["A1"].value, ws["B1"].value) == ("Permiso AFAC USD/hr", None)
@@ -495,16 +527,16 @@ def test_desglose_del_costo_en_la_nota_de_total_para_proveedor() -> None:
     # COSTO TOTAL va como valor «calculado por el sistema» (nota en su encabezado).
     encabezado = ws.cell(row=2, column=_col(ws, "COSTO TOTAL\nMXN"))
     assert encabezado.comment.text.startswith("Calculado por el sistema: COSTO TOTAL = operación")
-    # Las otras dos notas de encabezado (6-oct-2026): REMANENTE ya después de
-    # comisiones y la regla de COMISIONES.
+    # La otra nota de encabezado (7-oct-2026): REMANENTE va antes de
+    # comisiones, que no van en esta hoja (ya no hay columna COMISIONES).
     remanente = ws.cell(row=2, column=_col(ws, COSTO_POR_HORA[-1]))
-    comisiones = ws.cell(row=2, column=_col(ws, "COMISIONES\nMXN"))
-    assert remanente.comment.text.startswith("REMANENTE VENTA MENOS COMPRA = VENTA AVIÓN MXN")
-    assert comisiones.comment.text.startswith("COMISIONES (regla de septiembre 2026")
+    assert remanente.comment.text.startswith(
+        "REMANENTE VENTA MENOS COMPRA = VENTA AVIÓN MXN − TOTAL PARA PROVEEDOR (PESOS), "
+        "antes de comisiones."
+    )
     assert [c.coordinate for c in ws[2] if c.comment] == [
         encabezado.coordinate,
         remanente.coordinate,
-        comisiones.coordinate,
     ]
 
 
@@ -742,7 +774,11 @@ def test_notas_al_pie_hablan_de_las_columnas_del_balance_general() -> None:
     assert any(x.startswith("BALANCE GENERAL · COSTO POR HORA: COSTO X HORA") for x in textos)
     assert "entre 1.16 para sacar el subtotal" in pie
     assert "REMANENTE VENTA MENOS COMPRA = VENTA AVIÓN MXN − TOTAL PARA PROVEEDOR" in pie
-    assert "TOTAL PARA PROVEEDOR (PESOS) − COMISIONES MXN" in pie  # 6-oct-2026
+    # 7-oct-2026: antes de comisiones; las comisiones viven en el libro
+    # individual y en la cascada de 'balance'.
+    assert "TOTAL PARA PROVEEDOR (PESOS), antes de comisiones." in pie
+    assert "− COMISIONES MXN" not in pie
+    assert "no van en esta hoja: están en la columna COMISIONES del libro individual" in pie
     assert "quedan solo como nota en el desglose de TOTAL PARA PROVEEDOR (PESOS)" in pie
     assert (
         "TUA pagado del periodo (solo nota en el desglose de TOTAL PARA PROVEEDOR, no resta en "
@@ -751,17 +787,18 @@ def test_notas_al_pie_hablan_de_las_columnas_del_balance_general() -> None:
     # Ninguna nota nombra columnas que esta hoja ya no tiene.
     assert "celda OPERACIONES" not in pie and "GANANCIA de la fila" not in pie
     assert "COSTO X HORA USD de la fila TOTALES" not in pie
-    # El Balance mensual conserva las suyas (la de COMISIONES cierra con
-    # GANANCIA de la fila, columna que el general no tiene).
+    # El Balance mensual conserva las suyas, con su GANANCIA de la fila —
+    # columna que esta variante no tiene—, y desde el 7-oct-2026 también sin
+    # COMISIONES: GANANCIA va antes de ellas.
     ws_m = _libros(render_balance_general_xlsx(t_extension._general()))[0][MAESTRA]
     comisiones_m = [
         c.value
         for c in ws_m["A"]
-        if isinstance(c.value, str) and c.value.startswith("COMISIONES MXN (regla de septiembre")
+        if isinstance(c.value, str) and c.value.startswith("COMISIONES (regla de septiembre")
     ]
     assert len(comisiones_m) == 1
     assert comisiones_m[0].endswith(
-        "GANANCIA de la fila = REMANENTE (VENTA − COSTO TOTAL) − COMISIONES."
+        "GANANCIA de la fila = REMANENTE (VENTA − COSTO TOTAL), antes de comisiones."
     )
 
 
@@ -1023,13 +1060,22 @@ def test_otro_juego_de_columnas_sigue_cuadrando(caso, monkeypatch, registros) ->
 # MXN» y sus dos notas — comparado celda por celda (valor, fórmula, caché,
 # formato, fuente, relleno, bordes y notas) contra el código anterior en los
 # 244 libros de los tests del balance: ningún número ni fórmula cambió.
+# REGENERADAS A PROPÓSITO el 7-oct-2026 (API 0.0.66, el general sin la
+# columna COMISIONES): comparadas celda por celda (fórmula, caché, formato,
+# fuente, relleno, bordes, notas, merges, anchos y altos) contra HEAD 4189a1e
+# en los 46 libros generales de los tests del balance, quitando de HEAD esa
+# columna: cambian SOLO las fórmulas que citan una columna de su derecha (la
+# letra corre una; mismo número), la nota nueva del encabezado de GANANCIA,
+# las notas al pie de COMISIONES y COBRADO REAL y la nota de COMISIONES del
+# RESUMEN — y, en filas CON comisiones (otro payload), GANANCIA antes de
+# ellas, la nota de netos de 'cobranza' y la leyenda de 'otros movimientos'.
 _FIRMAS_HOY = {
-    "fórmulas": "f249c29f2a6ee416b016341e2d169f8100bc6528f2a4eee6c4a4a7980b4e8eac",
-    "empresa": "5ab8ec78af3a299ba32f6b802b07f1d5cbb9b6d241beb6b71141eac30a7f48da",
-    "pago real": "9291b674d3fcf9d2a29ee550d1154d574ad7bd1a28da55c0af1cb1e7c57927f3",
+    "fórmulas": "eb784f8651e6bfc3fb832398dc31ec93095518b23ca1605bce954017fb3c8827",
+    "empresa": "a120d1186bf5f5549dcf6f3fcca74f96f95b21598fd41a01d05af0c90d732002",
+    "pago real": "bad8e020f0cd4696efc973154140068a68f90d56a61bb41e4bf7a992a3344ca2",
 }
 _FIRMA_HOY_PROVISION_SIN_OTROS_MOVIMIENTOS = (
-    "a88e5ac61af1ffe7c4be47326d338661dc819b40139ae506a0cbb26248b73b83"
+    "3b52892b83564fa23816f3723f9ea7a7201482e293be0a1ce1709a1767a4b302"
 )
 _CASOS_MENSUAL = {
     "fórmulas": tf._general,
@@ -1051,7 +1097,10 @@ _CASOS_MENSUAL = {
 # las notas de la hoja de vuelos (comment1) y su dibujo VML; los demás
 # miembros, idénticos a los de 93486c1. Si falla SOLO porque cambió la versión
 # de openpyxl (y `_FIRMAS_HOY` sigue igual), se regeneran con el árbol del
-# commit de las comisiones y la versión nueva.
+# commit de las comisiones y la versión nueva. Regenerados otra vez el
+# 7-oct-2026 (el general sin COMISIONES, ver `_FIRMAS_HOY`): de nuevo cambian
+# SOLO el RESUMEN (sheet1), la hoja de vuelos (sheet2), sus notas (comment1) y
+# —si sus notas de cobro se corren de columna— su dibujo VML.
 _OPENPYXL_HUELLAS = "3.1.5"
 _MIEMBROS_HOY = {
     "fórmulas": {
@@ -1059,18 +1108,18 @@ _MIEMBROS_HOY = {
         "_rels/.rels": "c545941ba36c15fc",
         "docProps/app.xml": "209fca6b00afe72a",
         "xl/_rels/workbook.xml.rels": "fee7f7835a21adf6",
-        "xl/comments/comment1.xml": "b5b243721e1df8dd",
+        "xl/comments/comment1.xml": "21a1f114c449c7a5",
         "xl/comments/comment2.xml": "a623ddcb4e5ebb3c",
-        "xl/drawings/commentsDrawing1.vml": "f36086122355d4f6",
+        "xl/drawings/commentsDrawing1.vml": "ac327951e7ea7e41",
         "xl/drawings/commentsDrawing2.vml": "a3fb237fe6d57d83",
         "xl/styles.xml": "c00b3c833322f4b3",
         "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
         "xl/workbook.xml": "e9b5be0ab87733e4",
         "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
         "xl/worksheets/_rels/sheet9.xml.rels": "06a3b87cfefe7f5f",
-        "xl/worksheets/sheet1.xml": "6635ba00695e0a12",
+        "xl/worksheets/sheet1.xml": "11198654c746e7ba",
         "xl/worksheets/sheet10.xml": "b134206c4fd136b1",
-        "xl/worksheets/sheet2.xml": "c4a62b238ad091c1",
+        "xl/worksheets/sheet2.xml": "aef1be8a0b07a387",
         "xl/worksheets/sheet3.xml": "bb3dc0f4f2b56702",
         "xl/worksheets/sheet4.xml": "b4271af6eb64e959",
         "xl/worksheets/sheet5.xml": "0122d2728a5bfe58",
@@ -1084,18 +1133,18 @@ _MIEMBROS_HOY = {
         "_rels/.rels": "c545941ba36c15fc",
         "docProps/app.xml": "209fca6b00afe72a",
         "xl/_rels/workbook.xml.rels": "fee7f7835a21adf6",
-        "xl/comments/comment1.xml": "b5b243721e1df8dd",
+        "xl/comments/comment1.xml": "21a1f114c449c7a5",
         "xl/comments/comment2.xml": "51429da7b4342562",
-        "xl/drawings/commentsDrawing1.vml": "f36086122355d4f6",
+        "xl/drawings/commentsDrawing1.vml": "ac327951e7ea7e41",
         "xl/drawings/commentsDrawing2.vml": "14fe3cbfa808de3c",
         "xl/styles.xml": "2354a5c4769e8a1b",
         "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
         "xl/workbook.xml": "e9b5be0ab87733e4",
         "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
         "xl/worksheets/_rels/sheet9.xml.rels": "06a3b87cfefe7f5f",
-        "xl/worksheets/sheet1.xml": "d65600dbee93b893",
+        "xl/worksheets/sheet1.xml": "78a2ec673cf7e685",
         "xl/worksheets/sheet10.xml": "245576c8b1d18f98",
-        "xl/worksheets/sheet2.xml": "c4a62b238ad091c1",
+        "xl/worksheets/sheet2.xml": "aef1be8a0b07a387",
         "xl/worksheets/sheet3.xml": "bb3dc0f4f2b56702",
         "xl/worksheets/sheet4.xml": "b4271af6eb64e959",
         "xl/worksheets/sheet5.xml": "0122d2728a5bfe58",
@@ -1109,7 +1158,7 @@ _MIEMBROS_HOY = {
         "_rels/.rels": "c545941ba36c15fc",
         "docProps/app.xml": "209fca6b00afe72a",
         "xl/_rels/workbook.xml.rels": "7676081832cc25e3",
-        "xl/comments/comment1.xml": "17e4d4da93f41a8b",
+        "xl/comments/comment1.xml": "79c2a68fedd7c14f",
         "xl/comments/comment2.xml": "4538ed5560018e12",
         "xl/drawings/commentsDrawing1.vml": "286be680ad384252",
         "xl/drawings/commentsDrawing2.vml": "ed0e12dacd2b3460",
@@ -1118,8 +1167,8 @@ _MIEMBROS_HOY = {
         "xl/workbook.xml": "6c579d04c9cd1373",
         "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
         "xl/worksheets/_rels/sheet3.xml.rels": "06a3b87cfefe7f5f",
-        "xl/worksheets/sheet1.xml": "e2ee0c8f121430fb",
-        "xl/worksheets/sheet2.xml": "1c413913d781b1c0",
+        "xl/worksheets/sheet1.xml": "c3accfcefc62223b",
+        "xl/worksheets/sheet2.xml": "8898065df845db3c",
         "xl/worksheets/sheet3.xml": "495b31f28f184ace",
         "xl/worksheets/sheet4.xml": "fb8f4d129040df3f",
         "xl/worksheets/sheet5.xml": "9095ac67c5861e2b",
@@ -1159,7 +1208,7 @@ def test_mensual_y_general_difieren_solo_en_la_hoja_maestra_y_sus_citas() -> Non
     wm, wg = load_workbook(BytesIO(mensual)), load_workbook(BytesIO(general))
     assert wm.sheetnames == wg.sheetnames
     cambio = {
-        f"'{MAESTRA}'!${_DISP_MENSUAL.letra[k]}$": f"'{MAESTRA}'!${_DISP_GENERAL.letra[k]}$"
+        f"'{MAESTRA}'!${_DISP_FLOTA.letra[k]}$": f"'{MAESTRA}'!${_DISP_GENERAL.letra[k]}$"
         for k in ("tc_costos", "tiempo_vuelo")
     }
     citas, notas = set(), set()
@@ -1307,15 +1356,18 @@ def test_ruta_acepta_la_variante(monkeypatch, request) -> None:
     res = client.post("/pdf/balance-general-xlsx", json=sin_llave, headers=headers)
     assert res.status_code == 200, res.text
     ws = load_workbook(BytesIO(res.content))[MAESTRA]
-    assert [c.value for c in ws[2]] == [c[1] for c in _COLS]
+    # Balance mensual: las columnas de siempre sin COMISIONES (7-oct-2026).
+    assert [c.value for c in ws[2]] == [c[1] for c in _COLS_FLOTA]
     disposicion = res.headers["content-disposition"]
     assert f'filename="balance-mensual-vuelatour-{periodo}.xlsx"' in disposicion
 
 
 def test_columnas_por_llave_no_por_letra() -> None:
-    """Las dos disposiciones resuelven sus letras desde la lista de columnas:
+    """Las disposiciones resuelven sus letras desde la lista de columnas:
     la misma llave cae en columnas distintas según la variante."""
-    assert _DISP_MENSUAL.letra["tc_costos"] == "V"
+    assert _DISP_MENSUAL.letra["tc_costos"] == _DISP_FLOTA.letra["tc_costos"] == "V"
+    assert _DISP_MENSUAL.letra["ganancia_mxn"] == "AD"
+    assert _DISP_FLOTA.letra["ganancia_mxn"] == "AC"
     assert _DISP_GENERAL.letra["tc_costos"] == "R"
     assert _DISP_GENERAL.letra["tiempo_vuelo"] == _DISP_MENSUAL.letra["tiempo_vuelo"] == "N"
     assert _DISP_GENERAL.cobro1_col == next(

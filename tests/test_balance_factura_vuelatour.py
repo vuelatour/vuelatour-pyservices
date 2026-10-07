@@ -15,6 +15,8 @@ Balance general (las dos salen de `_hoja_maestra`). Sin el campo (API viejo) o
 en null, la celda va vacía; la fila TOTALES también. Nada más se mueve: la
 columna va al final, así que COBRO 1, COMISIÓN VENDEDOR (hoy COMISIONES,
 `_DISP_MENSUAL`) y las columnas de la izquierda quedan donde estaban.
+Desde el 7-oct-2026 (API 0.0.66) la hoja de vuelos del Balance general no
+lleva COMISIONES (`_COLS_FLOTA`): ahí FACTURA VUELATOUR es la 46 (AT).
 """
 
 from io import BytesIO
@@ -34,6 +36,7 @@ from app.schemas.reportes import (
 )
 from app.services.balance_avion_xlsx import (
     _COLS,
+    _COLS_FLOTA,
     _DISP_MENSUAL,
     _NOTA_FACTURA_VUELATOUR,
     FILL_COBROS,
@@ -43,9 +46,11 @@ from app.services.balance_avion_xlsx import (
 )
 
 ENCABEZADO = "FACTURA\nVUELATOUR"
-# Índice (1-based) de la columna nueva: la ÚLTIMA de la hoja maestra.
+# Índice (1-based) de la columna nueva: la ÚLTIMA de la hoja maestra (47 en el
+# libro individual; 46 en la hoja de vuelos del Balance general, sin
+# COMISIONES desde el 7-oct-2026).
 COL = len(_COLS)
-LETRA = get_column_letter(COL)
+COL_GENERAL = len(_COLS_FLOTA)
 FILA_DATOS = 3  # filas 1-2 = encabezado de grupo / columna
 
 
@@ -116,8 +121,13 @@ def _maestra_general(req: BalanceGeneralRequest | None = None):
     return wb["reporte horas FLOTA"]
 
 
+def _col_factura(ws) -> int:
+    """Columna FACTURA VUELATOUR de ESTA hoja de vuelos."""
+    return COL_GENERAL if ws.title == "reporte horas FLOTA" else COL
+
+
 def _columna(ws, n: int) -> list:
-    return [ws.cell(row=FILA_DATOS + i, column=COL).value for i in range(n)]
+    return [ws.cell(row=FILA_DATOS + i, column=_col_factura(ws)).value for i in range(n)]
 
 
 # ---------------------------------------------------------------------------
@@ -141,25 +151,28 @@ def test_cols_la_columna_nueva_es_la_ultima_de_status_de_cobros() -> None:
 @pytest.mark.parametrize("hoja", ["individual", "general"])
 def test_encabezado_grupo_relleno_y_ancho(hoja) -> None:
     ws = _maestra_individual() if hoja == "individual" else _maestra_general()
-    assert ws.max_column == COL
-    assert ws.cell(row=2, column=COL).value == ENCABEZADO
-    assert ws.cell(row=2, column=COL - 1).value == "POR COBRAR\nUSD"
+    cols = _COLS if hoja == "individual" else _COLS_FLOTA
+    col = len(cols)
+    assert (col, _col_factura(ws)) == ((47, 47) if hoja == "individual" else (46, 46))
+    assert ws.max_column == col
+    assert ws.cell(row=2, column=col).value == ENCABEZADO
+    assert ws.cell(row=2, column=col - 1).value == "POR COBRAR\nUSD"
     # El título de grupo STATUS DE COBROS (fila 1, combinado) la abarca.
     grupo = next(
         m
         for m in ws.merged_cells.ranges
         if m.min_row == 1 and ws.cell(row=1, column=m.min_col).value == "STATUS DE COBROS"
     )
-    assert grupo.max_col == COL
+    assert grupo.max_col == col
     assert ws.cell(row=1, column=grupo.min_col).value == "STATUS DE COBROS"
     # Mismo verde suave del bloque en encabezado y datos.
-    assert ws.cell(row=2, column=COL).fill.fgColor.rgb.endswith(FILL_COBROS)
-    assert ws.cell(row=FILA_DATOS, column=COL).fill.fgColor.rgb.endswith(FILL_COBROS)
-    assert ws.column_dimensions[LETRA].width == 16
+    assert ws.cell(row=2, column=col).fill.fgColor.rgb.endswith(FILL_COBROS)
+    assert ws.cell(row=FILA_DATOS, column=col).fill.fgColor.rgb.endswith(FILL_COBROS)
+    assert ws.column_dimensions[get_column_letter(col)].width == 16
     # Los anchos de la izquierda no cambian (COBRADO REAL/AVIÓN 17, resto 13).
     anchos = {
         h: ws.column_dimensions[get_column_letter(i)].width
-        for i, (_g, h, _a, _f) in enumerate(_COLS, start=1)
+        for i, (_g, h, _a, _f) in enumerate(cols, start=1)
     }
     assert anchos["POR COBRAR\nUSD"] == 13
     assert anchos["COBRADO REAL\nMXN (Σ depósitos)"] == 17
@@ -180,7 +193,7 @@ def test_valor_tal_cual_y_vacio_sin_factura(hoja) -> None:
         v["clave"] for v in _VUELOS
     ]
     # Texto, no número ni fecha.
-    celda = ws.cell(row=FILA_DATOS, column=COL)
+    celda = ws.cell(row=FILA_DATOS, column=_col_factura(ws))
     assert celda.data_type == "s"
     assert celda.number_format == "General"
 
@@ -190,11 +203,11 @@ def test_fila_totales_va_vacia(hoja) -> None:
     ws = _maestra_individual() if hoja == "individual" else _maestra_general()
     fila_tot = FILA_DATOS + len(_VUELOS)
     assert ws.cell(row=fila_tot, column=1).value == "TOTALES"
-    celda = ws.cell(row=fila_tot, column=COL)
+    celda = ws.cell(row=fila_tot, column=_col_factura(ws))
     assert celda.value is None
     assert celda.fill.fgColor.rgb.endswith(LIGHT)
     # La vecina sí trae su total: la fila TOTALES no se corrió.
-    assert ws.cell(row=fila_tot, column=COL - 1).value == 0.0
+    assert ws.cell(row=fila_tot, column=_col_factura(ws) - 1).value == 0.0
 
 
 def test_api_viejo_sin_la_clave_deja_la_columna_vacia() -> None:
@@ -202,7 +215,7 @@ def test_api_viejo_sin_la_clave_deja_la_columna_vacia() -> None:
     nueva, que va vacía (con su encabezado y su relleno)."""
     viejos = [{k: v for k, v in f.items() if k != "factura_vuelatour"} for f in _VUELOS]
     for ws in (_maestra_individual(_individual(viejos)), _maestra_general(_general(viejos))):
-        assert ws.cell(row=2, column=COL).value == ENCABEZADO
+        assert ws.cell(row=2, column=_col_factura(ws)).value == ENCABEZADO
         assert _columna(ws, len(viejos)) == [None] * len(viejos)
 
 
@@ -284,7 +297,7 @@ def test_otros_movimientos_folio_con_igual_tambien_es_texto() -> None:
     assert set(celdas) == {"=A-12", "A-0424", "=B-1"}
     assert all(c.data_type == "s" for c in celdas.values())
     # Y la hoja maestra del mismo libro también.
-    assert wb["reporte horas FLOTA"].cell(row=FILA_DATOS, column=COL).data_type == "s"
+    assert wb["reporte horas FLOTA"].cell(row=FILA_DATOS, column=COL_GENERAL).data_type == "s"
 
 
 # ---------------------------------------------------------------------------

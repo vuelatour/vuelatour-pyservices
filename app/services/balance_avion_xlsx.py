@@ -52,15 +52,20 @@ oficial del día — `regla_costo`, solo cambian los textos) — el libro
 INDIVIDUAL conserva la suya.
 
 El libro de flota sale en DOS variantes (6-oct-2026, API 0.0.64,
-`BalanceGeneralRequest.variante`): «mensual» (o sin la llave) = el libro de
-siempre (byte-idéntico al de antes de la variante; el 6-oct-2026 cambiaron
-los encabezados de COMISIONES, API 0.0.65); «general» = la hoja «reporte
-horas FLOTA» con el juego de columnas `_COLS_GENERAL` — COSTO TOTAL y el
-bloque COSTO POR HORA (las 12 columnas de la hoja «utilidades» del cliente
-y, al final, COMISIONES; REMANENTE ya después de comisiones) en lugar de
+`BalanceGeneralRequest.variante`): «mensual» (o sin la llave) = la hoja de
+vuelos de siempre (`_COLS_FLOTA`); «general» = la hoja «reporte horas FLOTA»
+con el juego de columnas `_COLS_GENERAL` — COSTO TOTAL y el bloque COSTO POR
+HORA (las 12 columnas de la hoja «utilidades» del cliente) en lugar de
 operaciones / piloto / otros / AFAC e indicadores. Mismos números del API y
 las demás hojas iguales (sus citas a la hoja de vuelos, por llave; la nota
-de 'repartidos a aviones' nombra la columna de cada variante). En 'otros
+de 'repartidos a aviones' nombra la columna de cada variante). Desde el
+7-oct-2026 (API 0.0.66, pedido: «estas comisiones se están duplicando en la
+general, ya que las tenemos en "Otros movimientos"») la hoja de vuelos de las
+DOS variantes va SIN la columna COMISIONES y su GANANCIA / REMANENTE VENTA
+MENOS COMPRA va antes de comisiones, como antes del 6-oct-2026
+(`_antes_de_comisiones`): las que absorbe cada avión siguen en la columna
+COMISIONES de su libro INDIVIDUAL y restan en la cascada de su bloque de la
+hoja 'balance' (dos líneas visibles con el API 0.0.66). En 'otros
 movimientos' (las dos variantes) las filas con PROVISIÓN van en amarillo con
 su leyenda al pie.
 
@@ -93,6 +98,7 @@ from app.schemas.reportes import (
     REGLA_COMISIONES_RESPALDO,
     REGLA_COSTO_ULTIMO_PRECIO,
     VARIANTE_BALANCE_GENERAL,
+    BalanceAvionBalanceBloque,
     BalanceAvionCobro,
     BalanceAvionHojaCombustible,
     BalanceAvionHojaGastos,
@@ -291,7 +297,8 @@ _COLS: list[tuple[str, str, str | None, str | None]] = [
     ("INDICADORES USD / IVA", "DIF. IVA\nHACIENDA MXN", "dif_iva_mxn", MONEY),
     # Antes «COMISIÓN VENDEDOR MXN» (vacía desde el 28-ago-2026); desde el
     # 6-oct-2026 (API 0.0.65) COMISIONES = lo que absorbe el avión con la
-    # regla de septiembre 2026 (`comisiones_mxn`), misma posición.
+    # regla de septiembre 2026 (`comisiones_mxn`), misma posición. Desde el
+    # 7-oct-2026 solo en el libro INDIVIDUAL (el general usa `_COLS_FLOTA`).
     ("INDICADORES USD / IVA", "COMISIONES\nMXN", "comisiones_mxn", MONEY),
     ("INDICADORES USD / IVA", "GANANCIA\nMXN", "ganancia_mxn", MONEY),
     ("INDICADORES USD / IVA", "GANANCIA\nUSD", "ganancia_usd", MONEY),
@@ -327,6 +334,18 @@ _COLS: list[tuple[str, str, str | None, str | None]] = [
     # (`_DISP_MENSUAL.cobro1_col` / `.comision_col`; todo índice se busca por
     # atributo).
     ("STATUS DE COBROS", "FACTURA\nVUELATOUR", "factura_vuelatour", None),
+]
+# Hoja de vuelos del Balance GENERAL, variante «mensual» (7-oct-2026, API
+# 0.0.66). Pedido del cliente: «estas comisiones se están duplicando en la
+# general, ya que las tenemos en el apartado de "Otros movimientos". Las
+# comisiones deben aparecer en ese apartado pero en el individual de los
+# avioncitos, ya que en el reporte de los aviones no está la pestaña "Otros
+# movimientos"». El juego de siempre SIN la columna COMISIONES MXN (tampoco
+# la vieja COMISIÓN VENDEDOR MXN): todo lo que estaba a su derecha corre una
+# columna y su GANANCIA va antes de comisiones (`_antes_de_comisiones`). El
+# libro INDIVIDUAL conserva `_COLS` tal cual.
+_COLS_FLOTA: list[tuple[str, str, str | None, str | None]] = [
+    c for c in _COLS if c[2] != "comisiones_mxn"
 ]
 # Base del reparto de la venta en vuelos MULTI-AVIÓN (participacion_fuente):
 # SIEMPRE partes iguales por tramo vendido (nunca por horas); 'unico' no
@@ -422,12 +441,12 @@ _TOTALES_PROMEDIO = ("tc_promedio", "costo_hr_prom_usd")
 # o, en las que repiten un dato o lo derivan, una llave `cph_*`
 # (`_ORIGEN_GENERAL` / `_valor_columna`). Toda fórmula cita columnas por su
 # llave (`_Disposicion.letra`), jamás por una letra fija.
-# COMISIONES (6-oct-2026, API 0.0.65, regla de septiembre 2026: el avión
-# absorbe las comisiones bancaria y del vendedor) va AL FINAL del bloque
-# COSTO POR HORA —las 12 columnas del cliente quedan juntas y en su orden— y
-# REMANENTE VENTA MENOS COMPRA las resta cuando la fila las trae: su llave
-# es `cph_remanente_mxn` y su número la GANANCIA del API (VENTA − PROVEEDOR −
-# COMISIONES; sin comisiones, el remanente de siempre).
+# COMISIONES: del 6-oct-2026 (API 0.0.65) al 7-oct-2026 iban al final del
+# bloque y REMANENTE VENTA MENOS COMPRA las restaba. Desde el API 0.0.66 la
+# hoja de vuelos del Balance general ya no las lleva (pedido del cliente: se
+# duplicaban con 'otros movimientos'; ver `_COLS_FLOTA`) y REMANENTE VENTA
+# MENOS COMPRA vuelve a ser VENTA − PROVEEDOR, la definición del cliente: su
+# llave `cph_remanente_mxn` repite el REMANENTE del API (antes de comisiones).
 _GRUPO_COSTO_TOTAL = "COSTO TOTAL (MXN)"
 _GRUPO_COSTO_HORA = "COSTO POR HORA"
 _COLS_GENERAL: list[tuple[str, str, str | None, str | None]] = [
@@ -446,20 +465,19 @@ _COLS_GENERAL: list[tuple[str, str, str | None, str | None]] = [
     (_GRUPO_COSTO_HORA, "IVA TOTAL\nPAGADO (PESOS)", "iva_pagado_mxn", MONEY),
     (_GRUPO_COSTO_HORA, "TOTAL PAGADO\nS/IVA (PESOS)", "cph_pagado_siva_mxn", MONEY),
     (_GRUPO_COSTO_HORA, "REMANENTE VENTA\nMENOS COMPRA (PESOS)", "cph_remanente_mxn", MONEY),
-    (_GRUPO_COSTO_HORA, "COMISIONES\nMXN", "comisiones_mxn", MONEY),
     *(c for c in _COLS if c[0] == "STATUS DE COBROS"),
 ]
 # Columnas del bloque COSTO POR HORA que REPITEN un dato de otra columna de
 # la fila: llave → atributo del vuelo. Mismo número: TOTAL COBRADO S/IVA lleva
-# la misma fórmula que TOTAL S/IVA MXN y las otras tres son valor. REMANENTE
-# VENTA MENOS COMPRA (6-oct-2026) lleva la GANANCIA del API —el remanente
-# después de COMISIONES—, con su fórmula y su total.
+# la misma fórmula que TOTAL S/IVA MXN, REMANENTE VENTA MENOS COMPRA la del
+# REMANENTE (VENTA − PROVEEDOR, antes de comisiones) y las otras tres son
+# valor.
 _ORIGEN_GENERAL = {
     "cph_cobrado_siva_mxn": "subtotal_mxn",
     "cph_tiempo_hr": "tiempo_vuelo",
     "cph_tc": "tc_costos",
     "cph_proveedor_mxn": "costo_total_mxn",
-    "cph_remanente_mxn": "ganancia_mxn",
+    "cph_remanente_mxn": "remanente_mxn",
 }
 # TOTALES de la variante: los del API por atributo (los mismos de siempre;
 # las columnas repetidas llevan el total de su dato). Las del bloque que el
@@ -488,16 +506,19 @@ _CPH_TOTALES_PROPIOS = frozenset((*_CPH_TOTALES_SUMA_FILAS, "costo_hr_usd_siva",
 # Título del bloque nuevo en la fila de grupos: el encabezado de la hoja dice
 # que es el «Balance general» (A1:D1 son las constantes y no se mueven).
 _TITULO_GRUPO_COSTO_HORA = "BALANCE GENERAL · COSTO POR HORA"
-# Ancho de las 13 columnas del bloque: sus encabezados son más largos.
+# Ancho de las 12 columnas del bloque: sus encabezados son más largos.
 _ANCHO_COSTO_HORA = 15
 
 
 @dataclass(frozen=True)
 class _Disposicion:
     """Juego de columnas de la hoja maestra (6-oct-2026): el de siempre
-    (`_COLS`: libro individual y Balance mensual) o el del Balance general
-    (`_COLS_GENERAL`). Todo lo que la hoja y las demás pestañas necesitan
-    saber de las columnas sale de aquí, por LLAVE — nunca una letra fija."""
+    (`_COLS`: libro individual), el de la variante «mensual» del Balance
+    general (`_COLS_FLOTA`: el de siempre sin COMISIONES, 7-oct-2026) o el de
+    la variante «general» (`_COLS_GENERAL`). Todo lo que la hoja y las demás
+    pestañas necesitan saber de las columnas sale de aquí, por LLAVE — nunca
+    una letra fija. Un juego sin COMISIONES (`comision_col` None) pinta la
+    hoja antes de comisiones (`_antes_de_comisiones`)."""
 
     cols: tuple[tuple[str, str, str | None, str | None], ...]
     letra: dict[str, str]  # llave → letra de su columna
@@ -542,6 +563,11 @@ def _disposicion(
 
 _DISP_MENSUAL = _disposicion(
     _COLS, total_map=_TOTAL_MAP, fills=_GROUP_FILLS, detalle_attr=_DETALLE_ATTR
+)
+# Balance general, variante «mensual» (7-oct-2026, API 0.0.66): el juego de
+# siempre sin COMISIONES; mismos TOTALES del API (COMISIONES no tiene columna).
+_DISP_FLOTA = _disposicion(
+    _COLS_FLOTA, total_map=_TOTAL_MAP, fills=_GROUP_FILLS, detalle_attr=_DETALLE_ATTR
 )
 _DISP_GENERAL = _disposicion(
     _COLS_GENERAL,
@@ -591,6 +617,70 @@ def _valor_total(t: BalanceAvionTotales, total_attr: str) -> float | None:
     if total_attr == "comisiones_mxn":
         return _comisiones(t)
     return getattr(t, total_attr)
+
+
+def _numero_de_celda(x: float) -> float:
+    """El número tal como Excel lo lee de la celda: openpyxl lo escribe con
+    «%.16g» (el evaluador de `xlsx_formulas` lee igual)."""
+    return float(format(x, ".16g"))
+
+
+def _fila_antes_de_comisiones(v: BalanceAvionVuelo) -> BalanceAvionVuelo:
+    """La fila de un vuelo como se ve en una hoja SIN la columna COMISIONES
+    (Balance general, 7-oct-2026): si el avión absorbe comisiones en ella
+    (regla de septiembre 2026), GANANCIA MXN = el REMANENTE del API y
+    GANANCIA USD = ese remanente ÷ el T.C. de costos de la fila — la fórmula
+    visible de la celda, ROUND(GANANCIA MXN ÷ TIPO CAMBIO COSTOS, 2), con lo
+    que el API mandaba antes de la regla; sin T.C. de costos va vacía (el API
+    la convierte con el T.C. promedio del libro de SU avión, que esta hoja no
+    tiene: mejor vacía que un número que no es). Sin comisiones, la fila tal
+    cual (su GANANCIA ya es el remanente)."""
+    if not _monto_no_cero(_comisiones(v)):
+        return v
+    ganancia_usd = None
+    if v.remanente_mxn is not None and v.tc_costos:
+        ganancia_usd = xlsx_formulas.redondear_excel(
+            _numero_de_celda(v.remanente_mxn) / _numero_de_celda(v.tc_costos), 2
+        )
+    return v.model_copy(
+        update={
+            "comisiones_mxn": None,
+            "comision_vendedor_mxn": None,
+            "ganancia_mxn": v.remanente_mxn,
+            "ganancia_usd": ganancia_usd,
+        }
+    )
+
+
+def _antes_de_comisiones(req: BalanceAvionRequest) -> BalanceAvionRequest:
+    """El libro tal como lo pinta una hoja de vuelos SIN la columna
+    COMISIONES (las dos variantes del Balance general, 7-oct-2026, API
+    0.0.66; pedido del cliente: «estas comisiones se están duplicando en la
+    general, ya que las tenemos en "Otros movimientos"»): cada fila con
+    comisiones va antes de ellas (`_fila_antes_de_comisiones`) y TOTALES
+    GANANCIA MXN = el REMANENTE de TOTALES del API y GANANCIA USD = Σ de las
+    filas tal como se ven (sumadas en orden, como SUM de Excel; la fórmula
+    ROUND(SUM()) de la celda da ese número). Lo que absorbe cada avión sigue
+    restando en la cascada de su bloque de la hoja 'balance' (el número del
+    API) y, por vuelo, en la columna COMISIONES de su libro INDIVIDUAL. Sin
+    filas con comisiones (vuelos anteriores a la regla o un API previo), el
+    libro tal cual — byte a byte. Solo PRESENTACIÓN: ningún número del API
+    se recalcula, se elige el de antes de comisiones."""
+    vuelos = [_fila_antes_de_comisiones(v) for v in req.vuelos]
+    if all(nueva is vieja for nueva, vieja in zip(vuelos, req.vuelos, strict=True)):
+        return req
+    ganancia_usd = 0.0
+    for v in vuelos:
+        if v.ganancia_usd is not None:
+            ganancia_usd += _numero_de_celda(v.ganancia_usd)
+    totales = req.totales.model_copy(
+        update={
+            "comisiones_mxn": None,
+            "ganancia_mxn": req.totales.remanente_mxn,
+            "ganancia_usd": xlsx_formulas.redondear_excel(ganancia_usd, 2),
+        }
+    )
+    return req.model_copy(update={"vuelos": vuelos, "totales": totales})
 
 
 class _ColumnaAusente(Exception):  # noqa: N818 - no es un error: es una señal
@@ -664,7 +754,7 @@ def _formula_fila(
         return f"{letra}{r}"
 
     if disp.costo_por_hora:
-        formula = _formula_costo_por_hora(attr, c, v)
+        formula = _formula_costo_por_hora(attr, c)
         if formula is not None:
             return formula
     if attr == "total_mxn":  # [L] = round2(I × K)
@@ -718,14 +808,14 @@ def _formula_fila(
     return None
 
 
-def _formula_costo_por_hora(attr: str | None, c, v: BalanceAvionVuelo) -> str | None:
+def _formula_costo_por_hora(attr: str | None, c) -> str | None:
     """Fórmulas del bloque COSTO POR HORA de la variante general (6-oct-2026)
-    o None si `attr` no es del bloque (o es un dato: TIEMPO, TIPO CAMBIO,
-    TOTAL PARA PROVEEDOR (PESOS) y COMISIONES van como valor). El bloque se
-    cita a sí mismo, como la hoja «utilidades» del cliente, y cada fórmula es
-    la MISMA aritmética del API (letras de su fila entre corchetes; ROUND
-    solo donde el API hace round2): Y = costo total, z = T.C. de costos, O =
-    tiempo de vuelo. `c(llave)` da la celda de la fila del vuelo `v`."""
+    o None si `attr` no es del bloque (o es un dato: TIEMPO, TIPO CAMBIO y
+    TOTAL PARA PROVEEDOR (PESOS) van como valor). El bloque se cita a sí
+    mismo, como la hoja «utilidades» del cliente, y cada fórmula es la MISMA
+    aritmética del API (letras de su fila entre corchetes; ROUND solo donde
+    el API hace round2): Y = costo total, z = T.C. de costos, O = tiempo de
+    vuelo. `c(llave)` da la celda de la fila."""
     if attr == "cph_cobrado_siva_mxn":  # TOTAL S/IVA [N] = round2(L − M)
         return f"ROUND({c('total_mxn')}-{c('iva_mxn')},2)"
     if attr == "costo_hr_usd_siva":  # COSTO X HORA [AO] = Y / z / O / 1.16
@@ -748,12 +838,10 @@ def _formula_costo_por_hora(attr: str | None, c, v: BalanceAvionVuelo) -> str | 
     if attr == "cph_pagado_siva_mxn":  # TOTAL PAGADO S/IVA = Y − AH
         return f"{c('cph_proveedor_mxn')}-{c('iva_pagado_mxn')}"
     if attr == "cph_remanente_mxn":
-        # REMANENTE VENTA MENOS COMPRA = GANANCIA [AL] (regla de septiembre
-        # 2026): round2(L − Y − COMISIONES) si la fila trae comisiones; sin
-        # ellas, [AI] = round2(L − Y) como siempre.
-        if _comisiones(v) is None:
-            return f"ROUND({c('total_mxn')}-{c('cph_proveedor_mxn')},2)"
-        return f"ROUND({c('total_mxn')}-{c('cph_proveedor_mxn')}-{c('comisiones_mxn')},2)"
+        # REMANENTE VENTA MENOS COMPRA [AI] = round2(L − Y): la definición del
+        # cliente, antes de comisiones (7-oct-2026: el Balance general ya no
+        # las resta en la hoja de vuelos).
+        return f"ROUND({c('total_mxn')}-{c('cph_proveedor_mxn')},2)"
     return None
 
 
@@ -995,11 +1083,16 @@ def _comentario_cobro(texto: str) -> Comment:
 # 2026 (por fecha del vuelo: clave `comisiones_al_avion_desde` del API). Los
 # números los calcula el API (fuente única `comisionesDelVuelo`, la misma del
 # reparto a socios); aquí solo se pintan: la columna COMISIÓN VENDEDOR MXN
-# pasa a COMISIONES MXN (misma posición; en el Balance general, al final del
-# bloque COSTO POR HORA) con la nota `comisiones_detalle`, y GANANCIA
-# (mensual) / REMANENTE VENTA MENOS COMPRA (general) la restan cuando la fila
-# la trae. Sin los campos nuevos (API ≤ 0.0.64) el libro sale como siempre
-# salvo los encabezados y sus textos.
+# pasa a COMISIONES MXN (misma posición) con la nota `comisiones_detalle`, y
+# GANANCIA la resta cuando la fila la trae. Sin los campos nuevos (API ≤
+# 0.0.64) el libro sale como siempre salvo los encabezados y sus textos.
+# 7-oct-2026 (API 0.0.66, pedido: «estas comisiones se están duplicando en
+# la general, ya que las tenemos en "Otros movimientos". Las comisiones deben
+# aparecer en ese apartado pero en el individual de los avioncitos»): la
+# columna vive SOLO en el libro INDIVIDUAL. La hoja de vuelos del Balance
+# general (las dos variantes) va sin ella y antes de comisiones; sus notas
+# (`_COMISIONES_FUERA_DE_LA_HOJA`, `_NOTA_COMISIONES_FLOTA`) dicen dónde
+# quedaron: en el libro individual y en la cascada de la hoja 'balance'.
 _NOTA_ENCABEZADO_COMISIONES = (
     "COMISIONES (regla de septiembre 2026, por fecha del vuelo) = lo que "
     "absorbe el avión: su parte de la comisión bancaria de los cobros del "
@@ -1008,15 +1101,32 @@ _NOTA_ENCABEZADO_COMISIONES = (
     "concepto, comisión + IVA). La nota de cada celda dice cuáles son. "
     "Vuelos anteriores: vacía (la comisión era de VuelaTour)."
 )
+# Hoja de vuelos del Balance GENERAL sin COMISIONES (7-oct-2026): las notas
+# de encabezado de GANANCIA MXN (variante mensual) y de REMANENTE VENTA MENOS
+# COMPRA (variante general) dicen que van antes de comisiones y dónde están.
+_COMISIONES_FUERA_DE_LA_HOJA = (
+    "Las comisiones que absorbe cada avión (regla de septiembre 2026, por "
+    "fecha del vuelo: su parte de la comisión bancaria de sus cobros y la "
+    "comisión del vendedor como PROVISIÓN) no van en esta hoja: están en la "
+    "columna COMISIONES del libro individual de cada avión y ya van restadas "
+    "en la cascada de cada avión de la hoja 'balance'."
+)
+_NOTA_ENCABEZADO_GANANCIA_FLOTA = (
+    "GANANCIA (MXN y su equivalente en USD) = REMANENTE (VENTA − COSTO "
+    "TOTAL), antes de comisiones. " + _COMISIONES_FUERA_DE_LA_HOJA
+)
 _NOTA_ENCABEZADO_REMANENTE = (
     "REMANENTE VENTA MENOS COMPRA = VENTA AVIÓN MXN − TOTAL PARA PROVEEDOR "
-    "(PESOS) − COMISIONES MXN (última columna del bloque): lo que le queda al "
-    "avión después de comisiones, la GANANCIA de la fila. En una fila sin "
-    "comisiones es VENTA − PROVEEDOR, como siempre."
+    "(PESOS), antes de comisiones. " + _COMISIONES_FUERA_DE_LA_HOJA
 )
-# Nota al pie de la hoja de vuelos (las dos variantes): le sigue el fragmento
-# del pago al vendedor (`_MAESTRA_PAGO_VENDEDOR_*`, según la bandera) y la
-# frase de GANANCIA (mensual) o de REMANENTE (general).
+# Llave de la columna → nota de su encabezado en una hoja SIN COMISIONES.
+_NOTAS_ENCABEZADO_SIN_COMISIONES = {
+    "ganancia_mxn": _NOTA_ENCABEZADO_GANANCIA_FLOTA,
+    "cph_remanente_mxn": _NOTA_ENCABEZADO_REMANENTE,
+}
+# Nota al pie de la hoja de vuelos del libro INDIVIDUAL: le sigue el
+# fragmento del pago al vendedor (`_MAESTRA_PAGO_VENDEDOR_PROVISION`) y la
+# frase de GANANCIA.
 _NOTA_COMISIONES = (
     "COMISIONES MXN (regla de septiembre 2026, por fecha del vuelo) = lo que "
     "absorbe el avión: su parte de la comisión bancaria de los cobros y la "
@@ -1027,6 +1137,24 @@ _NOTA_COMISIONES = (
     "VuelaTour; ambos viven en 'otros movimientos' "
 )
 _NOTA_GANANCIA = " GANANCIA de la fila = REMANENTE (VENTA − COSTO TOTAL) − COMISIONES."
+# Su versión en el Balance GENERAL (las dos variantes, 7-oct-2026): la hoja no
+# lleva COMISIONES; el pago al vendedor lo explica la leyenda de 'otros
+# movimientos'. Le sigue la frase de GANANCIA (mensual) o de REMANENTE
+# (general, `_CPH_NOTA_REMANENTE`).
+_NOTA_COMISIONES_FLOTA = (
+    "COMISIONES (regla de septiembre 2026, por fecha del vuelo): las que "
+    "absorbe cada avión —su parte de la comisión bancaria de sus cobros y la "
+    "comisión del vendedor como PROVISIÓN— no van en esta hoja: están en la "
+    "columna COMISIONES del libro individual de cada avión (Reportes › Balance "
+    "por avión) y ya van restadas en la cascada de cada avión de la hoja "
+    "'balance'. Lo cobrado al cliente por la comisión del vendedor es ingreso "
+    "de VuelaTour: ese ingreso, el pago al vendedor y la parte de VuelaTour de "
+    "la comisión bancaria viven en 'otros movimientos' (su leyenda explica "
+    "cada línea)."
+)
+_NOTA_GANANCIA_FLOTA = (
+    " GANANCIA de la fila = REMANENTE (VENTA − COSTO TOTAL), antes de comisiones."
+)
 # Cómo se nombra la regla en los textos de arriba (y en `_RESUMEN_COMISIONES`,
 # `_NOTA_COBRADO_REAL` y `_NOTA_COBRANZA_NETO`) cuando el API no manda su
 # etiqueta: la vigencia por defecto. `_con_regla` pone la del API.
@@ -1056,6 +1184,18 @@ def _regla_del_general(req: BalanceGeneralRequest) -> str | None:
     return req.consolidado.regla_comisiones if req.consolidado is not None else None
 
 
+def _avion_cubre_al_vendedor(req: BalanceGeneralRequest) -> bool:
+    """¿El payload es del API 0.0.66 (7-oct-2026)? Desde ese API la línea de
+    INGRESO «comisión del vendedor a cargo del avión …» de 'otros
+    movimientos' ya no viaja (duplicaba la comisión, pedido del cliente) y,
+    en los vuelos COMPLETADOS de la regla, el pago al vendedor dice
+    «cubierto por el avión» (solo resta lo que el pago real exceda la
+    provisión). La señal es el campo que ese mismo API agrega a la cascada de
+    los aviones, `balance.comisiones_usd`: sin él (API 0.0.65), las leyendas
+    de antes."""
+    return any(a.balance.comisiones_usd is not None for a in req.aviones)
+
+
 def _regla_vigente(cons: BalanceAvionRequest) -> str | None:
     """Nombre de la regla si el libro trae vuelos de ella, o None. El API
     manda `comisiones_mxn` en los totales SOLO si alguna fila de avión cae en
@@ -1067,23 +1207,53 @@ def _regla_vigente(cons: BalanceAvionRequest) -> str | None:
 
 
 # Aclaraciones cuando el periodo trae vuelos de la regla (el API manda
-# COMISIONES en los totales del consolidado: `_regla_vigente`). La pestaña
-# 'otros movimientos' gana, por avión, una línea de INGRESO «comisión del
-# vendedor a cargo del avión …» (la provisión que el avión le paga a
-# VuelaTour, no el cliente) y su comisión bancaria es solo la parte de
+# COMISIONES en los totales del consolidado: `_regla_vigente`). Con el API
+# 0.0.65 la pestaña 'otros movimientos' gana, por avión, una línea de INGRESO
+# «comisión del vendedor a cargo del avión …» (la provisión que el avión le
+# paga a VuelaTour, no el cliente) y su comisión bancaria es solo la parte de
 # VuelaTour; la leyenda de la fila 2 y la base del bloque VUELATOUR (empresa)
-# lo dicen. Sin vuelos de la regla, los textos de siempre.
+# lo dicen. Sin vuelos de la regla, los textos de siempre. El API 0.0.66
+# cambia esa pestaña: ver `_OM_REGLA_COMISIONES_CUBRE_AVION`.
 _OM_REGLA_COMISIONES = (
     " Con la {regla} (por fecha del vuelo) la fila del vuelo trae además una "
     "línea de INGRESO «comisión del vendedor a cargo del avión …»: la "
     "provisión que cada avión le paga a VuelaTour (no la paga el cliente), y "
     "la comisión bancaria de aquí es solo la parte de VuelaTour (la del avión "
-    "resta en su columna COMISIONES de la hoja de vuelos)."
+    "resta en la columna COMISIONES de su libro individual)."
 )
 _EMPRESA_REGLA_COMISIONES = (
     " Con la {regla} (por fecha del vuelo), los ingresos propios incluyen "
     "además la provisión de la comisión del vendedor que paga cada avión y, "
     "de la comisión bancaria, los egresos solo traen la parte de VuelaTour."
+)
+# API 0.0.66 (7-oct-2026; pedido: «en el reporte mensual y en el balance
+# general, en "otros movimientos", en el ingreso estás duplicando la
+# comisión»): la línea de INGRESO «… a cargo del avión» ya no viaja (la fila
+# del vuelo trae lo cobrado al cliente UNA vez) y, en los vuelos COMPLETADOS
+# de la regla, el pago al vendedor dice «cubierto por el avión»: solo resta lo
+# que el pago real exceda la provisión que ya carga el avión. Las dos
+# leyendas (y el RESUMEN, tras su fragmento del pago apareado) lo dicen
+# cuando el payload es de ese API (`_avion_cubre_al_vendedor`); con uno
+# anterior, las de arriba.
+_OM_REGLA_COMISIONES_CUBRE_AVION = (
+    " Con la {regla} (por fecha del vuelo), en los vuelos COMPLETADOS la "
+    "comisión del vendedor la cubre el avión con su PROVISIÓN: el pago al "
+    "vendedor dice «cubierto por el avión» y aquí solo resta lo que el pago "
+    "real exceda esa provisión; la comisión bancaria de aquí es solo la parte "
+    "de VuelaTour. Lo que absorbe cada avión (la provisión y su parte de la "
+    "comisión bancaria) resta en la columna COMISIONES de su libro individual "
+    "y en la cascada de la hoja 'balance'."
+)
+_EMPRESA_REGLA_COMISIONES_CUBRE_AVION = (
+    " Con la {regla} (por fecha del vuelo), en los vuelos completados el pago "
+    "al vendedor lo cubre cada avión con su provisión (los egresos propios "
+    "solo traen lo que el pago real la exceda) y, de la comisión bancaria, los "
+    "egresos solo traen la parte de VuelaTour."
+)
+_RESUMEN_REGLA_CUBRE_AVION = (
+    " Con la {regla} (por fecha del vuelo), en los vuelos completados ese pago "
+    "lo cubre el avión con su provisión: en 'otros movimientos' solo queda lo "
+    "que el pago real la exceda."
 )
 # «N conceptos» que encabeza la nota cuando hay más de una comisión (si el API
 # ya lo trae en el detalle, no se repite).
@@ -1154,12 +1324,15 @@ def _nota_tc_oficial(v: BalanceAvionVuelo) -> str:
 # Comisión del vendedor como GASTO (28-sep-2026, API 0.0.39, invariante 31
 # del API): el gasto real «Comisión del vendedor» ligado al vuelo REEMPLAZA a
 # la PROVISIÓN en 'otros movimientos' (concepto y nota llegan hechos del API).
-# Las 3 leyendas del Balance GENERAL que hablan de la provisión (fila 2 de
-# 'otros movimientos', nota del RESUMEN y nota de la hoja maestra) cambian
-# SOLO con `otros_movimientos.hay_pago_vendedor_real` (el API la manda solo si
-# algún vuelo del periodo tiene pago real). Sin ella el texto de siempre
-# —verdadero mientras no haya gasto real— y el libro sale byte-idéntico. El
-# libro INDIVIDUAL no trae 'otros movimientos': su nota no cambia nunca.
+# Las leyendas del Balance GENERAL que hablan de la provisión (fila 2 de
+# 'otros movimientos' y nota del RESUMEN) cambian SOLO con
+# `otros_movimientos.hay_pago_vendedor_real` (el API la manda solo si algún
+# vuelo del periodo tiene pago real). Sin ella el texto de siempre
+# —verdadero mientras no haya gasto real—. Hasta el 7-oct-2026 también la
+# nota de la hoja de vuelos del general; desde entonces esa nota no habla
+# del pago al vendedor (remite a la leyenda de 'otros movimientos',
+# `_NOTA_COMISIONES_FLOTA`). El libro INDIVIDUAL no trae 'otros
+# movimientos': su nota no cambia nunca (`_MAESTRA_PAGO_VENDEDOR_PROVISION`).
 _OM_PAGO_VENDEDOR_PROVISION = (
     "el pago de la comisión al vendedor va apareado en la "
     "misma fila como PROVISIÓN a la fecha del vuelo mientras no exista el "
@@ -1176,14 +1349,19 @@ _OM_PAGO_VENDEDOR_REAL = (
 )
 # Nota del RESUMEN sobre COMISIONES (6-oct-2026, API 0.0.65; antes
 # «COMISIONES VENDEDOR va vacía a propósito»): le sigue el fragmento de la
-# bandera (`_RESUMEN_PAGO_VENDEDOR_*`).
+# bandera (`_RESUMEN_PAGO_VENDEDOR_*`) y, con el API 0.0.66,
+# `_RESUMEN_REGLA_CUBRE_AVION`. Desde el 7-oct-2026 la columna COMISIONES
+# es la del libro INDIVIDUAL de cada avión: la hoja de vuelos de este libro ya
+# no la lleva (el RESUMEN conserva la suya).
 _RESUMEN_COMISIONES = (
-    "COMISIONES = las de la columna COMISIONES de la hoja de vuelos de cada "
+    "COMISIONES = las de la columna COMISIONES del libro individual de cada "
     "avión (regla de septiembre 2026, por fecha del vuelo: su parte de la "
     "comisión bancaria de los cobros y la comisión del vendedor como "
-    "PROVISIÓN; en vuelos anteriores no hay). Lo cobrado al cliente por la "
-    "comisión del vendedor sigue siendo INGRESO de VuelaTour y su pago al "
-    "vendedor sale de VuelaTour; los dos viven en 'otros movimientos' "
+    "PROVISIÓN; en vuelos anteriores no hay); en este libro no van en la hoja "
+    "de vuelos (ahí la GANANCIA va antes de comisiones): restan aquí y en la "
+    "cascada de cada avión de la hoja 'balance'. Lo cobrado al cliente por la "
+    "comisión del vendedor sigue siendo INGRESO de VuelaTour; ese ingreso y el "
+    "pago al vendedor viven en 'otros movimientos' "
 )
 _RESUMEN_PAGO_VENDEDOR_PROVISION = (
     "(ingreso cobrado y pago apareado como PROVISIÓN a la fecha del vuelo)."
@@ -1194,10 +1372,6 @@ _RESUMEN_PAGO_VENDEDOR_REAL = (
 )
 _MAESTRA_PAGO_VENDEDOR_PROVISION = (
     "(el pago apareado como PROVISIÓN a la fecha del vuelo)."
-)
-_MAESTRA_PAGO_VENDEDOR_REAL = (
-    "(el pago apareado: el gasto real «Comisión del vendedor» o, mientras no "
-    "se capture, la PROVISIÓN a la fecha del vuelo)."
 )
 
 
@@ -1224,7 +1398,7 @@ _NOTA_VENTA_AVION = (
     "son venta del avión: son ingreso de VuelaTour (pestaña 'otros "
     "movimientos' del Balance general). Sin cotización: horas × tarifa."
 )
-_NOTA_COBRADO_REAL = (
+_NOTA_COBRADO_REAL_INICIO = (
     "**** COBRADO REAL = Σ de los depósitos tal cual entraron a la cuenta "
     "(COBRO 1..4): desde septiembre 2026 cada COBRO va NETO de la comisión "
     "del banco (la nota de la celda trae bruto, comisión y neto). COBRADO "
@@ -1232,10 +1406,20 @@ _NOTA_COBRADO_REAL = (
     "comisiones: la parte de los cobros que corresponde a TUAs/extras/"
     "pernocta/comisión del vendedor es de VuelaTour (ver 'otros "
     "movimientos') y las comisiones que absorbe el avión restan aparte, en "
-    "COMISIONES. POR COBRAR es la parte del avión. COBRADO AVIÓN y POR "
+)
+_NOTA_COBRADO_REAL_FIN = (
+    ". POR COBRAR es la parte del avión. COBRADO AVIÓN y POR "
     "COBRAR van al TC de venta (un depósito en pesos con su propio TC se "
     "pasa a USD con ese TC y se re-expresa al TC de venta), así que COBRADO "
     "AVIÓN puede diferir de COBRADO REAL sin que falte dinero."
+)
+_NOTA_COBRADO_REAL = _NOTA_COBRADO_REAL_INICIO + "COMISIONES" + _NOTA_COBRADO_REAL_FIN
+# Balance GENERAL (7-oct-2026): su hoja de vuelos ya no lleva COMISIONES.
+_COMISIONES_EN_EL_INDIVIDUAL = (
+    "la columna COMISIONES del libro individual de cada avión y en la cascada de la hoja 'balance'"
+)
+_NOTA_COBRADO_REAL_FLOTA = (
+    _NOTA_COBRADO_REAL_INICIO + _COMISIONES_EN_EL_INDIVIDUAL + _NOTA_COBRADO_REAL_FIN
 )
 _NOTA_ESTATUS_COBRO = (
     "El ESTATUS DE COBRO por vuelo (cuánto se cobró, con qué fechas y "
@@ -1356,10 +1540,11 @@ _CPH_NOTA_BLOQUE = (
     "la celda y, por columna, en el Balance mensual. TIPO CAMBIO = el de los "
     "costos del vuelo."
 )
+# 7-oct-2026: la definición del cliente, antes de comisiones (la hoja ya no
+# las lleva; `_NOTA_COMISIONES_FLOTA` dice dónde están).
 _CPH_NOTA_REMANENTE = (
     " REMANENTE VENTA MENOS COMPRA = VENTA AVIÓN MXN − TOTAL PARA PROVEEDOR "
-    "(PESOS) − COMISIONES MXN (última columna del bloque): lo que le queda al "
-    "avión después de comisiones."
+    "(PESOS), antes de comisiones."
 )
 _CPH_NOTA_TOTALES = (
     "Fila TOTALES: TIPO CAMBIO COSTOS, TIPO CAMBIO y COSTO HR MÁS IVA son "
@@ -1478,17 +1663,14 @@ def _notas_pie_costo_por_hora(req: BalanceAvionRequest, hay_extension: bool) -> 
     que siguen siendo verdad tal cual y, en lugar de las que nombran
     columnas que la variante ya no tiene, su versión con las columnas del
     bloque COSTO POR HORA, en el mismo orden; la del bloque nuevo va después
-    de la de VENTA."""
-    pago_vendedor = (
-        _MAESTRA_PAGO_VENDEDOR_REAL
-        if _hay_pago_vendedor_real(req.otros_movimientos)
-        else _MAESTRA_PAGO_VENDEDOR_PROVISION
-    )
+    de la de VENTA. Las de COMISIONES y COBRADO REAL son las del Balance
+    general (7-oct-2026): la hoja no lleva COMISIONES y REMANENTE va antes de
+    ellas."""
     return (
         _NOTA_VENTA_AVION,
         _CPH_NOTA_BLOQUE,
-        _con_regla(_NOTA_COMISIONES, req.regla_comisiones) + pago_vendedor + _CPH_NOTA_REMANENTE,
-        _con_regla(_NOTA_COBRADO_REAL, req.regla_comisiones),
+        _con_regla(_NOTA_COMISIONES_FLOTA, req.regla_comisiones) + _CPH_NOTA_REMANENTE,
+        _con_regla(_NOTA_COBRADO_REAL_FLOTA, req.regla_comisiones),
         _CPH_NOTA_TOTALES,
         _NOTA_ESTATUS_COBRO,
         _NOTA_FACTURA_VUELATOUR,
@@ -1573,9 +1755,19 @@ def _hoja_maestra(
     # `costo_por_hora` (6-oct-2026, API 0.0.64; solo con `general`): la
     # variante «Balance general» — columnas `_COLS_GENERAL` (COSTO TOTAL y el
     # bloque COSTO POR HORA en lugar de operaciones/piloto/otros/AFAC e
-    # indicadores). Sin ella, el libro de siempre (Balance mensual),
-    # byte-idéntico.
-    disp = _DISP_GENERAL if general and costo_por_hora else _DISP_MENSUAL
+    # indicadores). Sin ella, el Balance mensual: las columnas de siempre.
+    # Desde el 7-oct-2026 (API 0.0.66) las dos variantes del general van SIN
+    # la columna COMISIONES (`_COLS_FLOTA` / `_COLS_GENERAL`) y la hoja se
+    # pinta antes de comisiones (`_antes_de_comisiones`); el libro INDIVIDUAL
+    # conserva `_COLS` tal cual.
+    if not general:
+        disp = _DISP_MENSUAL
+    elif costo_por_hora:
+        disp = _DISP_GENERAL
+    else:
+        disp = _DISP_FLOTA
+    if disp.comision_col is None:
+        req = _antes_de_comisiones(req)
     cols = disp.cols
     ws.title = sheet_title(f"reporte horas {req.matricula}")
     n = len(cols)
@@ -1612,17 +1804,21 @@ def _hoja_maestra(
     ws.row_dimensions[2].height = 38
     # COMISIONES (6-oct-2026, API 0.0.65; antes COMISIÓN VENDEDOR, vacía
     # desde el 28-ago-2026): la nota del encabezado explica la regla de
-    # septiembre 2026 en las dos variantes. En la general, REMANENTE VENTA
-    # MENOS COMPRA lleva la suya: ya va después de comisiones.
+    # septiembre 2026 en el libro INDIVIDUAL, el único que la lleva desde el
+    # 7-oct-2026. En el Balance general, GANANCIA MXN (mensual) y REMANENTE
+    # VENTA MENOS COMPRA (general) dicen que van antes de comisiones y dónde
+    # quedaron.
     if disp.comision_col is not None:
         ws.cell(row=2, column=disp.comision_col).comment = _comentario_cobro(
             _con_regla(_NOTA_ENCABEZADO_COMISIONES, req.regla_comisiones)
         )
-    col_remanente = next(
-        (i for i, c in enumerate(cols, start=1) if c[2] == "cph_remanente_mxn"), None
-    )
-    if col_remanente is not None:
-        ws.cell(row=2, column=col_remanente).comment = _comentario_cobro(_NOTA_ENCABEZADO_REMANENTE)
+    else:
+        for i, c in enumerate(cols, start=1):
+            nota_encabezado = _NOTAS_ENCABEZADO_SIN_COMISIONES.get(c[2] or "")
+            if nota_encabezado:
+                ws.cell(row=2, column=i).comment = _comentario_cobro(
+                    _con_regla(nota_encabezado, req.regla_comisiones)
+                )
     hay_afac = _constantes_maestra(ws, req, general, costo_por_hora=disp.costo_por_hora)
     # Fila sin TC de costos: GANANCIA USD divide entre el TC promedio CRUDO
     # del libro (z ?? tcPromedio del API).
@@ -1920,16 +2116,24 @@ def _hoja_maestra(
     hay_extension = _hay_extension_pagada(req)
 
     # Notas al pie (las de la variante general: `_notas_pie_costo_por_hora`).
+    # COMISIONES / GANANCIA y COBRADO REAL: las del libro INDIVIDUAL, que lleva
+    # la columna, o las del Balance general (7-oct-2026), que ya no la lleva.
+    if disp.comision_col is not None:
+        nota_comisiones = (
+            _con_regla(_NOTA_COMISIONES, req.regla_comisiones)
+            + _MAESTRA_PAGO_VENDEDOR_PROVISION
+            + _NOTA_GANANCIA
+        )
+        nota_cobrado_real = _con_regla(_NOTA_COBRADO_REAL, req.regla_comisiones)
+    else:
+        nota_comisiones = (
+            _con_regla(_NOTA_COMISIONES_FLOTA, req.regla_comisiones) + _NOTA_GANANCIA_FLOTA
+        )
+        nota_cobrado_real = _con_regla(_NOTA_COBRADO_REAL_FLOTA, req.regla_comisiones)
     notas_pie = (
         _NOTA_VENTA_AVION,
-        _con_regla(_NOTA_COMISIONES, req.regla_comisiones)
-        + (
-            _MAESTRA_PAGO_VENDEDOR_REAL
-            if general and _hay_pago_vendedor_real(req.otros_movimientos)
-            else _MAESTRA_PAGO_VENDEDOR_PROVISION
-        )
-        + _NOTA_GANANCIA,
-        _con_regla(_NOTA_COBRADO_REAL, req.regla_comisiones),
+        nota_comisiones,
+        nota_cobrado_real,
         "TIPO CAMBIO COSTOS y COSTO X HORA USD de la fila TOTALES son PROMEDIOS "
         "(los demás son sumas).",
         _NOTA_ESTATUS_COBRO,
@@ -2164,14 +2368,23 @@ def _fusionar_hojas_gastos(
 # REAL llega NETO del API; el detalle pinta el neto con el bruto al lado y
 # la nota de abajo lo explica — SOLO si algún cobro trae `neto_mxn` (sin él,
 # la hoja de siempre).
-_NOTA_COBRANZA_NETO = (
+_NOTA_COBRANZA_NETO_INICIO = (
     "Desde septiembre 2026 COBRADO REAL va NETO: lo que entró a la cuenta ya "
     "sin la comisión que retuvo el banco (el detalle trae neto y bruto; la "
     "comisión sigue en COMISIÓN BANCO MXN). COBRADO sigue siendo la parte del "
     "avión de los cobros BRUTOS, antes de comisiones: la parte de la comisión "
-    "que absorbe el avión resta en la columna COMISIONES de la hoja de vuelos "
+    "que absorbe el avión resta en la columna COMISIONES "
+)
+_NOTA_COBRANZA_NETO = _NOTA_COBRANZA_NETO_INICIO + (
+    "de la hoja de vuelos "
     "y la de VuelaTour (toda, en un vuelo EXTERNOS) queda en 'otros "
     "movimientos' del Balance general."
+)
+# En el Balance general (7-oct-2026) su hoja de vuelos ya no lleva COMISIONES.
+_NOTA_COBRANZA_NETO_FLOTA = _NOTA_COBRANZA_NETO_INICIO + (
+    "del libro individual de cada avión (en este libro, en la cascada de la "
+    "hoja 'balance') y la de VuelaTour (toda, en un vuelo EXTERNOS) queda en "
+    "'otros movimientos'."
 )
 
 
@@ -2190,13 +2403,15 @@ def _monto_detalle_cobranza(c: BalanceAvionCobro) -> str | None:
     return f"${c.neto_mxn:,.2f} neto (bruto ${c.monto_mxn:,.2f})"
 
 
-def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
+def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = False) -> None:
     """Hoja 'cobranza' (26-ago-2026 · regla 28-ago): el estatus de cobro POR
     VUELO al frente — cuánto se debía cobrar (VENTA DEL AVIÓN), cuánto YA se
     cobró (prorrateado al avión) y cuánto falta; más el TOTAL COTIZACIÓN
     (c/extras), los depósitos REALES, la comisión que retuvo el banco y la
     cuenta que recibió cada parcialidad. Los mismos números del bloque
-    STATUS DE COBROS del final de la hoja maestra, en formato legible."""
+    STATUS DE COBROS del final de la hoja maestra, en formato legible.
+    `general` (7-oct-2026) solo cambia la nota de los netos: en el Balance
+    general la columna COMISIONES ya no está en su hoja de vuelos."""
     n_cols = 13
     # Ancho (en caracteres) de la columna DETALLE DE COBROS: sirve para
     # estimar cuántos renglones envuelve cada parcialidad y no recortar.
@@ -2386,7 +2601,16 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest) -> None:
         "realmente cobrado y retenido (cargo por cancelación / anticipo no "
         "reembolsado; también repartido si fue multi-avión) — sin "
         "pendiente; sus gastos cuentan igual.",
-        *((_con_regla(_NOTA_COBRANZA_NETO, req.regla_comisiones),) if _hay_netos(req) else ()),
+        *(
+            (
+                _con_regla(
+                    _NOTA_COBRANZA_NETO_FLOTA if general else _NOTA_COBRANZA_NETO,
+                    req.regla_comisiones,
+                ),
+            )
+            if _hay_netos(req)
+            else ()
+        ),
     ):
         ws.cell(row=row, column=1, value=nota).font = Font(
             color=MUTED, size=9, italic=True
@@ -2567,6 +2791,32 @@ def _hoja_balance(ws: Worksheet, req: BalanceAvionRequest,
 
 # Etiqueta de la fila ÚNICA de indirectos en la cascada (2-sep-2026).
 _FILA_INDIRECTOS = "(−) GASTOS INDIRECTOS USD"
+# COMISIONES visibles en la cascada del Balance GENERAL (7-oct-2026, API
+# 0.0.66): la hoja de vuelos de ese libro va antes de comisiones, así que el
+# bloque de cada avión arranca antes de ellas y las resta en una línea; de
+# UTILIDAD ANTES DE GASTOS para abajo, los números de siempre del API (los de
+# su libro individual y los del reparto a socios).
+_FILA_ANTES_COMISIONES = "UTILIDAD ANTES DE GASTOS USD (antes de comisiones)"
+_FILA_COMISIONES = "(−) COMISIONES (banco + vendedor) USD"
+_NOTA_CASCADA_ANTES_COMISIONES = (
+    "Utilidad de los vuelos del avión ANTES de comisiones = UTILIDAD ANTES DE "
+    "GASTOS + COMISIONES (la hoja de vuelos de este libro va antes de "
+    "comisiones)."
+)
+_NOTA_CASCADA_COMISIONES = (
+    "Comisiones que absorbe el avión (regla de septiembre 2026, por fecha del "
+    "vuelo): su parte de la comisión bancaria de sus cobros y la provisión de "
+    "la comisión del vendedor, en USD — las de la columna COMISIONES de su "
+    "libro individual. Son las mismas que descuenta el reparto a socios."
+)
+
+
+def _cascada_con_comisiones(b: BalanceAvionBalanceBloque) -> bool:
+    """¿La cascada del avión en el Balance GENERAL lleva las dos líneas de
+    COMISIONES? Solo si el API las manda (0.0.66: `comisiones_usd` y
+    `utilidad_antes_comisiones_usd`) y son ≠ 0: sin comisiones no hay nada
+    que restar y la cascada es la de siempre (un API previo, agosto)."""
+    return b.utilidad_antes_comisiones_usd is not None and _monto_no_cero(b.comisiones_usd)
 
 
 def _nota_otros_en_indirectos(otros_usd: float, general: bool) -> Comment:
@@ -2631,10 +2881,16 @@ class _CeldaSocioEmpresa:
     monto_usd: float | None
 
 
-def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int, *,
-                    general: bool = False,
-                    refs: dict[str, str] | None = None,
-                    celdas_empresa: list[_CeldaSocioEmpresa] | None = None) -> int:
+def _bloque_balance(
+    ws: Worksheet,
+    req: BalanceAvionRequest,
+    row: int,
+    *,
+    general: bool = False,
+    refs: dict[str, str] | None = None,
+    celdas_empresa: list[_CeldaSocioEmpresa] | None = None,
+    regla: str | None = None,
+) -> int:
     """Bloque utilidad + reparto de socios de UN avión, empezando en `row`.
     Devuelve la siguiente fila libre (el balance GENERAL apila un bloque por
     avión — los socios son POR avión, no hay un reparto de flota).
@@ -2659,19 +2915,40 @@ def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int, *,
     `celdas_empresa` (6-oct-2026, solo el GENERAL): lista ACUMULADA a la que
     se agrega la celda MONTO USD de cada socio `es_empresa` de este bloque —
     el bloque «VUELATOUR (empresa)» del final la cita con fórmula. No cambia
-    nada de lo que se pinta."""
+    nada de lo que se pinta.
+    COMISIONES en el GENERAL (7-oct-2026, API 0.0.66; pedido del cliente: las
+    comisiones se duplicaban en el general): su hoja de vuelos va antes de
+    comisiones, así que con `general` y comisiones del API
+    (`_cascada_con_comisiones`) el bloque abre con «UTILIDAD ANTES DE GASTOS
+    USD (antes de comisiones)» y «(−) COMISIONES (banco + vendedor) USD»
+    (valores del API, con nota; `regla` = la etiqueta de la regla para la
+    nota) y UTILIDAD ANTES DE GASTOS = ROUND(antes − comisiones, 2) — el
+    número del API de siempre: de ahí para abajo nada cambia, ni un centavo.
+    El libro INDIVIDUAL nunca las pinta (ya restan en su columna
+    COMISIONES)."""
     b = req.balance
     refs = refs or {}
     fila_ini = row
-    # Filas de la cascada: 0 antes, 1 combustible, 2 indirectos, 3
-    # refacciones, 4 permisos, 5 después, 6 pendiente, 7 cobrada.
-    despues = (
-        f"ROUND(B{fila_ini}-B{fila_ini + 1}-B{fila_ini + 2}-B{fila_ini + 3}"
-        f"-B{fila_ini + 4},2)"
-    )
-    cobrada = f"ROUND(B{fila_ini + 5}-B{fila_ini + 6},2)"
-    fila_cobrada = fila_ini + 7
+    previas: list[tuple[str, float | None, bool]] = []
+    if general and _cascada_con_comisiones(b):
+        previas = [
+            (_FILA_ANTES_COMISIONES, b.utilidad_antes_comisiones_usd, False),
+            (_FILA_COMISIONES, b.comisiones_usd, False),
+        ]
+    notas_previas = {
+        _FILA_ANTES_COMISIONES: _NOTA_CASCADA_ANTES_COMISIONES,
+        _FILA_COMISIONES: _con_regla(_NOTA_CASCADA_COMISIONES, regla),
+    }
+    antes = f"ROUND(B{fila_ini}-B{fila_ini + 1},2)" if previas else None
+    # Filas de la cascada desde UTILIDAD ANTES DE GASTOS (`k`): 0 antes, 1
+    # combustible, 2 indirectos, 3 refacciones, 4 permisos, 5 después, 6
+    # pendiente, 7 cobrada.
+    k = fila_ini + len(previas)
+    despues = f"ROUND(B{k}-B{k + 1}-B{k + 2}-B{k + 3}-B{k + 4},2)"
+    cobrada = f"ROUND(B{k + 5}-B{k + 6},2)"
+    fila_cobrada = k + 7
     filas: list[tuple[str, float | None, bool]] = [
+        *previas,
         ("UTILIDAD ANTES DE GASTOS USD", b.utilidad_antes_usd, False),
         ("(−) COMBUSTIBLE DEL MES USD", b.combustible_usd, False),
         # Indirectos + otros (reparto manual) en UNA fila — solo se muestran
@@ -2690,6 +2967,10 @@ def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int, *,
         lc = ws.cell(row=row, column=1, value=label)
         lc.font = Font(bold=bold, color=NAVY if bold else MUTED)
         lc.border = _border
+        if label in notas_previas and len(label) > _ANCHO_ETIQUETA_BALANCE:
+            # Etiqueta larga: envuelve, como las del bloque VUELATOUR (empresa).
+            lc.alignment = Alignment(wrap_text=True, vertical="center")
+            ws.row_dimensions[row].height = 15 * math.ceil(len(label) / _ANCHO_ETIQUETA_BALANCE) + 1
         color = None
         if label.startswith("UTILIDAD COBRADA") and val is not None:
             color = GREEN if val >= 0 else RED
@@ -2697,6 +2978,8 @@ def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int, *,
             formula = despues
         elif label == "UTILIDAD COBRADA USD":
             formula = cobrada
+        elif label == "UTILIDAD ANTES DE GASTOS USD" and antes is not None:
+            formula = antes
         else:
             formula = refs.get(_CASCADA_REFS.get(label, ""))
         cell = _formula(
@@ -2706,6 +2989,8 @@ def _bloque_balance(ws: Worksheet, req: BalanceAvionRequest, row: int, *,
         cell.border = _border
         if label == _FILA_INDIRECTOS and b.otros_usd is not None and b.otros_usd != 0:
             cell.comment = _nota_otros_en_indirectos(b.otros_usd, general)
+        if label in notas_previas and val is not None:
+            cell.comment = _comentario_cobro(notas_previas[label])
         row += 1
 
     row += 1
@@ -2812,6 +3097,8 @@ def _bloque_empresa(
     row: int,
     celdas: list[_CeldaSocioEmpresa],
     regla_vigente: str | None = None,
+    *,
+    cubre_avion: bool = False,
 ) -> int:
     """Bloque «VUELATOUR (empresa)» de la hoja 'balance' del GENERAL, después
     del último bloque de avión (6-oct-2026). Mismo estilo que la cascada de
@@ -2828,7 +3115,8 @@ def _bloque_empresa(
     Ingresos propios, pagos al vendedor y tienda van como valor (salen de
     filas en MXN con el TC de cada vuelo, que no están en esta hoja). Con
     vuelos de la regla de comisiones a cargo del avión (`regla_vigente`) la
-    base del pie lo aclara (`_EMPRESA_REGLA_COMISIONES`).
+    base del pie lo aclara (`_EMPRESA_REGLA_COMISIONES`; con el API 0.0.66,
+    `cubre_avion`: `_EMPRESA_REGLA_COMISIONES_CUBRE_AVION`).
     Devuelve la siguiente fila libre."""
     t = ws.cell(row=row, column=1, value=_EMPRESA_TITULO)
     t.font = Font(bold=True, size=12, color="FFFFFF")
@@ -2933,9 +3221,10 @@ def _bloque_empresa(
 
     # Pie: la `nota` del API (base de cada línea con sus números) + la base
     # de 'otros movimientos'; sin `nota`, el pie fijo completo.
-    base = _NOTA_EMPRESA_BASE + (
-        _EMPRESA_REGLA_COMISIONES.format(regla=regla_vigente) if regla_vigente else ""
+    regla_empresa = (
+        _EMPRESA_REGLA_COMISIONES_CUBRE_AVION if cubre_avion else _EMPRESA_REGLA_COMISIONES
     )
+    base = _NOTA_EMPRESA_BASE + (regla_empresa.format(regla=regla_vigente) if regla_vigente else "")
     if emp.nota:
         for texto in (emp.nota, base):
             _pinta_nota_envuelta(ws, row, texto, 3, _ANCHO_HOJA_BALANCE)
@@ -3658,9 +3947,14 @@ def _fila_resumen(ws: Worksheet, row: int, f: BalanceGeneralResumenFila,
     _formula(ws, row, 12, _suma(12, 0), f.pendientes, "0", **negrita)
 
 
-def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
+def _hoja_resumen_general(
+    ws: Worksheet, req: BalanceGeneralRequest, regla_cubre_avion: str | None = None
+) -> None:
     """Índice de la flota: una fila por avión (los números vienen del API —
-    son los TOTALES del libro de cada avión, jamás se recalculan aquí)."""
+    son los TOTALES del libro de cada avión, jamás se recalculan aquí).
+    `regla_cubre_avion` (7-oct-2026): la etiqueta de la regla si el payload es
+    del API 0.0.66 y el periodo trae vuelos de ella — la nota de COMISIONES
+    dice entonces que el pago al vendedor lo cubre el avión."""
     ws.title = "RESUMEN flota"
     _title(
         ws,
@@ -3717,7 +4011,8 @@ def _hoja_resumen_general(ws: Worksheet, req: BalanceGeneralRequest) -> None:
             if req.consolidado is not None
             and _hay_pago_vendedor_real(req.consolidado.otros_movimientos)
             else _RESUMEN_PAGO_VENDEDOR_PROVISION
-        ),
+        )
+        + (_RESUMEN_REGLA_CUBRE_AVION.format(regla=regla_cubre_avion) if regla_cubre_avion else ""),
         "Vuelos multi-avión (regla 28-ago-2026): la VENTA se reparte entre "
         "las matrículas del vuelo en partes iguales por tramo vendido — los "
         "ferries/tramos operativos no reparten — (cada fila COMPARTIDO "
@@ -3779,7 +4074,11 @@ def _es_provision(f: BalanceOtroMovimientoFila) -> bool:
 
 
 def _hoja_otros_movimientos(
-    ws: Worksheet, hoja: BalanceHojaOtrosMovimientos, regla_vigente: str | None = None
+    ws: Worksheet,
+    hoja: BalanceHojaOtrosMovimientos,
+    regla_vigente: str | None = None,
+    *,
+    cubre_avion: bool = False,
 ) -> None:
     """Pestaña "Otros movimientos" (28-ago, réplica de la hoja manual
     "dinero otros ingresos"): conceptos cobrados al cliente vs pagados, por
@@ -3793,7 +4092,9 @@ def _hoja_otros_movimientos(
     `_LEYENDA_PROVISION` al pie (solo si alguna fila la trae). Con vuelos de
     la regla de comisiones a cargo del avión (`regla_vigente`, 6-oct-2026)
     la leyenda de la fila 2 explica la línea «a cargo del avión» y la parte
-    de VuelaTour de la comisión bancaria (`_OM_REGLA_COMISIONES`)."""
+    de VuelaTour de la comisión bancaria (`_OM_REGLA_COMISIONES`). Con el API
+    0.0.66 (`cubre_avion`, 7-oct-2026) esa línea ya no viaja y la leyenda
+    explica el pago «cubierto por el avión» (`_OM_REGLA_COMISIONES_CUBRE_AVION`)."""
     ws.cell(row=1, column=1, value="OTROS MOVIMIENTOS VUELATOUR").font = Font(
         bold=True, size=12, color=NAVY
     )
@@ -3807,7 +4108,13 @@ def _hoja_otros_movimientos(
             if _hay_pago_vendedor_real(hoja)
             else _OM_PAGO_VENDEDOR_PROVISION
         )
-        + (_OM_REGLA_COMISIONES.format(regla=regla_vigente) if regla_vigente else "")
+        + (
+            (_OM_REGLA_COMISIONES_CUBRE_AVION if cubre_avion else _OM_REGLA_COMISIONES).format(
+                regla=regla_vigente
+            )
+            if regla_vigente
+            else ""
+        )
         + " UNA FILA POR "
         "VUELO: los ingresos van sumados en una celda y los egresos en otra; "
         "el desglose concepto por concepto está en el COMENTARIO de cada "
@@ -3970,19 +4277,29 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
     `req.variante` (6-oct-2026, API 0.0.64): «general» cambia la hoja
     maestra (costo total + costo por hora, `_COLS_GENERAL`), las letras con
     que la citan las demás hojas y la nota de 'repartidos a aviones' (que
-    nombraba OPERACIONES); «mensual» o ausente = este libro tal cual,
-    byte-idéntico."""
+    nombraba OPERACIONES); «mensual» o ausente = la hoja de vuelos de
+    siempre.
+    7-oct-2026 (API 0.0.66; pedido: «estas comisiones se están duplicando en
+    la general»): la hoja de vuelos de las dos variantes va SIN la columna
+    COMISIONES y antes de comisiones (`_COLS_FLOTA` / `_COLS_GENERAL`,
+    `_antes_de_comisiones`); la cascada de cada avión de 'balance' las
+    muestra en dos líneas cuando el API manda `balance.comisiones_usd`, y las
+    leyendas de 'otros movimientos', RESUMEN y bloque VUELATOUR (empresa)
+    explican el pago «cubierto por el avión» de ese API."""
     wb = Workbook()
-    _hoja_resumen_general(wb.active, req)
     cons = req.consolidado
     # Nombre de la regla de comisiones (6-oct-2026, ADITIVO): si el API lo
     # manda solo en el request, las hojas de la flota lo usan igual.
     if cons is not None and cons.regla_comisiones is None and req.regla_comisiones:
         cons = cons.model_copy(update={"regla_comisiones": req.regla_comisiones})
+    # ¿El periodo trae vuelos de la regla? ⇒ aclaraciones en 'otros
+    # movimientos', en el RESUMEN y en el bloque VUELATOUR (empresa); con el
+    # API 0.0.66 (`_avion_cubre_al_vendedor`), las del pago al vendedor
+    # «cubierto por el avión».
+    regla_vigente = _regla_vigente(cons) if cons is not None else None
+    cubre_avion = regla_vigente is not None and _avion_cubre_al_vendedor(req)
+    _hoja_resumen_general(wb.active, req, regla_vigente if cubre_avion else None)
     if cons is not None:
-        # ¿El periodo trae vuelos de la regla? ⇒ aclaraciones en 'otros
-        # movimientos' y en el bloque VUELATOUR (empresa).
-        regla_vigente = _regla_vigente(cons)
         # La hoja maestra se titula sola ("reporte horas FLOTA"). Variante
         # «general» (6-oct-2026, API 0.0.64): costo total + costo por hora en
         # lugar del desglose de costos; «mensual» (o sin la llave): la de
@@ -3998,9 +4315,12 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
         # API la manda.
         if cons.otros_movimientos is not None:
             _hoja_otros_movimientos(
-                wb.create_sheet("otros movimientos"), cons.otros_movimientos, regla_vigente
+                wb.create_sheet("otros movimientos"),
+                cons.otros_movimientos,
+                regla_vigente,
+                cubre_avion=cubre_avion,
             )
-        _hoja_cobranza(wb.create_sheet("cobranza"), cons)
+        _hoja_cobranza(wb.create_sheet("cobranza"), cons, general=True)
         # Hoja 'combustible' de la FLOTA (10-sep-2026, pedido del cliente:
         # «ya no me sale el apartado de combustibles»): se había quitado del
         # general el 29-ago junto con 'Gastos Indirectos' y 'permisos'. Vuelve
@@ -4078,14 +4398,25 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
             swatch = _hex(avion.avion_color)
             if swatch:
                 tc.fill = PatternFill("solid", fgColor=swatch)
+            # Con el API 0.0.66 la cascada abre antes de comisiones y las
+            # resta en una línea (`_cascada_con_comisiones`, 7-oct-2026).
             row = (
-                _bloque_balance(ws_b, avion, row + 1, general=True, celdas_empresa=celdas_empresa)
+                _bloque_balance(
+                    ws_b,
+                    avion,
+                    row + 1,
+                    general=True,
+                    celdas_empresa=celdas_empresa,
+                    regla=_regla_del_general(req),
+                )
                 + 2
             )
         # Balance de la EMPRESA hasta el final (6-oct-2026): solo con el API
         # 0.0.59+; sin `empresa` el libro es byte-idéntico al de antes.
         if req.empresa is not None:
-            _bloque_empresa(ws_b, req.empresa, row, celdas_empresa, regla_vigente)
+            _bloque_empresa(
+                ws_b, req.empresa, row, celdas_empresa, regla_vigente, cubre_avion=cubre_avion
+            )
         for i, w in enumerate([46, 14, 16], start=1):
             ws_b.column_dimensions[get_column_letter(i)].width = w
 

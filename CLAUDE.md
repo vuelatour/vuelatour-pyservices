@@ -190,8 +190,10 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   Lo único que cambia son 5 LEYENDAS, y **solo con banderas ADITIVAS** que
   el API manda cuando hay pagos reales: `BalanceHojaOtrosMovimientos.
   hay_pago_vendedor_real: bool | None` (fila 2 de 'otros movimientos', nota
-  del RESUMEN y nota de la hoja maestra del GENERAL; `_hay_pago_vendedor_real`
-  exige `is True`) y `DineroXlsxRequest.utilidades_comision_vendedor_pagada_mxn:
+  del RESUMEN y nota de la hoja maestra del GENERAL —esta última, solo hasta
+  el 7-oct-2026: ver «COMISIONES solo en el libro INDIVIDUAL»—;
+  `_hay_pago_vendedor_real` exige `is True`) y
+  `DineroXlsxRequest.utilidades_comision_vendedor_pagada_mxn:
   float | None` (fila 2 de 'Otros ingresos' con el campo presente; la frase
   «Pagado al vendedor con gasto real en este periodo: $X MXN.» al final de la
   fila 9 de 'utilidades' solo con monto > 0). **Sin bandera el Excel es
@@ -367,7 +369,9 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   1.16»). Campo ADITIVO `BalanceGeneralRequest.variante` ('mensual' |
   'general', default 'mensual'; liberal: mayúsculas/espacios se normalizan,
   null o desconocido ⇒ mensual, jamás 422). **Mensual o sin la llave ⇒ libro
-  BYTE-IDÉNTICO** (verificado miembro a miembro contra HEAD 93486c1 en los 37
+  BYTE-IDÉNTICO** al de antes de la variante (hasta el 7-oct-2026: desde
+  entonces su hoja de vuelos va sin COMISIONES, `_COLS_FLOTA`, ver abajo)
+  (verificado miembro a miembro contra HEAD 93486c1 en los 37
   libros de los tests del balance; congelado con la huella de layout
   `_FIRMAS_HOY` Y con los BYTES: `_MIEMBROS_HOY` = primeros 16 hex del sha256
   de cada miembro del .xlsx salvo `docProps/core.xml`, de 3 libros, calculados
@@ -379,8 +383,8 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   ella solo las letras con que la citan y la nota de 'repartidos a aviones',
   que en la general dice que el TUA pagado queda en el desglose de TOTAL PARA
   PROVEEDOR (PESOS): `_CPH_NOTA_REPARTIDOS_A_AVIONES`; la de siempre
-  nombraba OPERACIONES): `_COLS_GENERAL` (44 columnas; 45 desde COMISIONES,
-  ver la entrada siguiente) = CLAVE..
+  nombraba OPERACIONES): `_COLS_GENERAL` (44 columnas; 45 con COMISIONES
+  del 6 al 7-oct-2026, ver las dos entradas siguientes) = CLAVE..
   ESTADO, VENTA y TIEMPO iguales; «COSTO TOTAL (MXN)» = COSTO TOTAL + TIPO
   CAMBIO COSTOS; «COSTO POR HORA» = las 12 columnas de la hoja «utilidades»
   del cliente en su orden y con sus nombres (repiten a propósito venta s/IVA,
@@ -470,7 +474,9 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `comisiones_mxn`. (1) «COMISIÓN VENDEDOR MXN» → **«COMISIONES MXN»** (llave
   `comisiones_mxn`, misma posición AC en el mensual/individual; en la
   variante general, AL FINAL del bloque COSTO POR HORA —las 12 del cliente
-  siguen juntas— y el bloque pasa a 13 columnas) con su nota de encabezado
+  siguen juntas— y el bloque pasa a 13 columnas; desde el 7-oct-2026 la
+  columna vive SOLO en el libro individual, ver la entrada siguiente) con su
+  nota de encabezado
   y, por celda, `_nota_comisiones`: `comisiones_detalle` tal cual con «N
   conceptos» arriba si hay más de una línea y el API no lo trae (regex
   `_ENCABEZADO_CONCEPTOS`); sin detalle, una línea por parte del API. Valor
@@ -557,6 +563,69 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `tests/test_balance_comisiones.py`, #403 con la forma real, #504 EXTERNOS
   (mensual y general), la etiqueta del API y las aclaraciones de 'otros
   movimientos' y del bloque empresa.
+- **COMISIONES solo en el libro INDIVIDUAL; el Balance general, antes de
+  comisiones** (7-oct-2026, API 0.0.66; pedido: «estas comisiones se están
+  duplicando en la general, ya que las tenemos en el apartado de "Otros
+  movimientos". Las comisiones deben aparecer en ese apartado pero en el
+  individual de los avioncitos» y «en "otros movimientos", en el ingreso
+  estás duplicando la comisión»). **El dinero de los socios NO cambia**: la
+  cascada, la utilidad cobrada y el reparto son los números del API (iguales
+  al 0.0.65, congelados en `_CASCADA_0065`); solo cambia la presentación del
+  general. (1) Hoja de vuelos del GENERAL, las DOS variantes, SIN la columna
+  COMISIONES: mensual = `_COLS_FLOTA` (`_COLS` sin `comisiones_mxn`, 46
+  columnas: de AC en adelante todo corre una — GANANCIA MXN = AC, COBRO 1
+  FECHA = AH) con `_DISP_FLOTA`; variante general = `_COLS_GENERAL` de vuelta a
+  las 12 columnas del cliente (44). `_hoja_maestra` elige el juego (el
+  individual sigue con `_DISP_MENSUAL`, intacto) y, si el juego no trae
+  COMISIONES (`comision_col` None), pinta `_antes_de_comisiones(req)`: fila
+  con comisiones ⇒ GANANCIA MXN = `remanente_mxn` del API (fórmula `=AA`) y
+  GANANCIA USD = ROUND(remanente ÷ `tc_costos`, 2) calculado como lo evalúa
+  Excel (`_numero_de_celda` + `redondear_excel`: la fórmula visible
+  ROUND(AC/V,2) lo reproduce y no se degrada) —sin `tc_costos`, VACÍA: el API
+  usa el T.C. promedio del libro de SU avión, que el consolidado no tiene—;
+  TOTALES: GANANCIA MXN = `totales.remanente_mxn` y GANANCIA USD = Σ de las
+  filas tal como se ven (sumadas en orden, como SUM). Sin filas con
+  comisiones, el MISMO objeto. REMANENTE VENTA MENOS COMPRA
+  (`cph_remanente_mxn`, `_ORIGEN_GENERAL` → `remanente_mxn`) =
+  `ROUND(VENTA − PROVEEDOR, 2)` siempre (definición del cliente). Notas:
+  encabezado de GANANCIA MXN y de REMANENTE (`_NOTAS_ENCABEZADO_SIN_
+  COMISIONES`), pie `_NOTA_COMISIONES_FLOTA` + `_NOTA_GANANCIA_FLOTA` /
+  `_CPH_NOTA_REMANENTE` —sin el fragmento del pago al vendedor: remite a la
+  leyenda de 'otros movimientos', así que la bandera `hay_pago_vendedor_real`
+  ya no lo cambia (`_MAESTRA_PAGO_VENDEDOR_REAL` se retiró)—,
+  `_NOTA_COBRADO_REAL_FLOTA`, `_NOTA_COBRANZA_NETO_FLOTA` (`_hoja_cobranza(...,
+  general=True)`) y `_RESUMEN_COMISIONES` (el RESUMEN CONSERVA su columna
+  COMISIONES y su GANANCIA después de ellas). (2) Cascada de cada avión en la
+  hoja 'balance' del GENERAL: con `balance.comisiones_usd` ≠ 0 y
+  `balance.utilidad_antes_comisiones_usd` (ADITIVOS en
+  `BalanceAvionBalanceBloque`, `_cascada_con_comisiones`) el bloque abre con
+  «UTILIDAD ANTES DE GASTOS USD (antes de comisiones)» y «(−) COMISIONES
+  (banco + vendedor) USD» (valores del API, con nota; la etiqueta larga
+  envuelve) y UTILIDAD ANTES DE GASTOS = `ROUND(antes − comisiones, 2)` con
+  el número de siempre; DESPUÉS, COBRADA y socios, idénticos. Sin los campos,
+  con comisiones en 0 o con uno solo: la cascada de siempre. El libro
+  INDIVIDUAL los ignora (byte-idéntico: ya resta en su columna). (3) Señal
+  del API 0.0.66 = algún `aviones[].balance.comisiones_usd`
+  (`_avion_cubre_al_vendedor`): con vuelos de la regla, la fila 2 de 'otros
+  movimientos', la base del bloque VUELATOUR (empresa) y la nota del RESUMEN
+  dicen que en los vuelos COMPLETADOS el pago al vendedor lo cubre el avión
+  con su provisión («cubierto por el avión»: solo resta el exceso del pago
+  real) y que ya no hay línea de ingreso «a cargo del avión»
+  (`_OM_REGLA_COMISIONES_CUBRE_AVION`, `_EMPRESA_REGLA_COMISIONES_CUBRE_AVION`,
+  `_RESUMEN_REGLA_CUBRE_AVION`); con el 0.0.65, las de antes (la de 'otros
+  movimientos' ya remite a la columna del libro individual). Las filas de
+  'otros movimientos' llegan armadas: «cubierto por el avión» NO es la marca
+  amarilla. Huellas del GENERAL regeneradas A PROPÓSITO, comparadas celda por
+  celda contra HEAD 4189a1e en los 46 libros generales de los tests quitando
+  la columna (solo letras de fórmulas corridas, notas y la GANANCIA de filas
+  con comisiones); las del individual, intactas (12 libros byte a byte).
+  Deploy: pyservices → API 0.0.66. Pendiente que NO es de aquí: la nota al
+  pie del libro individual sigue diciendo que el pago al vendedor «sale de
+  VuelaTour» (el contrato congeló ese libro). Tests:
+  `tests/test_balance_comisiones_general.py` (+ los casos del general en
+  `test_balance_comisiones`, `test_balance_general_costo_hora`,
+  `test_balance_factura_vuelatour`, `test_balance_cobrado_con`,
+  `test_comision_vendedor_notas`).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

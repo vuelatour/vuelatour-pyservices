@@ -250,8 +250,13 @@ def _firma_hoja(data: bytes, nombre: str) -> str:
 # primero y las notas al pie que los explican (y, en el general, «COMISIONES
 # MXN» del RESUMEN y sus notas) — comparado celda por celda contra el código
 # anterior: ningún número ni fórmula cambió.
+# La del GENERAL, regenerada A PROPÓSITO el 7-oct-2026 (API 0.0.66): su hoja
+# de vuelos ya no lleva COMISIONES (lo de su derecha corre una columna), nota
+# nueva en el encabezado de GANANCIA y notas al pie que lo explican —
+# comparada celda por celda contra HEAD 4189a1e quitando esa columna: ningún
+# número cambió. La del libro individual no se movió.
 _FIRMA_INDIVIDUAL_SIN_LLAVE = "5dde1a2efb9238b9e67ecc78ad6bec2a643ec2546d50e229aef44d8c588d099a"
-_FIRMA_GENERAL_SIN_LLAVE = "135c00deb300e3330e6b3da2cc6a47ea07f54e10fa6ce2efa1d75e5e343b1aee"
+_FIRMA_GENERAL_SIN_LLAVE = "6a0da4592922063cd2ca8aab0c54ea7e621085b2a1e21def38c04360989f9c63"
 
 
 # ---------------------------------------------------------------------------
