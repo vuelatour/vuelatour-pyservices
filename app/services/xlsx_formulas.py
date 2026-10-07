@@ -159,6 +159,15 @@ class _Vacio:
 
 VACIO = _Vacio()
 
+
+class _Arreglo(list):
+    """ROUND sobre un RANGO (6-oct-2026): un número por celda, ya redondeado.
+    Solo vale como argumento de SUMPRODUCT, que en Excel evalúa sus
+    argumentos como arreglo (sin Ctrl+Mayús+Intro, desde siempre). En
+    cualquier otro lugar Excel haría intersección implícita: aquí es
+    #¡VALOR! y la celda se queda como valor."""
+
+
 _TOKEN = re.compile(
     r"""\s*(?:
         (?P<hoja>'(?:[^']|'')+'!)
@@ -323,7 +332,7 @@ class Evaluador:
         valor = p.expr()
         if p.i != len(p.toks):
             raise FormulaInvalidaError(f"sobra texto en la fórmula: {texto!r}")
-        if isinstance(valor, _Rango):
+        if isinstance(valor, (_Rango, _Arreglo)):
             raise FormulaInvalidaError("un rango suelto no es un número")
         return valor
 
@@ -357,7 +366,8 @@ def _numero(x: object) -> float:
 class _Parser:
     """Descenso recursivo que evalúa mientras lee (+ − × ÷, paréntesis,
     menos unario, referencias A1/$A$1, 'hoja'!A1, rangos A1:B9 y las
-    funciones SUM, AVERAGE, AVERAGEIF, SUMIF y ROUND)."""
+    funciones SUM, AVERAGE, AVERAGEIF, SUMIF, ROUND y SUMPRODUCT — ROUND
+    sobre un rango solo dentro de SUMPRODUCT, `_Arreglo`)."""
 
     def __init__(self, toks: list[tuple[str, str]], ev: Evaluador, ws: Worksheet) -> None:
         self.toks = toks
@@ -469,11 +479,40 @@ class _Parser:
     def _aplanar(self, args: list[object]) -> list[object]:
         valores: list[object] = []
         for a in args:
+            if isinstance(a, _Arreglo):
+                raise FormulaInvalidaError("ROUND de un rango solo vale dentro de SUMPRODUCT")
             if isinstance(a, _Rango):
                 valores.extend(self.ev.valores_rango(a))
             else:
                 valores.append(a)
         return valores
+
+    def _sumproduct(self, args: list[object]) -> float:
+        """SUMPRODUCT de Excel: arreglos (ROUND de un rango) o rangos del
+        mismo tamaño; una entrada no numérica cuenta como 0. Con uno solo, la
+        suma de sus números (`ROUND(SUMPRODUCT(ROUND(X3:X9,2)),2)` = la Σ de
+        las filas tal como se ven)."""
+        if not args:
+            raise FormulaInvalidaError("SUMPRODUCT sin argumentos")
+        columnas: list[list[object]] = []
+        for a in args:
+            if isinstance(a, _Arreglo):
+                columnas.append(list(a))
+            elif isinstance(a, _Rango):
+                columnas.append(self.ev.valores_rango(a))
+            else:
+                raise FormulaInvalidaError("SUMPRODUCT: argumento que no es rango ni arreglo")
+        if any(len(c) != len(columnas[0]) for c in columnas):
+            raise FormulaInvalidaError("SUMPRODUCT: arreglos de distinto tamaño")
+        productos: list[float] = []
+        for fila in zip(*columnas, strict=True):
+            numeros = [x for x in fila if isinstance(x, float)]
+            if len(numeros) == len(fila):
+                producto = 1.0
+                for x in numeros:
+                    producto *= x
+                productos.append(producto)
+        return _suma(productos)
 
     def _funcion(self, nombre: str) -> object:
         args = self._argumentos()
@@ -513,7 +552,15 @@ class _Parser:
         if nombre == "ROUND":
             if len(args) != 2:
                 raise FormulaInvalidaError("ROUND lleva dos argumentos")
-            return redondear_excel(_numero(args[0]), int(_numero(args[1])))
+            decimales = int(_numero(args[1]))
+            if isinstance(args[0], _Rango):
+                # Celda vacía = 0; texto = #¡VALOR! (como Excel).
+                return _Arreglo(
+                    redondear_excel(_numero(v), decimales) for v in self.ev.valores_rango(args[0])
+                )
+            return redondear_excel(_numero(args[0]), decimales)
+        if nombre == "SUMPRODUCT":
+            return self._sumproduct(args)
         raise FormulaInvalidaError(f"función no soportada: {nombre}")
 
 

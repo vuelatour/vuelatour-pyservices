@@ -49,6 +49,7 @@ from app.services.balance_avion_xlsx import (
     _COLS,
     _COLS_GENERAL,
     _CPH_NOTA_REPARTIDOS_A_AVIONES,
+    _CPH_NOTA_TOTALES,
     _DISP_GENERAL,
     _DISP_MENSUAL,
     _GRUPO_COSTO_HORA,
@@ -76,7 +77,7 @@ from tests import test_balance_empresa_vuelatour as t_empresa
 from tests import test_balance_extension_horario as t_extension
 from tests import test_balance_formulas as tf
 from tests import test_comision_vendedor_notas as t_comision
-from tests._evaluador_formulas import verificar_libro
+from tests._evaluador_formulas import Libro, round_excel, verificar_libro
 
 MAESTRA = "reporte horas FLOTA"
 
@@ -516,7 +517,7 @@ def test_nota_del_desglose_partes_y_detalle() -> None:
     assert _nota_desglose_costo(BalanceAvionVuelo(op_mxn=0, piloto_mxn=0, otros_mxn=0)) is None
 
 
-def test_totales_solo_los_que_manda_el_api() -> None:
+def test_totales_del_api_sumas_y_promedios() -> None:
     req = _general()
     wb, wv = _libros(render_balance_general_xlsx(req))
     ws, wsv = wb[MAESTRA], wv[MAESTRA]
@@ -538,16 +539,186 @@ def test_totales_solo_los_que_manda_el_api() -> None:
     assert _celda(ws, tot, "TIPO CAMBIO\nCOSTOS").value == t.tc_promedio
     assert _celda(ws, tot, "TIPO\nCAMBIO").value == t.tc_promedio
     assert _celda(ws, tot, "COSTO HR\nMÁS IVA (DLLS)").value == t.costo_hr_prom_usd
-    # Lo que el API no totaliza no se inventa.
-    for encabezado in (
-        "COSTO X HORA\n(DLLS S/IVA)",
-        "IVA X HR\n(DLLS)",
-        "TOTAL PARA\nPROVEEDOR (DLLS)",
-        "IVA TOTAL\nPAGADO (DLLS)",
-        "IVA TOTAL\nPAGADO (PESOS)",
-        "TOTAL PAGADO\nS/IVA (PESOS)",
-    ):
+
+
+# Columnas del bloque cuyo total NO manda el API (revisión 6-oct-2026: con
+# huecos, la fila TOTALES «parece rota»): Σ de sus filas tal como se ven.
+SUMA_DE_LO_QUE_SE_VE = {
+    "TOTAL PARA\nPROVEEDOR (DLLS)": "costo_usd",
+    "IVA TOTAL\nPAGADO (DLLS)": "iva_pagado_usd",
+    "IVA TOTAL\nPAGADO (PESOS)": "iva_pagado_mxn",
+    "TOTAL PAGADO\nS/IVA (PESOS)": "cph_pagado_siva_mxn",
+}
+
+
+def _valor_completo(libro: Libro, ws, fila: int, col: int):
+    """Lo que Excel suma en SUM(): el valor COMPLETO de la celda (si es
+    fórmula, sin redondear a la vista)."""
+    c = ws.cell(row=fila, column=col)
+    return libro.evaluar(MAESTRA, c.coordinate) if c.data_type == "f" else c.value
+
+
+def test_totales_del_bloque_que_el_api_no_manda(registros) -> None:
+    """Fixture del espejo del API (XA-TST + XB-DOS, 8 filas). Las cuatro
+    columnas de dinero = Σ de los números de sus filas (los del API, tal como
+    se ven); COSTO X HORA = el promedio del API sin IVA; IVA X HR = la
+    diferencia. Todas con fórmula, verificadas y en caché."""
+    req = _general()
+    data = render_balance_general_xlsx(req)
+    assert registros[-1].degradadas() == []
+    verificadas = {(hoja, celda): formula for hoja, celda, formula, *_ in verificar_libro(data)}
+    wb, wv = _libros(data)
+    ws, wsv = wb[MAESTRA], wv[MAESTRA]
+    tot = _fila_de(ws, "TOTALES")
+    vuelos = req.consolidado.vuelos
+    libro = Libro(data)
+    # Σ de las 8 filas, a mano (#401 411.88 + #402 142.05 + #402 99.72 +
+    # #404 172.41 + #407 396.66 + #405 168.18 + #406 0.00 = 1390.90; #403 sin
+    # T.C. va vacía) y, al lado, lo que daría ROUND(SUM()) con los valores
+    # COMPLETOS de las filas (son fórmulas sin ROUND): un centavo distinto en
+    # las cuatro — por eso la fórmula redondea cada fila antes de sumar.
+    esperados = {
+        "TOTAL PARA\nPROVEEDOR (DLLS)": (1390.90, 1390.91),
+        "IVA TOTAL\nPAGADO (DLLS)": (191.84, 191.85),
+        "IVA TOTAL\nPAGADO (PESOS)": (3390.05, 3390.04),
+        "TOTAL PAGADO\nS/IVA (PESOS)": (21187.77, 21187.78),
+    }
+    for encabezado, clave in SUMA_DE_LO_QUE_SE_VE.items():
+        se_ve, con_sum = esperados[encabezado]
+        filas = [_valor_columna(clave, v) for v in vuelos]
+        assert tf.r2(sum(x for x in filas if x is not None)) == se_ve, encabezado
+        letra, celda = _letra(ws, encabezado), _celda(ws, tot, encabezado)
+        assert celda.value == f"=ROUND(SUMPRODUCT(ROUND({letra}3:{letra}{tot - 1},2)),2)"
+        assert (MAESTRA, celda.coordinate) in verificadas
+        assert _celda(wsv, tot, encabezado).value == se_ve, encabezado
+        completos = [_valor_completo(libro, ws, f, celda.column) for f in range(3, tot)]
+        suma = sum(x for x in completos if isinstance(x, (int, float)))
+        assert round_excel(suma, 2) == con_sum != se_ve, encabezado
+    # COSTO X HORA: el promedio del API (COSTO HR MÁS IVA = promedio de los
+    # promedios de cada avión: XA-TST 132.01 y XB-DOS 102.93) ÷ 1.16, como
+    # cada fila. AVERAGEIF de la columna promediaría las 5 filas con costo
+    # (120.38) y no reproduciría al API.
+    t = req.consolidado.totales
+    assert [a.totales.costo_hr_prom_usd for a in req.aviones] == [132.01, 102.93]
+    assert t.costo_hr_prom_usd == 117.47
+    an = [v.costo_hr_usd for v in vuelos if v.costo_hr_usd]
+    assert tf.r2(sum(an) / len(an)) == 120.38
+    w = _letra(ws, "COSTO HR\nMÁS IVA (DLLS)")
+    u = _letra(ws, "COSTO X HORA\n(DLLS S/IVA)")
+    assert _celda(ws, tot, "COSTO HR\nMÁS IVA (DLLS)").value == 117.47  # valor del API
+    celda = _celda(ws, tot, "COSTO X HORA\n(DLLS S/IVA)")
+    assert celda.value == f"=ROUND({w}{tot}/$D$1,2)"
+    assert (MAESTRA, celda.coordinate) in verificadas
+    assert _celda(wsv, tot, "COSTO X HORA\n(DLLS S/IVA)").value == 101.27 == tf.r2(117.47 / 1.16)
+    celda = _celda(ws, tot, "IVA X HR\n(DLLS)")
+    assert celda.value == f"=ROUND({w}{tot}-{u}{tot},2)"
+    assert (MAESTRA, celda.coordinate) in verificadas
+    assert _celda(wsv, tot, "IVA X HR\n(DLLS)").value == 16.2 == tf.r2(117.47 - 101.27)
+    # Ya no hay huecos en los bloques de costo de la fila TOTALES.
+    for encabezado in ("COSTO TOTAL\nMXN", "TIPO CAMBIO\nCOSTOS", *COSTO_POR_HORA):
+        assert isinstance(_celda(wsv, tot, encabezado).value, (int, float)), encabezado
+    # La nota al pie lo dice (ya no «van sin total»).
+    pie = [c.value for c in ws["A"] if isinstance(c.value, str)]
+    assert _CPH_NOTA_TOTALES in pie
+    assert not any("van sin total" in x for x in pie)
+
+
+def test_sin_promedio_del_api_costo_x_hora_e_iva_x_hr_van_vacias() -> None:
+    """Sin `costo_hr_prom_usd` (ningún vuelo con costo y horas) no hay de
+    dónde sacar el costo por hora: vacías, nunca un 0 falso. Las Σ siguen."""
+    req = _general()
+    cons = req.consolidado
+    totales = cons.totales.model_copy(update={"costo_hr_prom_usd": None})
+    req = req.model_copy(update={"consolidado": cons.model_copy(update={"totales": totales})})
+    data = render_balance_general_xlsx(req)
+    verificar_libro(data)
+    wb, wv = _libros(data)
+    ws = wb[MAESTRA]
+    tot = _fila_de(ws, "TOTALES")
+    for encabezado in ("COSTO HR\nMÁS IVA (DLLS)", COSTO_POR_HORA[2], COSTO_POR_HORA[3]):
         assert _celda(ws, tot, encabezado).value is None, encabezado
+    assert _celda(wv[MAESTRA], tot, "TOTAL PARA\nPROVEEDOR (DLLS)").value == 1390.90
+
+
+def test_sin_vuelos_las_sumas_del_bloque_son_cero_como_las_del_api() -> None:
+    """Periodo sin vuelos: no hay filas que citar — las cuatro Σ van como
+    VALOR 0.00 (como las sumas del API, que mandan 0) y el costo por hora
+    vacío (el API no manda promedio)."""
+    req = _general()
+    cons = req.consolidado
+    totales = cons.totales.model_copy(update={"costo_hr_prom_usd": None})
+    req = req.model_copy(
+        update={"consolidado": cons.model_copy(update={"vuelos": [], "totales": totales})}
+    )
+    ws = _libros(render_balance_general_xlsx(req))[0][MAESTRA]
+    tot = _fila_de(ws, "TOTALES")
+    assert tot == 3
+    for encabezado in SUMA_DE_LO_QUE_SE_VE:
+        assert _celda(ws, tot, encabezado).value == 0, encabezado
+    for encabezado in COSTO_POR_HORA[2:4]:
+        assert _celda(ws, tot, encabezado).value is None, encabezado
+
+
+def test_totales_sin_la_columna_que_citarian_van_como_valor_con_nota(
+    monkeypatch, registros
+) -> None:
+    """Regla dura: jamás una referencia a una columna que el juego no tiene.
+    Sin COSTO HR MÁS IVA, COSTO X HORA e IVA X HR de TOTALES van como VALOR
+    con la nota «calculado por el sistema»; las Σ no la citan y siguen."""
+    cols = [c for c in _COLS_GENERAL if c[2] != "costo_hr_usd"]
+    monkeypatch.setattr(
+        balance_avion_xlsx,
+        "_DISP_GENERAL",
+        _disposicion(
+            cols,
+            total_map=_TOTAL_MAP_GENERAL,
+            fills=_DISP_GENERAL.fills,
+            detalle_attr={},
+            titulos_grupo=_DISP_GENERAL.titulos_grupo,
+            costo_por_hora=True,
+        ),
+    )
+    data = render_balance_general_xlsx(_general())
+    assert registros[-1].degradadas() == []
+    assert verificar_libro(data)
+    ws = _libros(data)[0][MAESTRA]
+    tot = _fila_de(ws, "TOTALES")
+    for encabezado, valor in ((COSTO_POR_HORA[2], 101.27), (COSTO_POR_HORA[3], 16.2)):
+        celda = _celda(ws, tot, encabezado)
+        assert celda.value == valor, encabezado
+        assert celda.comment.text == _NOTA_CALCULADO_POR_SISTEMA_CELDA, encabezado
+    for encabezado in SUMA_DE_LO_QUE_SE_VE:
+        assert _celda(ws, tot, encabezado).value.startswith("=ROUND(SUMPRODUCT(ROUND("), encabezado
+
+
+def test_los_dos_evaluadores_suman_lo_que_se_ve() -> None:
+    """ROUND(SUMPRODUCT(ROUND(rango,2)),2) = la Σ de las filas a centavos en
+    el evaluador de producción (`xlsx_formulas`) y en el independiente;
+    ROUND(SUM()) suma los valores completos. ROUND de un rango fuera de
+    SUMPRODUCT (Excel haría intersección implícita) o con texto ⇒ valor."""
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = "TOTAL PARA\nPROVEEDOR (DLLS)"
+    ws["A2"], ws["A3"] = 10.004, 10.004  # se ven 10.00
+    xlsx_formulas.escribir(ws["A4"], "A2*1", 10.0)  # fila con fórmula: 10.004 completo
+    # A5 vacía (cuenta 0).
+    xlsx_formulas.escribir(ws["A6"], "ROUND(SUMPRODUCT(ROUND(A2:A5,2)),2)", 30.0)
+    xlsx_formulas.escribir(ws["A7"], "ROUND(SUM(A2:A5),2)", 30.0)  # da 30.01
+    xlsx_formulas.escribir(ws["A8"], "ROUND(SUMPRODUCT(A2:A3,A2:A3),2)", 200.16)
+    xlsx_formulas.escribir(ws["C1"], "ROUND(A2:A3,2)", 10.0)
+    xlsx_formulas.escribir(ws["C2"], "ROUND(SUM(ROUND(A2:A3,2)),2)", 20.0)
+    xlsx_formulas.escribir(ws["C3"], "ROUND(SUMPRODUCT(ROUND(A1:A3,2)),2)", 20.0)  # A1 texto
+    xlsx_formulas.escribir(ws["C4"], "ROUND(SUMPRODUCT(A2:A3,A2:A4),2)", 1.0)
+    data = xlsx_formulas.guardar(wb)
+    assert sorted(xlsx_formulas.registro(wb).degradadas()) == [
+        ("Sheet", "A7"),
+        ("Sheet", "C1"),
+        ("Sheet", "C2"),
+        ("Sheet", "C3"),
+        ("Sheet", "C4"),
+    ]
+    vivas = {celda: (calculado, cache) for _h, celda, _f, calculado, cache in verificar_libro(data)}
+    assert vivas == {"A4": (10.004, 10.0), "A6": (30.0, 30.0), "A8": (200.16, 200.16)}
 
 
 def test_notas_al_pie_hablan_de_las_columnas_del_balance_general() -> None:
@@ -758,12 +929,27 @@ def test_otro_juego_de_columnas_sigue_cuadrando(caso, monkeypatch, registros) ->
     f = _fila_de(ws, "#401 · Cliente Uno")
     for encabezado, formula in _formulas_del_bloque(ws, f).items():
         assert _celda(ws, f, encabezado).value == formula, (caso, encabezado)
-    # TOTALES: cada Σ suma su propia columna.
+    # TOTALES: cada Σ suma su propia columna (las del bloque que el API no
+    # totaliza, tal como se ven) y COSTO X HORA / IVA X HR citan las celdas
+    # TOTALES de SUS columnas en este juego.
     tot = _fila_de(ws, "TOTALES")
-    sumas = [c for c in ws[tot] if isinstance(c.value, str) and c.value.startswith("=")]
-    assert sumas
-    for c in sumas:
-        assert c.value == f"=ROUND(SUM({c.column_letter}3:{c.column_letter}{tot - 1}),2)", caso
+    formulas = {
+        ws.cell(row=2, column=c.column).value: c
+        for c in ws[tot]
+        if isinstance(c.value, str) and c.value.startswith("=")
+    }
+    assert {*SUMA_DE_LO_QUE_SE_VE, *COSTO_POR_HORA[2:4]} <= set(formulas), caso
+    w, u = _letra(ws, COSTO_POR_HORA[4]), _letra(ws, COSTO_POR_HORA[2])
+    for encabezado, c in formulas.items():
+        rango = f"{c.column_letter}3:{c.column_letter}{tot - 1}"
+        esperada = f"=ROUND(SUM({rango}),2)"
+        if encabezado in SUMA_DE_LO_QUE_SE_VE:
+            esperada = f"=ROUND(SUMPRODUCT(ROUND({rango},2)),2)"
+        elif encabezado == COSTO_POR_HORA[2]:
+            esperada = f"=ROUND({w}{tot}/$D$1,2)"
+        elif encabezado == COSTO_POR_HORA[3]:
+            esperada = f"=ROUND({w}{tot}-{u}{tot},2)"
+        assert c.value == esperada, (caso, encabezado)
 
     # Las demás hojas citan la fila TOTALES con la letra de la llave EN ESTE
     # juego; si el juego no la tiene, el VALOR del API con la nota.

@@ -6,8 +6,9 @@ producción si una fórmula se queda): aquí la fórmula se TRADUCE a una
 expresión de Python con expresiones regulares y se evalúa sobre el libro YA
 GUARDADO, leído dos veces — con fórmulas (`data_only=False`) y con la caché
 (`data_only=True`). Cubre lo que generan los balances: referencias A1 /
-$A$1 / 'hoja'!A1, rangos, SUM, AVERAGE, AVERAGEIF, SUMIF, ROUND, + − × ÷ y
-paréntesis. Una celda con fórmula se evalúa con el valor COMPLETO de las
+$A$1 / 'hoja'!A1, rangos, SUM, AVERAGE, AVERAGEIF, SUMIF, ROUND, SUMPRODUCT
+(con ROUND de un rango dentro: la Σ de las filas tal como se ven), + − × ÷
+y paréntesis. Una celda con fórmula se evalúa con el valor COMPLETO de las
 fórmulas que cita (como Excel), no con su caché redondeada.
 
 `verificar_libro` exige además que toda fórmula lleve ROUND exterior salvo
@@ -31,7 +32,7 @@ _REF = re.compile(
     r"(?::\$?(?P<c2>[A-Z]{1,3})\$?(?P<f2>\d+))?"
     r"(?![A-Za-z0-9_(])"
 )
-_FUNCION = re.compile(r"\b(AVERAGEIF|SUMIF|AVERAGE|SUM|ROUND)\(")
+_FUNCION = re.compile(r"\b(AVERAGEIF|SUMIF|AVERAGE|SUMPRODUCT|SUM|ROUND)\(")
 
 
 def round_excel(x: float, n: float) -> float:
@@ -104,8 +105,24 @@ def _SUMIF(rango: Rango, criterio: str, suma: Rango | None = None) -> float:  # 
     return _SUM(Rango(d for p, d in zip(rango, datos, strict=True) if _cumple(p, criterio)))
 
 
-def _ROUND(x, n) -> float:  # noqa: N802
+def _ROUND(x, n):  # noqa: N802
+    """Con un RANGO (solo dentro de SUMPRODUCT) redondea cada celda; vacía = 0."""
+    if isinstance(x, Rango):
+        return Rango(round_excel(float(v or 0), n) for v in x)
     return round_excel(float(x or 0), n)
+
+
+def _SUMPRODUCT(*arreglos: Rango) -> float:  # noqa: N802
+    """Σ de los productos fila a fila; una entrada no numérica cuenta como 0."""
+    assert arreglos and all(isinstance(a, Rango) for a in arreglos), arreglos
+    total = 0.0
+    for fila in zip(*arreglos, strict=True):
+        if all(_es_numero(x) for x in fila):
+            producto = 1.0
+            for x in fila:
+                producto *= float(x)
+            total += producto
+    return total
 
 
 class Libro:
@@ -177,6 +194,7 @@ class Libro:
             "_AVERAGEIF": _AVERAGEIF,
             "_SUMIF": _SUMIF,
             "_ROUND": _ROUND,
+            "_SUMPRODUCT": _SUMPRODUCT,
         }
         valor = float(eval("".join(partes), {"__builtins__": {}}, espacio))  # noqa: S307
         self._memo[clave] = valor

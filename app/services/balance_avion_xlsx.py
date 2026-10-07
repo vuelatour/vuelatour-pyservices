@@ -419,14 +419,29 @@ _ORIGEN_GENERAL = {
     "cph_proveedor_mxn": "costo_total_mxn",
 }
 # TOTALES de la variante: los del API por atributo (los mismos de siempre;
-# las columnas repetidas llevan el total de su dato). Las columnas del bloque
-# que el API no totaliza (COSTO X HORA, IVA X HR, TOTAL PARA PROVEEDOR
-# (DLLS), IVA TOTAL PAGADO y TOTAL PAGADO S/IVA) van sin total: aquí no se
-# inventa ninguno.
+# las columnas repetidas llevan el total de su dato). Las del bloque que el
+# API no totaliza van en `_CPH_TOTALES_PROPIOS` (abajo).
 _TOTAL_MAP_GENERAL = {
     **{k: t for k, t in _TOTAL_MAP.items() if any(c[2] == k for c in _COLS_GENERAL)},
     **{k: _TOTAL_MAP[a] for k, a in _ORIGEN_GENERAL.items()},
 }
+# TOTALES del bloque COSTO POR HORA que el API NO manda (revisión 6-oct-2026:
+# con huecos, la fila TOTALES «parece rota»). No es un número nuevo:
+# - TOTAL PARA PROVEEDOR (DLLS), IVA TOTAL PAGADO (DLLS y PESOS) y TOTAL
+#   PAGADO S/IVA (PESOS) = Σ de los números de las filas TAL COMO SE VEN (los
+#   del API, a centavos). Sus celdas de fila son fórmulas SIN ROUND (el API
+#   solo redondea al serializar), así que ROUND(SUM(rango),2) sumaría los
+#   valores completos y no daría esa Σ (en el libro de pruebas, un centavo de
+#   diferencia en las cuatro; en un mes real, casi siempre) y la celda se
+#   quedaría como valor: la fórmula redondea cada fila antes de sumar,
+#   ROUND(SUMPRODUCT(ROUND(rango,2)),2).
+# - COSTO X HORA (DLLS S/IVA) = COSTO HR MÁS IVA de TOTALES (el promedio del
+#   API) ÷ 1.16, como cada fila (AO = AN ÷ 1.16). No es AVERAGEIF de la
+#   columna: en el consolidado el API promedia los promedios de cada avión
+#   (no las filas) y la celda no lo reproduciría.
+# - IVA X HR (DLLS) = COSTO HR MÁS IVA − COSTO X HORA de TOTALES.
+_CPH_TOTALES_SUMA_FILAS = ("costo_usd", "iva_pagado_usd", "iva_pagado_mxn", "cph_pagado_siva_mxn")
+_CPH_TOTALES_PROPIOS = frozenset((*_CPH_TOTALES_SUMA_FILAS, "costo_hr_usd_siva", "cph_iva_hr_usd"))
 # Título del bloque nuevo en la fila de grupos: el encabezado de la hoja dice
 # que es el «Balance general» (A1:D1 son las constantes y no se mueven).
 _TITULO_GRUPO_COSTO_HORA = "BALANCE GENERAL · COSTO POR HORA"
@@ -690,6 +705,50 @@ def _formula_total(attr: str, maestra: _Maestra) -> str | None:
         # costo_hr_prom_usd = round2(promedio de AN con costo > 0): AN > 0
         # ⟺ Y > 0 (z y horas siempre > 0 cuando AN existe).
         return f'ROUND(AVERAGEIF({rango},">0"),2)'
+    return None
+
+
+def _valor_total_costo_por_hora(attr: str, req: BalanceAvionRequest) -> float | None:
+    """Número de la celda TOTALES de una columna de `_CPH_TOTALES_PROPIOS`
+    (variante general), con los MISMOS números del API: la Σ de los de las
+    filas tal como se ven (`_valor_columna`) o, en COSTO X HORA e IVA X HR, el
+    promedio COSTO HR MÁS IVA de `totales` ÷ 1.16 y la diferencia de los dos
+    — redondeados como los redondea la fórmula (ROUND de Excel). None (celda
+    vacía) si el API no manda el promedio."""
+    if attr in _CPH_TOTALES_SUMA_FILAS:
+        valores = [_valor_columna(attr, v) for v in req.vuelos]
+        return xlsx_formulas.redondear_excel(sum(x for x in valores if x is not None), 2)
+    prom = req.totales.costo_hr_prom_usd
+    if prom is None:
+        return None
+    siva = xlsx_formulas.redondear_excel(prom / FACTOR_IVA_COSTOS, 2)
+    if attr == "costo_hr_usd_siva":
+        return siva
+    return xlsx_formulas.redondear_excel(prom - siva, 2)  # IVA X HR
+
+
+def _formula_total_costo_por_hora(attr: str, maestra: _Maestra) -> str | None:
+    """Fórmula de la celda TOTALES de una columna de `_CPH_TOTALES_PROPIOS`
+    (None = valor: sin filas). Cita las columnas por su llave; si la que
+    citaría no está en el juego, levanta `_ColumnaAusente` (la celda va como
+    valor con la nota «calculado por el sistema»)."""
+    disp = maestra.disp
+
+    def c(a: str) -> str:  # celda TOTALES de la columna `a`
+        letra = disp.letra.get(a)
+        if letra is None:
+            raise _ColumnaAusente(a)
+        return f"{letra}{maestra.fila_tot}"
+
+    if attr in _CPH_TOTALES_SUMA_FILAS:  # Σ de las filas tal como se ven
+        if not maestra.hay_filas:
+            return None
+        letra = disp.letra[attr]
+        return f"ROUND(SUMPRODUCT(ROUND({letra}{maestra.fila_ini}:{letra}{maestra.fila_fin},2)),2)"
+    if attr == "costo_hr_usd_siva":  # COSTO HR MÁS IVA ÷ 1.16
+        return f"ROUND({c('costo_hr_usd')}/{_CELDA_FACTOR_IVA},2)"
+    if attr == "cph_iva_hr_usd":  # COSTO HR MÁS IVA − COSTO X HORA
+        return f"ROUND({c('costo_hr_usd')}-{c('costo_hr_usd_siva')},2)"
     return None
 
 
@@ -1042,9 +1101,10 @@ _CPH_NOTA_REMANENTE = (
 )
 _CPH_NOTA_TOTALES = (
     "Fila TOTALES: TIPO CAMBIO COSTOS, TIPO CAMBIO y COSTO HR MÁS IVA son "
-    "PROMEDIOS; COSTO X HORA, IVA X HR, TOTAL PARA PROVEEDOR (DLLS), IVA TOTAL "
-    "PAGADO y TOTAL PAGADO S/IVA son de cada vuelo y van sin total; las demás "
-    "son sumas."
+    "PROMEDIOS (promedio de los promedios de cada avión); COSTO X HORA (DLLS "
+    "S/IVA) = ese COSTO HR MÁS IVA ÷ 1.16 e IVA X HR = la diferencia de los "
+    "dos; las demás son sumas (TOTAL PARA PROVEEDOR (DLLS), IVA TOTAL PAGADO y "
+    "TOTAL PAGADO S/IVA suman las filas tal como se ven, a centavos)."
 )
 _CPH_COMBUSTIBLE_COLA_TUA = (
     " (litros y $/L incluidos) y resta una sola vez en la hoja 'balance'. Por "
@@ -1494,7 +1554,10 @@ def _hoja_maestra(
         ws.cell(row=2, column=i).comment = nota_sis
 
     # Fila TOTALES al final (sumas y promedios YA calculados por el API; desde
-    # el 5-oct-2026 como fórmulas SUM/AVERAGE visibles con ese número).
+    # el 5-oct-2026 como fórmulas SUM/AVERAGE visibles con ese número). En la
+    # variante general, las columnas del bloque COSTO POR HORA que el API no
+    # totaliza llevan la Σ de sus filas o el promedio sin IVA
+    # (`_CPH_TOTALES_PROPIOS`, revisión 6-oct-2026).
     t = req.totales
     ws.cell(row=row, column=1, value="TOTALES").font = Font(bold=True)
     for i, (_grupo, _header, attr, fmt) in enumerate(cols, start=1):
@@ -1510,6 +1573,16 @@ def _hoja_maestra(
                 fmt or MONEY,
                 bold=True,
             )
+        elif disp.costo_por_hora and attr in _CPH_TOTALES_PROPIOS:
+            valor_tot = _valor_total_costo_por_hora(attr, req)
+            try:
+                formula_tot = _formula_total_costo_por_hora(attr, maestra)
+                ausente = False
+            except _ColumnaAusente:
+                formula_tot, ausente = None, True
+            cell = _formula(ws, row, i, formula_tot, valor_tot, fmt or MONEY, bold=True)
+            if ausente and valor_tot is not None:
+                cell.comment = _nota_celda(_NOTA_CALCULADO_POR_SISTEMA_CELDA)
         cell.fill = PatternFill("solid", fgColor=LIGHT)
         cell.border = _border
         if cell.value is not None or i == 1:

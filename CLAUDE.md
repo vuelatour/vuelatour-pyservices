@@ -418,10 +418,24 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   encabezado (`_ColumnaAusente`); otra hoja que citara una columna ausente ⇒
   valor con nota (`_formula_cita`: jamás una referencia rota). TOTALES = los
   del API por llave (las repetidas llevan el de su dato; promedios del
-  consolidado como valor); COSTO X HORA, IVA X HR, DLLS, IVA y PAGADO S/IVA
-  van SIN total (no se inventa; el contrato pedía Σ y promedio de COSTO X
-  HORA: queda a decisión — si se quieren, que el API los mande como campos
-  ADITIVOS de `totales` y aquí se pintan por llave). A1:D1 se conservan; el
+  consolidado como valor) y, sin huecos (revisión 6-oct-2026: con huecos «la
+  fila parece rota»), las del bloque que el API no totaliza
+  (`_CPH_TOTALES_PROPIOS`, solo en la variante general): **TOTAL PARA
+  PROVEEDOR (DLLS), IVA TOTAL PAGADO (DLLS y PESOS) y TOTAL PAGADO S/IVA = Σ
+  de las filas TAL COMO SE VEN**, `=ROUND(SUMPRODUCT(ROUND(rango,2)),2)` con
+  caché = round(Σ de los números del API de las filas) — sus celdas de fila
+  son fórmulas SIN ROUND y `ROUND(SUM())` sumaría los valores completos (un
+  centavo distinto en las cuatro del libro de pruebas; en un mes real casi
+  siempre ⇒ se degradaría a valor); **COSTO X HORA `=ROUND(W tot/$D$1,2)`**
+  (COSTO HR MÁS IVA de TOTALES = promedio del API, ÷ 1.16 como cada fila; NO
+  `AVERAGEIF` de la columna: el consolidado promedia los promedios de cada
+  avión, 117.47 vs 120.38 de las filas en el libro de pruebas) e **IVA X HR
+  `=ROUND(W tot−U tot,2)`**; sin `costo_hr_prom_usd`, las dos vacías; sin la
+  columna que citarían, valor con la nota «calculado por el sistema». Las
+  fórmulas citan por llave (`_formula_total_costo_por_hora`) y el valor sale
+  de `_valor_total_costo_por_hora`. `xlsx_formulas` y el evaluador de tests
+  entienden SUMPRODUCT y ROUND de un rango SOLO dentro de él (fuera, Excel
+  haría intersección implícita ⇒ aquí #¡VALOR! ⇒ valor). A1:D1 se conservan; el
   título del bloque «BALANCE GENERAL · COSTO POR HORA» dice en el encabezado
   cuál libro es; notas al pie, renglones TUA/extensión y notas de B1/D1
   propias (`_CPH_*`).
