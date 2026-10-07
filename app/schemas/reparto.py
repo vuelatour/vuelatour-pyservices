@@ -1,6 +1,10 @@
 """Esquema del payload para el PDF de reparto de utilidades (doc 5.9)."""
 
-from pydantic import BaseModel, Field
+from typing import Any
+
+from pydantic import BaseModel, Field, field_validator
+
+from app.schemas.reportes import regla_comisiones_liberal
 
 
 class RepartoSocioLinea(BaseModel):
@@ -18,8 +22,12 @@ class RepartoOtrosIngresosDesglose(BaseModel):
     tuas_usd: float | None = None
     extras_usd: float | None = None
     pernocta_usd: float | None = None
-    # Comisión del vendedor (pre-IVA): ingreso de VuelaTour, NO del avión;
-    # su pago al vendedor sale de VuelaTour ('otros movimientos').
+    # Comisión del vendedor COTIZADA (pre-IVA): lo cobrado al cliente por
+    # ella es ingreso de VuelaTour, que le paga al vendedor ('otros
+    # movimientos'). Desde la regla de septiembre 2026 (API 0.0.65, por fecha
+    # del vuelo) el avión absorbe su PROVISIÓN, que viaja dentro de
+    # `RepartoAvion.comisiones_venta_usd` — este monto sigue siendo solo
+    # informativo.
     comision_usd: float | None = None
     iva_usd: float | None = None
 
@@ -96,11 +104,16 @@ class RepartoAvion(BaseModel):
     # entran al saldo.
     otros_ingresos_vuelatour_usd: float = 0.0
     otros_ingresos_vuelatour_desglose: RepartoOtrosIngresosDesglose | None = None
-    # Comisiones de venta: HASTA el 28-ago-2026 (mañana) se descontaban del
-    # ingreso del avión. Regla A (28-ago tarde): la comisión del vendedor es
-    # ingreso de VuelaTour y su pago sale de VuelaTour — ya NO es costo del
-    # avión, el API manda 0. Se conserva por compat de shape: un payload
-    # viejo con monto la sigue mostrando como deducción.
+    # COMISIONES que absorbe el avión: restan antes del saldo (la cascada de
+    # siempre). Historia: hasta el 28-ago-2026 (mañana) era la comisión del
+    # vendedor; con la regla A (28-ago tarde) el API mandó 0 (la comisión es
+    # ingreso de VuelaTour y su pago sale de VuelaTour). Desde la regla de
+    # septiembre 2026 (API 0.0.65, vuelos con fecha desde
+    # `comisiones_al_avion_desde`) trae la parte del avión de la comisión
+    # BANCARIA de sus cobros + la PROVISIÓN de la comisión del vendedor
+    # (fuente única `comisionesDelVuelo` del API). ≠ 0 ⇒ el PDF y el Excel la
+    # pintan como «Comisiones (banco + vendedor)» con los textos de esa regla
+    # (`reparto_comisiones.comisiones_al_avion`); 0 ⇒ los textos de siempre.
     comisiones_venta_usd: float = 0.0
     # Pendiente de cobro = parte del AVIÓN (venta avión no cobrada).
     pendiente_cobro_usd: float = 0.0
@@ -145,3 +158,13 @@ class RepartoPdfRequest(BaseModel):
     otros_ingresos_vuelatour_desglose: RepartoOtrosIngresosDesglose | None = None
     # Nota global del TC oficial de respaldo (opcional, 29-ago-2026).
     tc_oficial: RepartoTcOficial | None = None
+    # Nombre de la regla de comisiones a cargo del avión (6-oct-2026,
+    # ADITIVO): la etiqueta que el API arma con la vigencia CONFIGURADA
+    # («regla sep-2026», `etiquetaReglaComisiones`). Solo cambia el texto; sin
+    # ella, «regla de septiembre 2026». Liberal: blanco o no-texto ⇒ None.
+    regla_comisiones: str | None = None
+
+    @field_validator("regla_comisiones", mode="before")
+    @classmethod
+    def _regla_liberal(cls, v: Any) -> str | None:
+        return regla_comisiones_liberal(v)

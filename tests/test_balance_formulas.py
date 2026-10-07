@@ -147,6 +147,8 @@ _SUMAS = [
     "ganancia_usd", "cobrado_mxn", "cobrado_real_mxn", "por_cobrar_mxn",
     "por_cobrar_usd",
 ]  # fmt: skip
+# Totales de la regla de comisiones a cargo del avión (API 0.0.65).
+_SUMAS_COMISIONES = ["comisiones_mxn", "comision_banco_avion_mxn", "comision_vendedor_prov_mxn"]
 
 
 def _hoja_api(filas: list[tuple], tc_prom: float | None, horas: float, *, litros=False) -> dict:
@@ -196,8 +198,11 @@ def _libro_api(
         filas = [ajusta_fila(f, s, tc_prom) for f, s in zip(filas, specs, strict=True)]
     an = [f.pop("_an") for f in filas]
     totales = {campo: r2(_suma(f[campo] for f in filas)) for campo in _SUMAS}
-    if any("comisiones_mxn" in f for f in filas):  # API 0.0.65
-        totales["comisiones_mxn"] = r2(_suma(f.get("comisiones_mxn") for f in filas))
+    # API 0.0.65: las tres llaves SOLO si alguna fila trae la regla
+    # (`filasVuelo.some(r => r.comisiones_detalle !== undefined)`).
+    if any("comisiones_detalle" in f for f in filas):
+        for campo in _SUMAS_COMISIONES:
+            totales[campo] = r2(_suma(f.get(campo) for f in filas))
     totales["tc_promedio"] = r2(tc_prom) if tc_prom is not None else None
     an_validos = [x for x in an if x is not None]
     totales["costo_hr_prom_usd"] = r2(_promedio(an_validos)) if an_validos else None
@@ -379,8 +384,12 @@ def _flota(libros: list[dict]) -> dict:
     totales = {
         campo: sum_t(campo) for campo in [*_SUMAS, "total_cotizacion_mxn", "comision_banco_mxn"]
     }
-    if all("comisiones_mxn" in p["totales"] for p in libros):  # API 0.0.65
-        totales["comisiones_mxn"] = sum_t("comisiones_mxn")
+    # API 0.0.65: Σ de los libros SOLO si ALGUNO las trae
+    # (`libros.some(p => p.totales.comisiones_mxn !== undefined)`): el libro
+    # EXTERNOS o un avión sin vuelos de la regla no las traen.
+    if any("comisiones_mxn" in p["totales"] for p in libros):
+        for campo in _SUMAS_COMISIONES:
+            totales[campo] = sum_t(campo)
     totales["tc_promedio"] = avg_t("tc_promedio")
     totales["costo_hr_prom_usd"] = avg_t("costo_hr_prom_usd")
     horas = totales["tiempo_vuelo"]

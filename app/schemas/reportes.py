@@ -705,6 +705,28 @@ class CotizacionInternaPdfRequest(BaseModel):
     cfdi_folio: str | None = None
 
 
+# ===== Nombre de la regla de COMISIONES a cargo del avión (6-oct-2026, API
+# 0.0.65). La vigencia es configurable en el API (`comisiones_al_avion_desde`,
+# default 2026-09-01) y sus propios textos la nombran con
+# `etiquetaReglaComisiones` («regla sep-2026»). Los balances y el reparto la
+# reciben en `regla_comisiones` (ADITIVO); sin ella, este respaldo: el texto
+# de siempre. =====
+REGLA_COMISIONES_RESPALDO = "regla de septiembre 2026"
+
+
+def regla_comisiones_liberal(v: Any) -> str | None:
+    """`regla_comisiones` del API: texto de UNA línea o None. Blanco o algo
+    que no es texto ⇒ None (los textos usan `REGLA_COMISIONES_RESPALDO`); sin
+    la palabra «regla» al inicio se antepone, para que «con la …» se lea
+    bien. Jamás un 422 por un texto."""
+    if not isinstance(v, str):
+        return None
+    texto = " ".join(v.split())
+    if not texto:
+        return None
+    return texto if texto.lower().startswith("regla") else f"regla {texto}"
+
+
 # ===== Balance por avión (réplica sistematizada del Excel "Balance N990GG").
 # El API (NestJS) calcula TODO el dinero; aquí SOLO se pinta el libro. Por eso
 # todos los numéricos son opcionales: None = celda vacía (nunca un 0 falso) y
@@ -1155,6 +1177,17 @@ class BalanceAvionRequest(BaseModel):
     # no se pinta (skew tolerante con API viejo).
     otros_movimientos: BalanceHojaOtrosMovimientos | None = None
     pendientes: list[str] = Field(default_factory=list)
+    # Nombre de la regla de COMISIONES a cargo del avión (6-oct-2026,
+    # ADITIVO): la etiqueta que el API arma con la vigencia CONFIGURADA
+    # («regla sep-2026», `etiquetaReglaComisiones`). Con ella las notas de
+    # COMISIONES, COBRADO REAL y 'cobranza' nombran esa regla; sin ella (API
+    # 0.0.65) dicen «septiembre 2026», como siempre.
+    regla_comisiones: str | None = None
+
+    @field_validator("regla_comisiones", mode="before")
+    @classmethod
+    def _regla_liberal(cls, v: Any) -> str | None:
+        return regla_comisiones_liberal(v)
 
 
 class BalanceGeneralResumenFila(BaseModel):
@@ -1439,6 +1472,15 @@ class BalanceGeneralRequest(BaseModel):
     # TOTAL + las 12 columnas del costo por hora de la hoja «utilidades» del
     # cliente. Ningún número del payload depende de la variante.
     variante: Literal["mensual", "general"] = VARIANTE_BALANCE_MENSUAL
+    # Nombre de la regla de COMISIONES (6-oct-2026, ADITIVO; ver
+    # `BalanceAvionRequest.regla_comisiones`): nota del RESUMEN y, si el
+    # `consolidado` no trae la suya, las hojas de la flota.
+    regla_comisiones: str | None = None
+
+    @field_validator("regla_comisiones", mode="before")
+    @classmethod
+    def _regla_liberal(cls, v: Any) -> str | None:
+        return regla_comisiones_liberal(v)
 
     @field_validator("variante", mode="before")
     @classmethod

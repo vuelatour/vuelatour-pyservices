@@ -17,6 +17,12 @@ from app.schemas.reparto import (
     RepartoPdfRequest,
     RepartoVueloLinea,
 )
+from app.services.reparto_comisiones import (
+    ETIQUETA_COLUMNA,
+    comisiones_al_avion,
+    frase_regla,
+    regla,
+)
 
 BRAND = "0F4C81"
 LIGHT = "EEF2F7"
@@ -114,6 +120,52 @@ _GRUPO_LABEL = {
 }
 
 
+# Nota bajo la tabla. La cláusula de en medio depende de la regla de
+# comisiones (6-oct-2026): sin comisiones absorbidas, la de siempre.
+_NOTA_INICIO = (
+    "Venta del avión cobrada = tiempo de vuelo + ajuste + IVA proporcional "
+    "(en vuelos multi-avión, la parte de cada matrícula en partes iguales por "
+    "tramo vendido; los ferries/tramos operativos no reparten). "
+    "Otros ingr. VuelaTour = TUAs/extras/pernocta/comisión del vendedor cobrados "
+    "(con su IVA): ingreso de VuelaTour, fuera del saldo y del reparto"
+)
+_NOTA_COMISION_VENDEDOR = (
+    "; el pago de la comisión al vendedor sale de VuelaTour, no del avión (ver "
+    "'otros movimientos' del Balance general)."
+)
+_NOTA_FIN = (
+    " Pendiente de cobro = parte del avión (se reparte al cobrar); Deuda total "
+    "del cliente = lo que debe COMPLETO (con TUAs/extras/pernocta/comisión), "
+    "solo cuando es mayor a la parte del avión."
+)
+
+
+def _nota_tabla(req: RepartoPdfRequest) -> str:
+    """Nota bajo la tabla. Con comisiones a cargo del avión (regla de
+    septiembre 2026) ya no dice que el pago de la comisión «no es del avión»:
+    explica la columna Comisiones (banco + vendedor)."""
+    if not comisiones_al_avion(req):
+        return _NOTA_INICIO + _NOTA_COMISION_VENDEDOR + _NOTA_FIN
+    return (
+        f"{_NOTA_INICIO}. {ETIQUETA_COLUMNA}: {frase_regla(req, 'con')}; restan "
+        f"antes del saldo (ver 'otros movimientos' del Balance general).{_NOTA_FIN}"
+    )
+
+
+def _nota_comision_por_avion(req: RepartoPdfRequest, por_avion: list[str]) -> str:
+    """«Comisión del vendedor cotizada por avión (…): XB-TST $80.00.»"""
+    if not comisiones_al_avion(req):
+        aclaracion = "ingreso de VuelaTour, su pago no es costo del avión"
+    else:
+        aclaracion = (
+            f"ingreso de VuelaTour; con la {regla(req)}, por fecha del vuelo, "
+            "su provisión la absorbe el avión en Comisiones"
+        )
+    return (
+        f"Comisión del vendedor cotizada por avión ({aclaracion}): " + " · ".join(por_avion) + "."
+    )
+
+
 def _title(ws, text: str, row: int, span: int, size: int = 14):
     cell = ws.cell(row=row, column=1, value=text)
     cell.font = Font(bold=True, size=size, color=BRAND)
@@ -150,6 +202,11 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         "Otros ingr. VuelaTour (informativo)",
         "Deuda total del cliente (informativo)",
     ]
+    # Columna E con las comisiones que absorbe el avión (regla de septiembre
+    # 2026: banco + provisión del vendedor): se nombra así cuando alguno las
+    # trae; si no, el encabezado de siempre (la columna va oculta).
+    if comisiones_al_avion(req):
+        headers[4] = ETIQUETA_COLUMNA
     hrow = 4
     _header_row(ws, hrow, headers)
 
@@ -214,26 +271,13 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     cd.fill = PatternFill("solid", fgColor=LIGHT)
     cd.border = _border
     r += 1
-    # Regla A (28-ago-2026): la comisión del vendedor ya no se descuenta al
-    # avión — el API manda 0. La columna se conserva por índice (money_cols,
-    # widths) pero se OCULTA cuando nadie trae monto (solo un payload viejo
-    # la muestra).
+    # Columna E (comisiones que restan al avión): con la regla A del
+    # 28-ago-2026 el API mandó 0 y desde la regla de septiembre 2026 trae lo
+    # que absorbe cada avión (banco + provisión del vendedor). Se conserva
+    # por índice (money_cols, widths) y se OCULTA cuando nadie trae monto.
     if not any(a.comisiones_venta_usd for a in req.aviones):
         ws.column_dimensions[get_column_letter(5)].hidden = True
-    nota = ws.cell(
-        row=r,
-        column=1,
-        value="Venta del avión cobrada = tiempo de vuelo + ajuste + IVA proporcional "
-        "(en vuelos multi-avión, la parte de cada matrícula en partes iguales por "
-        "tramo vendido; los ferries/tramos operativos no reparten). "
-        "Otros ingr. VuelaTour = TUAs/extras/pernocta/comisión del vendedor cobrados "
-        "(con su IVA): ingreso de VuelaTour, fuera del saldo y del reparto; el pago "
-        "de la comisión al vendedor sale de VuelaTour, no del avión (ver 'otros "
-        "movimientos' del Balance general). Pendiente de cobro = parte del avión "
-        "(se reparte al cobrar); Deuda total del cliente = lo que debe COMPLETO "
-        "(con TUAs/extras/pernocta/comisión), solo cuando es mayor a la parte del "
-        "avión.",
-    )
+    nota = ws.cell(row=r, column=1, value=_nota_tabla(req))
     nota.font = Font(italic=True, size=9, color="5B6470")
     ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
     # Composición cotizada de "Otros ingr. VuelaTour" (regla A: incluye la
@@ -257,12 +301,7 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     ]
     if por_avion:
         r += 1
-        nc = ws.cell(
-            row=r,
-            column=1,
-            value="Comisión del vendedor cotizada por avión (ingreso de VuelaTour, "
-            "su pago no es costo del avión): " + " · ".join(por_avion) + ".",
-        )
+        nc = ws.cell(row=r, column=1, value=_nota_comision_por_avion(req, por_avion))
         nc.font = Font(italic=True, size=9, color="5B6470")
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
     # Nota global del TC oficial de respaldo (29-ago-2026): misma redacción

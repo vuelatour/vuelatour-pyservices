@@ -512,6 +512,51 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `test_balance_empresa_vuelatour` y `test_balance_extension_horario`. Tests:
   `tests/test_balance_comisiones.py` (espejo del API con la regla por fila
   vía `ajusta_fila` de `_libro_api`; fórmulas verificadas sin degradar).
+  **Revisión (6-oct-2026)**: (a) el **REPARTO a socios** (PDF y Excel) recibe
+  en `comisiones_venta_usd` —el campo de siempre, que su cascada ya resta—
+  la parte del avión de la comisión bancaria + la provisión del vendedor, y
+  seguía imprimiendo «(-) Comisiones de venta» junto a «su pago no es costo
+  del avión». Fuente única `app/services/reparto_comisiones.py`: con algún
+  avión que absorba comisiones (`comisiones_al_avion`: `comisiones_venta_usd`
+  ≠ 0, el mismo criterio con que se imprime la fila y se muestra la columna;
+  desde la regla A del 28-ago el API solo lo llena con la regla de
+  septiembre, así que no hace falta otra bandera) la fila y la
+  columna E se llaman «(-) Comisiones (banco + vendedor)» / «Comisiones (banco
+  + vendedor)», el resumen, el pie y las notas del Excel dicen «Con la regla …
+  (por fecha del vuelo), el avión absorbe la provisión de la comisión del
+  vendedor y su parte de la comisión bancaria de sus cobros» y la línea gris
+  del avión que las absorbe (`absorbe_comisiones`) «su provisión resta en
+  Comisiones» (cabe en la celda de 120 mm a 7.5 pt: test). **Sin comisiones
+  absorbidas, el documento de siempre** (verificado contra b38102d: flujos
+  de contenido del PDF y miembros del .xlsx idénticos en 33 payloads, con y
+  sin etiqueta). (b) Nombre de la regla ADITIVO `regla_comisiones`
+  (`RepartoPdfRequest`, `BalanceAvionRequest`, `BalanceGeneralRequest`;
+  validador `regla_comisiones_liberal`). **El API 0.0.65 todavía no lo
+  manda**: debe mandar `etiquetaReglaComisiones(vigencia)` («regla sep-2026»)
+  — la vigencia es configurable. `_con_regla` cambia «regla de septiembre
+  2026» / «desde septiembre 2026» por la etiqueta en las notas de
+  COMISIONES, COBRADO REAL, RESUMEN y 'cobranza' (en el general, la del
+  request llega al consolidado si este no trae la suya); sin ella
+  (`REGLA_COMISIONES_RESPALDO`) el texto de siempre, byte-idéntico. (c) Con
+  vuelos de la regla en el periodo (`_regla_vigente`: el consolidado trae
+  `totales.comisiones_mxn`, que el API manda SOLO si alguna fila de avión cae
+  en la vigencia) la fila 2 de 'otros movimientos' (`_OM_REGLA_COMISIONES`) y
+  la base al pie del bloque VUELATOUR (empresa) (`_EMPRESA_REGLA_COMISIONES`,
+  también dentro del pie de respaldo) explican la línea de INGRESO «comisión
+  del vendedor a cargo del avión …» (la paga el avión, no el cliente) y que la
+  comisión bancaria de VuelaTour es solo su parte; sin vuelos de la regla,
+  los textos de siempre (huellas intactas). (d) `_NOTA_COBRANZA_NETO` ya no
+  dice «las comisiones las absorbe el avión» (un vuelo EXTERNOS va neto y
+  ningún avión absorbe nada) y la nota de respaldo de COMISIONES dice
+  «provisión» sin «+ IVA». (e) El espejo del API (`_vigente`, `_libro_api`,
+  `_flota`) manda la forma EXACTA del JSON: fila vigente sin comisiones con
+  `comisiones_mxn` null, las partes en 0 y detalle []; fila EXTERNOS con el
+  neto y sin llaves de comisiones; totales del libro si alguna fila trae
+  `comisiones_detalle` y de la flota si ALGÚN libro trae `comisiones_mxn`.
+  Tests: `tests/test_reparto_comisiones.py` y, en
+  `tests/test_balance_comisiones.py`, #403 con la forma real, #504 EXTERNOS
+  (mensual y general), la etiqueta del API y las aclaraciones de 'otros
+  movimientos' y del bloque empresa.
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

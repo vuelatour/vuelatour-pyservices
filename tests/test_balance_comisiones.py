@@ -25,9 +25,18 @@ socios); aquí solo se pinta:
   MXN» y GANANCIA − COMISIONES cuando el avión las trae.
 
 Los payloads salen del ESPEJO del API de `test_balance_formulas` con la regla
-aplicada fila por fila (`_vigente`), así cada fórmula se compara contra el
-número que el API mandaría. Un API ≤ 0.0.64 (sin los campos) da el libro de
-siempre salvo los encabezados y sus textos (huellas de los demás tests).
+aplicada fila por fila (`_vigente`, con la forma EXACTA del JSON del API: fila
+vigente sin comisiones con `comisiones_mxn` null y las partes en 0, fila
+EXTERNOS con el neto y sin llaves de comisiones, totales de la flota si
+ALGÚN libro las trae), así cada fórmula se compara contra el número que el
+API mandaría. Un API ≤ 0.0.64 (sin los campos) da el libro de siempre salvo
+los encabezados y sus textos (huellas de los demás tests).
+
+Revisión 6-oct-2026: el nombre de la regla viene del API (`regla_comisiones`,
+la vigencia es configurable; sin él, «septiembre 2026»), y 'otros
+movimientos' y el bloque VUELATOUR (empresa) explican la línea «a cargo del
+avión» y la parte de VuelaTour de la comisión bancaria cuando el periodo
+trae vuelos de la regla.
 """
 
 from __future__ import annotations
@@ -44,12 +53,14 @@ from openpyxl.utils import get_column_letter
 from app.config import get_settings
 from app.main import app
 from app.schemas.reportes import (
+    REGLA_COMISIONES_RESPALDO,
     BalanceAvionCobro,
     BalanceAvionRequest,
     BalanceAvionTotales,
     BalanceAvionVuelo,
     BalanceGeneralRequest,
     BalanceGeneralResumenFila,
+    regla_comisiones_liberal,
 )
 from app.services import xlsx_formulas
 from app.services.balance_avion_xlsx import (
@@ -57,15 +68,22 @@ from app.services.balance_avion_xlsx import (
     _COLS_GENERAL,
     _DISP_GENERAL,
     _DISP_MENSUAL,
+    _EMPRESA_REGLA_COMISIONES,
     _GRUPO_COSTO_HORA,
+    _NOTA_BLOQUE_EMPRESA,
+    _NOTA_COBRADO_REAL,
     _NOTA_COBRANZA_NETO,
     _NOTA_COMISIONES,
+    _NOTA_EMPRESA_BASE,
     _NOTA_ENCABEZADO_COMISIONES,
     _NOTA_ENCABEZADO_REMANENTE,
     _NOTA_GANANCIA,
+    _OM_REGLA_COMISIONES,
+    _RESUMEN_COMISIONES,
     _bruto_neto,
     _cobros_a_4,
     _comisiones,
+    _con_regla,
     _monto_detalle_cobranza,
     _neto_cobro,
     _nota_cobro,
@@ -77,6 +95,7 @@ from app.services.balance_avion_xlsx import (
     render_balance_avion_xlsx,
     render_balance_general_xlsx,
 )
+from tests import test_balance_empresa_vuelatour as t_empresa
 from tests import test_balance_formulas as tf
 from tests._evaluador_formulas import verificar_libro
 
@@ -108,40 +127,46 @@ DETALLE_407 = ["Comisión vendedor (Alex Saab) · $1,180.00 · provisión = coti
 
 def _vigente(fila: dict, spec: dict, tc_prom: float | None) -> dict:
     """La fila como la manda el API 0.0.65 (paso 2 de buildPayload con la
-    regla). `spec["regla"]`: ausente ⇒ la fila de siempre (API ≤ 0.0.64);
-    None ⇒ vuelo anterior a la vigencia (campos en null); dict ⇒ vigente:
-    cada cobro gana su neto, la parte del avión de la comisión bancaria es
-    comisión × venta avión ÷ total cotización (el factor del prorrateo),
-    más la provisión del vendedor; GANANCIA = REMANENTE − COMISIONES."""
-    if "regla" not in spec:
-        return fila
-    regla = spec["regla"]
+    regla), con la MISMA forma del JSON real (revisión 6-oct-2026: el espejo
+    mandaba 0.0 / None donde el API manda null / 0). `spec["regla"]`:
+    - ausente o None ⇒ la fila de siempre: API ≤ 0.0.64 o vuelo ANTERIOR a
+      la vigencia (el 0.0.65 no manda ni las llaves nuevas ni el neto);
+    - {"externos": True} ⇒ fila del libro EXTERNOS en la vigencia: cada cobro
+      gana su neto y COBRADO REAL = Σ netos, SIN llaves de comisiones (no hay
+      avión que las absorba) y GANANCIA = REMANENTE;
+    - otro dict ⇒ fila de AVIÓN en la vigencia: neto por cobro; las dos
+      partes como NÚMERO (0 sin comisión): la del avión de la comisión
+      bancaria (comisión × venta avión ÷ total cotización, el factor del
+      prorrateo) y la provisión del vendedor; `comisiones_mxn` = su suma o
+      null si da 0; `comisiones_detalle` lista ([] sin conceptos); GANANCIA =
+      REMANENTE − COMISIONES."""
+    regla = spec.get("regla")
     if regla is None:
-        return {
-            **fila,
-            "comisiones_mxn": None,
-            "comisiones_detalle": [],
-            "comision_banco_avion_mxn": None,
-            "comision_vendedor_prov_mxn": None,
-        }
+        return fila
     cobros = [
         {**c, "neto_mxn": r2(c["monto_mxn"] - (c.get("comision_mxn") or 0))} for c in fila["cobros"]
     ]
-    comision_cobros = tf._suma(c.get("comision_mxn") for c in fila["cobros"])
+    fila = {
+        **fila,
+        "cobros": cobros,
+        "cobrado_real_mxn": r2(tf._suma(c["neto_mxn"] for c in cobros)),
+    }
+    if regla.get("externos"):
+        return {**fila, "es_externo": True}
+    comision_cobros = tf._suma(c.get("comision_mxn") for c in cobros)
     factor = (
         fila["total_mxn"] / fila["total_cotizacion_mxn"]
         if fila["total_mxn"] and fila["total_cotizacion_mxn"]
         else 1
     )
-    banco = r2(comision_cobros * factor) if comision_cobros else None
-    vendedor = regla.get("vendedor")
-    comisiones = r2((banco or 0) + (vendedor or 0))
-    ganancia = r2(fila["remanente_mxn"] - comisiones)
+    banco = r2(comision_cobros * factor)
+    vendedor = r2(regla.get("vendedor", 0.0))
+    total = r2(banco + vendedor)
+    comisiones = total if total != 0 else None
+    ganancia = r2(fila["remanente_mxn"] - (comisiones or 0))
     tc_g = fila["tc_costos"] if fila["tc_costos"] is not None else tc_prom
     return {
         **fila,
-        "cobros": cobros,
-        "cobrado_real_mxn": r2(tf._suma(c["neto_mxn"] for c in cobros)),
         "comisiones_mxn": comisiones,
         "comisiones_detalle": regla.get("detalle", []),
         "comision_banco_avion_mxn": banco,
@@ -155,8 +180,9 @@ def _specs_tst() -> list[dict]:
     """XA-TST de `test_balance_formulas` con la regla: #401 comisión bancaria
     (5 % del 2.º cobro, texto ya armado por el API) + vendedor; #402
     multi-avión con la comisión bancaria de su 2.º cobro (parte del avión
-    82 %, sin detalle de vendedor); #403 vigente SIN comisiones (0); #404 y
-    #406 anteriores a la vigencia (null); #405 comisión bancaria SIN
+    82 %, sin detalle de vendedor); #403 vigente SIN comisiones (la forma
+    real: `comisiones_mxn` null, partes en 0, detalle []); #404 y #406
+    anteriores a la vigencia (sin las llaves); #405 comisión bancaria SIN
     detalle (la nota se compone con las partes)."""
     specs = copy.deepcopy(tf._SPECS_TST)
     por_clave = {s["clave"]: s for s in specs}
@@ -399,13 +425,15 @@ def test_nota_de_la_celda_comisiones() -> None:
     con = ["Comisiones del vuelo · 2 conceptos", *DETALLE_401]
     assert _nota_comisiones(BalanceAvionVuelo(comisiones_detalle=con)) == "\n".join(con)
     # Sin detalle: una línea por parte que mande el API.
+    # La provisión sin «+ IVA» (revisión 6-oct-2026): no toda cotización lo
+    # cobra y el detalle del API sí lo distingue («cotizado (sin IVA)»).
     partes = BalanceAvionVuelo(comision_banco_avion_mxn=123.39, comision_vendedor_prov_mxn=2360.0)
     assert _nota_comisiones(partes) == (
         "2 conceptos\nComisión bancaria (parte del avión) · $123.39\n"
-        "Comisión del vendedor (provisión = cotizado + IVA) · $2,360.00"
+        "Comisión del vendedor (provisión) · $2,360.00"
     )
     assert _nota_comisiones(BalanceAvionVuelo(comision_vendedor_prov_mxn=1180.0)) == (
-        "Comisión del vendedor (provisión = cotizado + IVA) · $1,180.00"
+        "Comisión del vendedor (provisión) · $1,180.00"
     )
     # Sin nada que decir (0, null o vacío): sin nota.
     assert (
@@ -493,10 +521,11 @@ def test_individual_comisiones_y_ganancia(registros) -> None:
             assert ganancia == f"=ROUND({_ref(ws, f, REMANENTE)}-AC{f},2)", v.clave
         assert _celda(wsv, f, GANANCIA).value == v.ganancia_mxn, v.clave
         assert _celda(wsv, f, "GANANCIA\nUSD").value == v.ganancia_usd, v.clave
-    # Las notas por fila: dos conceptos (#401), uno (#402), ninguna con 0 (#403)
-    # y compuesta con las partes del API (#405, sin detalle).
+    # Las notas por fila: dos conceptos (#401), uno (#402), ninguna sin
+    # comisiones (#403: null del API, celda vacía) y compuesta con las partes
+    # del API (#405, sin detalle).
     assert ws["AC3"].comment.text.startswith("2 conceptos\nComisión bancaria")
-    assert ws["AC5"].value == 0 and ws["AC5"].comment is None
+    assert ws["AC5"].value is None and ws["AC5"].comment is None
     assert ws["AC7"].comment.text == "Comisión bancaria (parte del avión) · $500.00"
     assert ws["AC6"].value is None and ws["AC6"].comment is None  # #404 anterior
     # La ganancia del #401 ya descuenta las dos comisiones.
@@ -652,6 +681,240 @@ def test_variante_general_remanente_despues_de_comisiones(registros) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 5b) Formas REALES del JSON del API 0.0.65 (revisión 6-oct-2026: el espejo no
+#     las reproducía y ningún test las cuidaba).
+# ---------------------------------------------------------------------------
+
+# Vuelo cubierto por un operador EXTERNO (libro EXTERNOS del mes): su cobro
+# entra NETO de la comisión del banco, pero ningún avión la absorbe — el API
+# no manda llaves de comisiones (caso #504 de la sonda: 18,000 − 900).
+_SPECS_EXTERNOS = [
+    {"clave": "#504 · Externo", "fecha": "2026-09-18", "D": 2.0, "E": 500, "G": 0,
+     "I": 1000.0, "J": 0.0, "K": 18.0, "O": None, "op": 9000.0, "z": 18.0,
+     "cobros": [tf._cobro("2026-09-18", 18000.0, 900.0)], "cobrado": 18000.0,
+     "regla": {"externos": True}},
+]  # fmt: skip
+
+
+def _libro_externos() -> dict:
+    return tf._libro_api(
+        "EXTERNOS", None, copy.deepcopy(_SPECS_EXTERNOS), {}, [], ajusta_fila=_vigente
+    )
+
+
+def _general_con_externos(variante: str = "mensual") -> BalanceGeneralRequest:
+    """TST + DOS + EXTERNOS: el consolidado junta los tres libros; EXTERNOS no
+    tiene socios ni bloque en 'balance' (no viaja en `aviones`)."""
+    libros = [_libro_tst(), _libro_dos(), _libro_externos()]
+    payload = tf._general_payload(libros)
+    payload["aviones"] = libros[:2]
+    return BalanceGeneralRequest.model_validate({**payload, "variante": variante})
+
+
+def _fila_de(ws, clave: str) -> int:
+    return next(c.row for c in ws["A"] if c.value == clave)
+
+
+def test_fila_vigente_sin_comisiones_con_la_forma_del_api() -> None:
+    """#403: vuelo de la regla SIN comisiones. El API manda `comisiones_mxn`
+    null, las dos partes en 0 y el detalle [] (no 0.0 / null): COMISIONES
+    vacía y sin nota, GANANCIA = REMANENTE (`=AA`) y, en la variante
+    general, REMANENTE VENTA MENOS COMPRA = VENTA − PROVEEDOR."""
+    fila = next(f for f in _libro_tst()["vuelos"] if f["clave"] == "#403 · Traslado")
+    assert fila["comisiones_mxn"] is None
+    assert (fila["comision_banco_avion_mxn"], fila["comision_vendedor_prov_mxn"]) == (0, 0)
+    assert fila["comisiones_detalle"] == []
+    assert fila["ganancia_mxn"] == fila["remanente_mxn"]
+    ws = load_workbook(BytesIO(render_balance_avion_xlsx(_individual())))[MAESTRA_TST]
+    f = _fila_de(ws, "#403 · Traslado")
+    assert ws[f"AD{f}"].value == f"=AA{f}"
+    assert ws[f"AC{f}"].value is None and ws[f"AC{f}"].comment is None
+    gen = load_workbook(BytesIO(render_balance_general_xlsx(_general("general"))))[MAESTRA]
+    f = _fila_de(gen, "#403 · Traslado")
+    k = get_column_letter(_col(gen, "VENTA AVIÓN\nMXN"))
+    y = get_column_letter(_col(gen, "TOTAL PARA\nPROVEEDOR (PESOS)"))
+    assert _celda(gen, f, REMANENTE_CPH).value == f"=ROUND({k}{f}-{y}{f},2)"
+    com = _celda(gen, f, COMISIONES)
+    assert com.value is None and com.comment is None
+
+
+@pytest.mark.parametrize("variante", ["mensual", "general"])
+def test_fila_externos_cobro_neto_sin_llaves_de_comisiones(variante, registros) -> None:
+    """#504 (libro EXTERNOS): el API manda el NETO del cobro y COBRADO REAL =
+    Σ netos, pero NINGUNA llave de comisiones. COBRO 1 = neto con su nota,
+    COBRADO REAL con su fórmula SUM, COMISIONES vacía y GANANCIA = REMANENTE.
+    Los totales de la flota llevan COMISIONES porque ALGÚN libro las trae
+    (`libros.some(...)` del API; EXTERNOS no)."""
+    ext = _libro_externos()
+    fila = ext["vuelos"][0]
+    assert {"comisiones_mxn", "comisiones_detalle", "comision_banco_avion_mxn"}.isdisjoint(fila)
+    assert fila["cobros"][0]["neto_mxn"] == 17100.0 == fila["cobrado_real_mxn"]
+    assert "comisiones_mxn" not in ext["totales"]
+    req = _general_con_externos(variante)
+    data = render_balance_general_xlsx(req)
+    assert verificar_libro(data)
+    wb, wv = _libros(data)
+    ws, wsv = wb[MAESTRA], wv[MAESTRA]
+    # Solo la degradada de siempre (COSTO TOTAL del #405, mensual).
+    esperadas = [(MAESTRA, f"U{_fila_de(ws, '#405 · Cliente Cuatro')}")]
+    assert registros[-1].degradadas() == (esperadas if variante == "mensual" else [])
+    disp = _DISP_GENERAL if variante == "general" else _DISP_MENSUAL
+    f = _fila_de(ws, "#504 · Externo")
+    cobro1 = ws[f"{disp.cobro_mxn_letras[0]}{f}"]
+    assert cobro1.value == 17100.0
+    assert cobro1.comment.text == (
+        "18/09/2026 · Bruto $18,000.00 · comisión banco $900.00 · neto $17,100.00 · "
+        "TRANSFERENCIA → HSBC Pesos"
+    )
+    cobros = ",".join(f"{letra}{f}" for letra in disp.cobro_mxn_letras)
+    assert _celda(ws, f, COBRADO_REAL).value == f"=ROUND(SUM({cobros}),2)"
+    assert _celda(wsv, f, COBRADO_REAL).value == 17100.0
+    com = _celda(ws, f, COMISIONES)
+    assert com.value is None and com.comment is None
+    if variante == "mensual":
+        assert _celda(ws, f, GANANCIA).value == f"={_ref(ws, f, REMANENTE)}"
+        assert _celda(wsv, f, GANANCIA).value == 9000.0
+    else:
+        k = get_column_letter(_col(ws, "VENTA AVIÓN\nMXN"))
+        y = get_column_letter(_col(ws, "TOTAL PARA\nPROVEEDOR (PESOS)"))
+        assert _celda(ws, f, REMANENTE_CPH).value == f"=ROUND({k}{f}-{y}{f},2)"
+        assert _celda(wsv, f, REMANENTE_CPH).value == 9000.0
+    t = req.consolidado.totales
+    assert t.comisiones_mxn == r2(
+        _libro_tst()["totales"]["comisiones_mxn"] + _libro_dos()["totales"]["comisiones_mxn"]
+    )
+    assert wsv.cell(row=_tot(ws), column=_col(ws, COMISIONES)).value == t.comisiones_mxn
+    # 'cobranza': neto con el bruto al lado y la nota de los netos, que ya no
+    # dice que el avión absorbe todas las comisiones (EXTERNOS no).
+    cob = wb["cobranza"]
+    assert any(
+        isinstance(c.value, str) and "$17,100.00 neto (bruto $18,000.00)" in c.value
+        for fila_c in cob.iter_rows()
+        for c in fila_c
+    )
+    assert _NOTA_COBRANZA_NETO in _pie(cob)
+    assert "EXTERNOS" in _NOTA_COBRANZA_NETO
+    assert "las comisiones las absorbe el avión" not in _NOTA_COBRANZA_NETO
+
+
+# Etiqueta de la regla como la arma el API con una vigencia distinta del 1.º
+# (`etiquetaReglaComisiones`).
+REGLA_API = "regla desde 15-oct-2026"
+_TEXTOS_CON_MES = (
+    _NOTA_ENCABEZADO_COMISIONES,
+    _NOTA_COMISIONES,
+    _RESUMEN_COMISIONES,
+    _NOTA_COBRADO_REAL,
+    _NOTA_COBRANZA_NETO,
+)
+
+
+def test_regla_comisiones_liberal() -> None:
+    assert regla_comisiones_liberal(" regla sep-2026 ") == "regla sep-2026"
+    assert regla_comisiones_liberal("sep-2026") == "regla sep-2026"
+    assert regla_comisiones_liberal("Regla\n desde 15-oct-2026") == "Regla desde 15-oct-2026"
+    for nada in (None, "", "   ", 2026, ["regla"], {"x": 1}):
+        assert regla_comisiones_liberal(nada) is None
+    assert BalanceAvionRequest.model_validate({"regla_comisiones": 3}).regla_comisiones is None
+    assert BalanceAvionRequest().regla_comisiones is None
+    general = BalanceGeneralRequest.model_validate({"regla_comisiones": " sep-2026"})
+    assert general.regla_comisiones == "regla sep-2026"
+
+
+def test_textos_con_la_regla_del_api() -> None:
+    """La vigencia es configurable en el API: con `regla_comisiones` ningún
+    texto nombra «septiembre»; sin ella, el texto de siempre tal cual."""
+    for texto in _TEXTOS_CON_MES:
+        assert "septiembre 2026" in texto
+        assert _con_regla(texto, None) == texto
+        con = _con_regla(texto, REGLA_API)
+        assert "septiembre" not in con and REGLA_API in con, texto
+    assert _con_regla(_NOTA_COBRANZA_NETO, REGLA_API).startswith(
+        f"Con la {REGLA_API} COBRADO REAL va NETO"
+    )
+    assert f"(COBRO 1..4): con la {REGLA_API} cada COBRO va NETO" in _con_regla(
+        _NOTA_COBRADO_REAL, REGLA_API
+    )
+    assert _con_regla(_NOTA_ENCABEZADO_COMISIONES, REGLA_API).startswith(
+        f"COMISIONES ({REGLA_API}, por fecha del vuelo)"
+    )
+
+
+def test_libros_con_la_regla_del_api() -> None:
+    ind = _libro_tst()
+    ind["regla_comisiones"] = REGLA_API
+    wb = load_workbook(BytesIO(render_balance_avion_xlsx(BalanceAvionRequest.model_validate(ind))))
+    ws = wb[MAESTRA_TST]
+    assert ws["AC2"].comment.text == _con_regla(_NOTA_ENCABEZADO_COMISIONES, REGLA_API)
+    pie, pie_cob = _pie(ws), _pie(wb["cobranza"])
+    assert any(x.startswith(_con_regla(_NOTA_COMISIONES, REGLA_API)) for x in pie)
+    assert _con_regla(_NOTA_COBRADO_REAL, REGLA_API) in pie
+    assert _con_regla(_NOTA_COBRANZA_NETO, REGLA_API) in pie_cob
+    assert not any("septiembre 2026" in x for x in (*pie, *pie_cob))
+    # General: la etiqueta SOLO en el request también llega a las hojas de la
+    # flota (el consolidado no la trae).
+    payload = _general("general").model_dump(mode="json")
+    payload["regla_comisiones"] = REGLA_API
+    assert payload["consolidado"]["regla_comisiones"] is None
+    data = render_balance_general_xlsx(BalanceGeneralRequest.model_validate(payload))
+    assert verificar_libro(data)
+    g = load_workbook(BytesIO(data))
+    resumen = _pie(g["RESUMEN flota"])
+    assert any(x.startswith(_con_regla(_RESUMEN_COMISIONES, REGLA_API)) for x in resumen)
+    gm = g[MAESTRA]
+    nota = gm.cell(row=2, column=_DISP_GENERAL.comision_col).comment.text
+    assert nota == _con_regla(_NOTA_ENCABEZADO_COMISIONES, REGLA_API)
+    assert _con_regla(_NOTA_COBRADO_REAL, REGLA_API) in _pie(gm)
+    assert _con_regla(_NOTA_COBRANZA_NETO, REGLA_API) in _pie(g["cobranza"])
+    assert _OM_REGLA_COMISIONES.format(regla=REGLA_API) in g["otros movimientos"]["A2"].value
+    for hoja in ("RESUMEN flota", MAESTRA, "cobranza", "otros movimientos"):
+        assert not any("septiembre 2026" in x for x in _pie(g[hoja])), hoja
+
+
+def _general_dict(libros: list[dict] | None = None) -> dict:
+    """Balance general (dict, forma del API) con el bloque VUELATOUR
+    (empresa) de `test_balance_empresa_vuelatour`."""
+    p = tf._general_payload(libros if libros is not None else [_libro_tst(), _libro_dos()])
+    p["empresa"] = t_empresa._empresa_api(p)
+    return p
+
+
+def test_otros_movimientos_y_empresa_explican_la_regla() -> None:
+    """Con vuelos de la regla (el consolidado trae COMISIONES en sus
+    totales), la leyenda de 'otros movimientos' y la base del bloque
+    VUELATOUR (empresa) explican la línea de INGRESO «comisión del vendedor
+    a cargo del avión …» (la paga el avión, no el cliente) y que la
+    comisión bancaria de VuelaTour es solo su parte; sin vuelos de la regla,
+    los textos de siempre."""
+    p = _general_dict()
+    assert p["consolidado"]["totales"]["comisiones_mxn"] is not None
+    data = render_balance_general_xlsx(BalanceGeneralRequest.model_validate(p))
+    assert verificar_libro(data)
+    wb = load_workbook(BytesIO(data))
+    a2 = wb["otros movimientos"]["A2"].value
+    om = _OM_REGLA_COMISIONES.format(regla=REGLA_COMISIONES_RESPALDO)
+    assert om in a2 and a2.index(om) < a2.index(" UNA FILA POR VUELO")
+    assert a2.startswith("Ingreso de VuelaTour (no del avión)")
+    base = _NOTA_EMPRESA_BASE + _EMPRESA_REGLA_COMISIONES.format(regla=REGLA_COMISIONES_RESPALDO)
+    pie = _pie(wb["balance"])
+    assert base in pie and _NOTA_EMPRESA_BASE not in pie
+    # Sin la `nota` del API: el pie fijo con la misma base aclarada.
+    p["empresa"]["nota"] = None
+    wb = load_workbook(
+        BytesIO(render_balance_general_xlsx(BalanceGeneralRequest.model_validate(p)))
+    )
+    assert _NOTA_BLOQUE_EMPRESA.replace(_NOTA_EMPRESA_BASE, base) in _pie(wb["balance"])
+    # Periodo sin vuelos de la regla (o API ≤ 0.0.64): los textos de siempre.
+    viejo = _general_dict([tf._payload_tst(), tf._payload_dos()])
+    wb = load_workbook(
+        BytesIO(render_balance_general_xlsx(BalanceGeneralRequest.model_validate(viejo)))
+    )
+    assert "a cargo del avión" not in wb["otros movimientos"]["A2"].value
+    pie = _pie(wb["balance"])
+    assert _NOTA_EMPRESA_BASE in pie and base not in pie
+
+
+# ---------------------------------------------------------------------------
 # 6) API previo (sin los campos): el libro de siempre salvo los encabezados.
 # ---------------------------------------------------------------------------
 
@@ -717,6 +980,7 @@ def test_rutas_aceptan_el_payload_del_api(monkeypatch, request) -> None:
     headers = {"X-Internal-Token": TOKEN}
     individual = _libro_tst()
     individual["vuelos"][2]["comisiones_detalle"] = None  # liberal
+    individual["regla_comisiones"] = 2026  # liberal: no es texto ⇒ None
     res = client.post("/pdf/balance-avion-xlsx", json=individual, headers=headers)
     assert res.status_code == 200, res.text
     ws = load_workbook(BytesIO(res.content))[MAESTRA_TST]
