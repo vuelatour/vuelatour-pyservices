@@ -13,8 +13,8 @@ Aquí solo se pinta, TAL CUAL, en una columna nueva AL FINAL del bloque STATUS
 DE COBROS — en el libro individual y en la hoja «reporte horas FLOTA» del
 Balance general (las dos salen de `_hoja_maestra`). Sin el campo (API viejo) o
 en null, la celda va vacía; la fila TOTALES también. Nada más se mueve: la
-columna va al final, así que `_COBRO1_COL`, `_COMISION_COL` y las columnas de
-la izquierda quedan donde estaban.
+columna va al final, así que COBRO 1, COMISIÓN VENDEDOR (`_DISP_MENSUAL`) y las
+columnas de la izquierda quedan donde estaban.
 """
 
 from io import BytesIO
@@ -33,9 +33,8 @@ from app.schemas.reportes import (
     BalanceHojaOtrosMovimientos,
 )
 from app.services.balance_avion_xlsx import (
-    _COBRO1_COL,
     _COLS,
-    _COMISION_COL,
+    _DISP_MENSUAL,
     _NOTA_FACTURA_VUELATOUR,
     FILL_COBROS,
     LIGHT,
@@ -133,9 +132,10 @@ def test_cols_la_columna_nueva_es_la_ultima_de_status_de_cobros() -> None:
     assert [c[2] for c in _COLS].count("factura_vuelatour") == 1
     # Los índices derivados siguen apuntando a su columna (se buscan en
     # `_COLS`, pero se congela que no se corrieron).
-    assert _COLS[_COBRO1_COL - 1][1] == "COBRO 1\nFECHA"
-    assert _COLS[_COMISION_COL - 1][2] == "comision_vendedor_mxn"
-    assert (COL, _COBRO1_COL, _COMISION_COL) == (47, 35, 29)
+    cobro1, comision = _DISP_MENSUAL.cobro1_col, _DISP_MENSUAL.comision_col
+    assert _COLS[cobro1 - 1][1] == "COBRO 1\nFECHA"
+    assert _COLS[comision - 1][2] == "comision_vendedor_mxn"
+    assert (COL, cobro1, comision) == (47, 35, 29)
 
 
 @pytest.mark.parametrize("hoja", ["individual", "general"])

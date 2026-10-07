@@ -227,8 +227,9 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   TOTALES vacía (no está en `_TOTAL_MAP`) y guarda «=» (`_texto_literal`
   importado de `caja_chica_xlsx`; la misma guarda en la columna 10
   «factura vuelatour» de 'otros movimientos'). Por ir al final **no se
-  corre nada**: `_COBRO1_COL` = 35 y `_COMISION_COL` = 29 siguen igual, y
-  lo demás se busca por atributo. Nota al pie `_NOTA_FACTURA_VUELATOUR` justo después
+  corre nada**: COBRO 1 = 35 y COMISIÓN VENDEDOR = 29 siguen igual (hoy
+  `_DISP_MENSUAL.cobro1_col` / `.comision_col`), y lo demás se busca por
+  atributo. Nota al pie `_NOTA_FACTURA_VUELATOUR` justo después
   de la del ESTATUS DE COBRO (las notas de abajo bajan una fila). Sale en
   el libro INDIVIDUAL y en «reporte horas FLOTA» del GENERAL (los dos usan
   `_hoja_maestra`); 'cobranza' y el RESUMEN no cambian y 'otros
@@ -367,8 +368,18 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   'general', default 'mensual'; liberal: mayúsculas/espacios se normalizan,
   null o desconocido ⇒ mensual, jamás 422). **Mensual o sin la llave ⇒ libro
   BYTE-IDÉNTICO** (verificado miembro a miembro contra HEAD 93486c1 en los 37
-  libros de los tests del balance; huellas congeladas). **General ⇒ solo
-  cambia «reporte horas FLOTA»**: `_COLS_GENERAL` (44 columnas) = CLAVE..
+  libros de los tests del balance; congelado con la huella de layout
+  `_FIRMAS_HOY` Y con los BYTES: `_MIEMBROS_HOY` = primeros 16 hex del sha256
+  de cada miembro del .xlsx salvo `docProps/core.xml`, de 3 libros, calculados
+  con el árbol de 93486c1 y openpyxl 3.1.5 — la huella de layout no ve el
+  tamaño de las notas (VML), el color ni los otros lados de un borde, ni la
+  fuente; si solo cambia la versión de openpyxl, se regeneran con ese árbol).
+  La ruta nombra el archivo `balance-{variante}-vuelatour-…` (el API pone el
+  suyo al descargar). **General ⇒ cambia «reporte horas FLOTA»** (fuera de
+  ella solo las letras con que la citan y la nota de 'repartidos a aviones',
+  que en la general dice que el TUA pagado queda en el desglose de TOTAL PARA
+  PROVEEDOR (PESOS): `_CPH_NOTA_REPARTIDOS_A_AVIONES`; la de siempre
+  nombraba OPERACIONES): `_COLS_GENERAL` (44 columnas) = CLAVE..
   ESTADO, VENTA y TIEMPO iguales; «COSTO TOTAL (MXN)» = COSTO TOTAL + TIPO
   CAMBIO COSTOS; «COSTO POR HORA» = las 12 columnas de la hoja «utilidades»
   del cliente en su orden y con sus nombres (repiten a propósito venta s/IVA,
@@ -377,10 +388,24 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   NOTA de TOTAL PARA PROVEEDOR (PESOS): «Operación $x · Piloto $y · Otros $z
   · Permiso AFAC $w» + sus líneas de detalle (`_nota_desglose_costo`)— e
   INDICADORES. **Columnas por LLAVE, jamás letras fijas**: `_Disposicion`
-  (letra, COBRO 1, total_map, rellenos… de cada juego; `_DISP_MENSUAL`
-  reproduce `_LETRA`/`_COBRO1_COL`/`_COMISION_COL`); las columnas que repiten
-  un dato son llaves `cph_*` (`_ORIGEN_GENERAL`, valor) e IVA X HR y TOTAL
-  PAGADO S/IVA son la resta de dos campos del API (`_valor_columna`).
+  (letra, COBRO 1, total_map, rellenos… de cada juego); los mapas fijos del
+  módulo (`_LETRA`, `_COBRO1_COL`, `_COMISION_COL`, `_COBRO_MXN_LETRAS`) se
+  RETIRARON en la revisión del 6-oct-2026 —una fórmula nueva escrita con
+  ellos apuntaba, en silencio, a las letras del mensual dentro de la
+  general—: hoy todo sale de `_DISP_MENSUAL` / `_DISP_GENERAL` (los tests
+  congelan las letras del mensual a mano, `_LETRAS_MENSUAL`). Guardia:
+  `test_otro_juego_de_columnas_sigue_cuadrando` cambia el juego general
+  (columna real antes de VENTA, OPERACIONES dentro del bloque, sin TIPO
+  CAMBIO COSTOS) y exige el libro COMPLETO cuadrando: sin fórmulas
+  degradadas, evaluador independiente, cada número por su llave, fórmulas
+  del bloque y Σ de TOTALES con las letras de ese juego, y las citas de
+  'combustible'/'otros gastos'/'repartidos a aviones' en la columna de la
+  llave (o valor + nota «calculado por el sistema» si el juego no la tiene).
+  Las columnas que repiten un dato son llaves `cph_*` (`_ORIGEN_GENERAL`,
+  valor) y HEREDAN las señales de su columna de origen: TOTAL COBRADO S/IVA
+  el azul del T.C. oficial y TIEMPO CALZOS/HOBS —divisor de COSTO X HORA— el
+  ámbar y la nota del salto de taco interno. IVA X HR y TOTAL PAGADO S/IVA son
+  la resta de dos campos del API (`_valor_columna`).
   Fórmulas = aritmética del API citando el propio bloque: COSTO X HORA
   `=PESOS/TC/TIEMPO/$D$1` (orden del API: Y/z/O/1.16), COSTO HR MÁS IVA
   `=DLLS/TIEMPO`, DLLS `=PESOS/TC`, IVA DLLS `=DLLS−DLLS/$D$1`, IVA PESOS
@@ -394,18 +419,25 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   valor con nota (`_formula_cita`: jamás una referencia rota). TOTALES = los
   del API por llave (las repetidas llevan el de su dato; promedios del
   consolidado como valor); COSTO X HORA, IVA X HR, DLLS, IVA y PAGADO S/IVA
-  van SIN total (no se inventa). A1:D1 se conservan; el título del bloque
-  «BALANCE GENERAL · COSTO POR HORA» dice en el encabezado cuál libro es;
-  notas al pie, renglones TUA/extensión y notas de B1/D1 propias (`_CPH_*`).
+  van SIN total (no se inventa; el contrato pedía Σ y promedio de COSTO X
+  HORA: queda a decisión — si se quieren, que el API los mande como campos
+  ADITIVOS de `totales` y aquí se pintan por llave). A1:D1 se conservan; el
+  título del bloque «BALANCE GENERAL · COSTO POR HORA» dice en el encabezado
+  cuál libro es; notas al pie, renglones TUA/extensión y notas de B1/D1
+  propias (`_CPH_*`).
   Las demás hojas tienen los MISMOS números en las dos variantes; las citas a
   TC/horas de la maestra caen en SU columna. **PROVISIÓN en amarillo** (las
   dos variantes; pedido «los que están provisión podrían estar en
-  amarillo»): en 'otros movimientos' la fila cuyo egreso trae la marca
-  «PROVISIÓN» EN MAYÚSCULAS —en el concepto o, si la fila junta varios
-  egresos del vuelo, en la línea de su nota— pinta concepto y monto del
-  egreso con AMBER y al pie (TOTALES + 2, A:C) va «Amarillo = provisión (sin
-  gasto real capturado)». El gasto real dice «reemplaza la provisión» en
-  minúsculas y NO se pinta; sin provisiones la hoja es la de siempre. Tests:
+  amarillo»): en 'otros movimientos' la fila cuyo egreso trae la marca del
+  API «· PROVISIÓN (» EN MAYÚSCULAS (`_MARCA_PROVISION`: «pago comisión
+  vendedor (X) · PROVISIÓN (mismo monto…)») —en el concepto o, si la fila
+  junta varios egresos del vuelo, en la línea de su nota— pinta concepto y
+  monto del egreso con AMBER y al pie (TOTALES + 2, A:C) va «Amarillo =
+  provisión (sin gasto real capturado)». El gasto real dice «reemplaza la
+  provisión» en minúsculas y NO se pinta; tampoco un PROVEEDOR en mayúsculas
+  de una fila suelta («Combustible · PROVISIONES AEREAS DEL SURESTE»: la
+  primera versión buscaba la subcadena y lo pintaba). Sin provisiones la
+  hoja es la de siempre. Tests:
   `tests/test_balance_general_costo_hora.py` (+ dos libros de la variante en
   `_LIBROS` de `tests/test_balance_formulas.py`).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta

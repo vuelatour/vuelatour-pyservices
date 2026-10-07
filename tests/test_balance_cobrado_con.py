@@ -34,8 +34,8 @@ from app.schemas.reportes import (
     BalanceGeneralRequest,
 )
 from app.services.balance_avion_xlsx import (
-    _COBRO1_COL,
     _COLS,
+    _DISP_MENSUAL,
     _comentario_cobro,
     _nota_cobro,
     _nota_resumen_cobros,
@@ -46,8 +46,8 @@ from app.services.balance_avion_xlsx import (
 
 FILA = 3  # primera fila de vuelo (1-2 = encabezado de grupo / columna)
 COL_STATUS = next(i for i, c in enumerate(_COLS, start=1) if c[2] == "status_cobro")
-COLS_FECHA = [_COBRO1_COL + 2 * k for k in range(4)]
-COLS_MXN = [_COBRO1_COL + 1 + 2 * k for k in range(4)]
+COLS_FECHA = [_DISP_MENSUAL.cobro1_col + 2 * k for k in range(4)]
+COLS_MXN = [_DISP_MENSUAL.cobro1_col + 1 + 2 * k for k in range(4)]
 COLS_NOTA = {COL_STATUS, *COLS_MXN}
 
 # Cobros con la forma que manda el API 0.0.60 (nombres reales de quienes

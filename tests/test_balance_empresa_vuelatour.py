@@ -26,8 +26,7 @@ from openpyxl.utils import column_index_from_string
 from app.schemas.reportes import BalanceGeneralRequest
 from app.services import xlsx_formulas
 from app.services.balance_avion_xlsx import (
-    _COBRO_MXN_LETRAS,
-    _LETRA,
+    _DISP_MENSUAL,
     _NOTA_BLOQUE_EMPRESA,
     _NOTA_EMPRESA_BASE,
     _RESUMEN_BLOQUE_EMPRESA,
@@ -193,7 +192,8 @@ def _miembros(data: bytes) -> dict[str, bytes]:
 
 # Columnas de la hoja maestra con la nota «cómo se cobró» (STATUS y COBRO n MXN).
 _COLS_NOTA_COBRO = {
-    column_index_from_string(letra) for letra in (_LETRA["status_cobro"], *_COBRO_MXN_LETRAS)
+    column_index_from_string(letra)
+    for letra in (_DISP_MENSUAL.letra["status_cobro"], *_DISP_MENSUAL.cobro_mxn_letras)
 }
 
 

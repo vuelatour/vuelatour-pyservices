@@ -50,8 +50,10 @@ siempre, byte-idéntico; «general» = la hoja «reporte horas FLOTA» con el
 juego de columnas `_COLS_GENERAL` — COSTO TOTAL y el bloque COSTO POR HORA
 (las 12 columnas de la hoja «utilidades» del cliente) en lugar de
 operaciones / piloto / otros / AFAC e indicadores. Mismos números del API y
-las demás hojas iguales. En 'otros movimientos' (las dos variantes) las
-filas con PROVISIÓN van en amarillo con su leyenda al pie.
+las demás hojas iguales (sus citas a la hoja de vuelos, por llave; la nota
+de 'repartidos a aviones' nombra la columna de cada variante). En 'otros
+movimientos' (las dos variantes) las filas con PROVISIÓN van en amarillo con
+su leyenda al pie.
 
 Los montos vienen YA calculados del API (aquí solo se pintan; jamás se
 recalcula dinero). None = celda vacía — nunca un 0 falso.
@@ -300,14 +302,11 @@ _COLS: list[tuple[str, str, str | None, str | None]] = [
     # 30-sep-2026 (API 0.0.45, pedido de Marie): folio de la factura del
     # servicio emitida al cliente, YA resuelto por el API (misma etiqueta que
     # el Libro Dinero y 'otros movimientos'). Texto tal cual; sin dato o con
-    # un API viejo, celda vacía. Va AL FINAL: no corre `_COBRO1_COL` ni
-    # `_COMISION_COL` (los demás índices se buscan por atributo).
+    # un API viejo, celda vacía. Va AL FINAL: no corre COBRO 1 ni COMISIÓN
+    # VENDEDOR (`_DISP_MENSUAL.cobro1_col` / `.comision_col`; todo índice se
+    # busca por atributo).
     ("STATUS DE COBROS", "FACTURA\nVUELATOUR", "factura_vuelatour", None),
 ]
-_COBRO1_COL = next(i for i, c in enumerate(_COLS, start=1) if c[1] == "COBRO 1\nFECHA")
-_COMISION_COL = next(
-    i for i, c in enumerate(_COLS, start=1) if c[2] == "comision_vendedor_mxn"
-)
 # Base del reparto de la venta en vuelos MULTI-AVIÓN (participacion_fuente):
 # SIEMPRE partes iguales por tramo vendido (nunca por horas); 'unico' no
 # lleva base.
@@ -354,10 +353,10 @@ _TOTAL_MAP = {
 # libro manual entre corchetes): ROUND(…, 2) justo donde el API hace round2 y
 # en ningún otro lado. Lo que depende de datos que NO están en el libro
 # (IVA % del cliente, ajustes de la cotización, prorrateos multi-avión, TC de
-# cada gasto) sigue como valor.
-_LETRA = {attr: get_column_letter(i) for i, (_g, _h, attr, _f) in enumerate(_COLS, start=1) if attr}
-# Celdas COBRO 1..4 MXN de una fila (pares fecha/monto desde _COBRO1_COL).
-_COBRO_MXN_LETRAS = [get_column_letter(_COBRO1_COL + 1 + 2 * k) for k in range(4)]
+# cada gasto) sigue como valor. Las letras de las columnas salen SIEMPRE de
+# la disposición de la hoja (`_Disposicion.letra`, `.cobro_mxn_letras`): desde
+# el 6-oct-2026 hay dos juegos de columnas y un mapa fijo de letras apuntaría,
+# en silencio, a las del Balance mensual dentro del Balance general.
 # Constantes del encabezado: fila 1 de CLAVE..ESTADO, que no llevan título de
 # grupo — no se mueve ni una fila ni una columna de datos. Se citan con $.
 _CELDA_AFAC = "$B$1"
@@ -1340,6 +1339,12 @@ def _hoja_maestra(
                 fill = avion_fill
             if attr is not None:
                 val = _valor_columna(attr, v)
+                # Dato que la celda muestra: en las columnas del bloque COSTO
+                # POR HORA que REPITEN otra de la fila (`cph_*`, variante
+                # general) es el de su columna de origen, y hereda sus señales
+                # (azul del T.C. oficial, ámbar del salto de taco). En el
+                # juego de siempre es la propia llave.
+                origen = _ORIGEN_GENERAL.get(attr, attr)
                 if fmt is None:
                     cell = ws.cell(row=row, column=i, value=_fecha(val) if attr == "fecha" else val)
                     if attr == "factura_vuelatour":
@@ -1387,8 +1392,10 @@ def _hoja_maestra(
                     nota_part.height = 110
                     cell.comment = nota_part
                 # TC no capturado en la cotización → se usó el oficial: la
-                # celda del TC y las que derivan de él (MXN) se marcan.
-                if v.tc_venta_oficial and attr in (
+                # celda del TC y las que derivan de él (MXN) se marcan
+                # (también TOTAL COBRADO S/IVA (PESOS), que repite TOTAL
+                # S/IVA MXN en la variante general).
+                if v.tc_venta_oficial and origen in (
                     "tc_venta", "total_mxn", "iva_mxn", "subtotal_mxn",
                 ):
                     fill = TC_OFICIAL_FILL
@@ -1399,8 +1406,10 @@ def _hoja_maestra(
                         cell.comment = nota_tc
                 # Salto INTERNO entre tramos del MISMO vuelo: infla las horas
                 # sin romper la cadena entre vuelos — se pinta en la celda de
-                # horas voladas con el tramo culpable en la nota.
-                if attr == "tiempo_vuelo" and v.salto_taco_interno:
+                # horas voladas con el tramo culpable en la nota. En la
+                # variante general también TIEMPO CALZOS/HOBS (HR): es el
+                # divisor de COSTO X HORA y unas horas infladas lo bajan.
+                if origen == "tiempo_vuelo" and v.salto_taco_interno:
                     fill = AMBER
                     nota_int = Comment(
                         "Salto entre tramos del vuelo (las horas pueden "
@@ -2791,7 +2800,7 @@ _NOTA_GASTOS_EMPRESA = (
 # existe en el general: en el libro INDIVIDUAL esa lista va fusionada en la
 # hoja "Gastos Indirectos" (2-sep-2026), por eso ya no hay variante
 # individual de esta nota.
-_NOTA_REPARTIDOS_A_AVIONES = (
+_NOTA_REPARTIDOS_A_AVIONES_BASE = (
     "REPARTIDOS A AVIONES = gastos administrativos de la empresa (nómina, "
     "IMSS, pensión, fijos…) repartidos a mano entre aviones — aquí solo la "
     "parte asignada a cada avión (fila con su color); en el libro INDIVIDUAL "
@@ -2800,7 +2809,16 @@ _NOTA_REPARTIDOS_A_AVIONES = (
     "'(−) GASTOS INDIRECTOS USD' de la hoja 'balance'. Lo que NADIE ha "
     "repartido (y el remanente) vive en la hoja 'otros gastos' de este "
     "libro. El TUA pagado NO va aquí (regla 28-ago-2026): queda solo como "
-    "nota en OPERACIONES y vive en 'otros movimientos'."
+)
+_NOTA_REPARTIDOS_A_AVIONES = (
+    _NOTA_REPARTIDOS_A_AVIONES_BASE + "nota en OPERACIONES y vive en 'otros movimientos'."
+)
+# Variante «Balance general» (6-oct-2026): su hoja de vuelos ya no tiene la
+# columna OPERACIONES; el TUA pagado queda en la nota del desglose de TOTAL
+# PARA PROVEEDOR (PESOS), como dicen sus notas al pie (`_CPH_TRASLADOS_*`).
+_CPH_NOTA_REPARTIDOS_A_AVIONES = _NOTA_REPARTIDOS_A_AVIONES_BASE + (
+    "nota en el desglose de TOTAL PARA PROVEEDOR (PESOS) de la hoja de vuelos "
+    "(parte Operación) y vive en 'otros movimientos'."
 )
 
 
@@ -3341,24 +3359,25 @@ _ESTADOS_NORMALES = ("CONFIRMADO", "EN_VUELO", "COMPLETADO")
 
 # PROVISIÓN en amarillo (6-oct-2026, pedido del cliente: «los que están
 # provisión podrían estar en amarillo por fi»). El API escribe la marca EN
-# MAYÚSCULAS en el concepto del egreso («pago comisión vendedor (X) ·
-# PROVISIÓN (mismo monto que lo cobrado…)») y, cuando la fila junta varios
-# egresos del vuelo, en la línea de la nota de esa celda. Solo la marca en
-# mayúsculas cuenta: el GASTO REAL dice «reemplaza la provisión» (minúsculas)
-# y esa fila NO es provisión.
-_MARCAS_PROVISION = ("PROVISIÓN", "PROVISION")
+# MAYÚSCULAS como calificador del concepto del egreso, «· PROVISIÓN (»
+# («pago comisión vendedor (X) · PROVISIÓN (mismo monto que lo cobrado…)»,
+# aircraft-balance.service.ts) y, cuando la fila junta varios egresos del
+# vuelo, en la línea de la nota de esa celda («<concepto> = $x»). Solo esa
+# marca cuenta: el GASTO REAL dice «reemplaza la provisión» (minúsculas) y
+# una fila suelta lleva «<categoría> · <proveedor>» — un proveedor como
+# «PROVISIONES AEREAS DEL SURESTE» NO es provisión (revisión 6-oct-2026: la
+# búsqueda de la palabra suelta lo pintaba de amarillo).
+_MARCA_PROVISION = re.compile(r"·\s*PROVISI[OÓ]N\s*\(")
 _LEYENDA_PROVISION = "Amarillo = provisión (sin gasto real capturado)"
 # Columnas que se pintan: concepto y monto del egreso.
 _COLUMNAS_PROVISION = (3, 4)
 
 
 def _es_provision(f: BalanceOtroMovimientoFila) -> bool:
-    """¿El egreso de la fila es (o incluye) una PROVISIÓN sin gasto real?"""
+    """¿El egreso de la fila es (o incluye) una PROVISIÓN sin gasto real?
+    (la marca del API en el concepto o en una línea de su nota)."""
     return any(
-        marca in texto
-        for texto in (f.concepto_egreso, f.nota_egreso)
-        if texto
-        for marca in _MARCAS_PROVISION
+        _MARCA_PROVISION.search(texto) for texto in (f.concepto_egreso, f.nota_egreso) if texto
     )
 
 
@@ -3545,9 +3564,11 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
     sigue calculando y restan igual en la cascada de la hoja 'balance'.
     Cada fila se identifica por su clave y el COLOR del avión
     (aeronave.color_calendario, editable en el apartado del avión).
-    `req.variante` (6-oct-2026, API 0.0.64): «general» cambia SOLO la hoja
-    maestra (costo total + costo por hora, `_COLS_GENERAL`); «mensual» o
-    ausente = este libro tal cual, byte-idéntico."""
+    `req.variante` (6-oct-2026, API 0.0.64): «general» cambia la hoja
+    maestra (costo total + costo por hora, `_COLS_GENERAL`), las letras con
+    que la citan las demás hojas y la nota de 'repartidos a aviones' (que
+    nombraba OPERACIONES); «mensual» o ausente = este libro tal cual,
+    byte-idéntico."""
     wb = Workbook()
     _hoja_resumen_general(wb.active, req)
     cons = req.consolidado
@@ -3602,12 +3623,17 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
         # ahora es de la hoja de gastos de empresa). Se CONSERVA en el
         # general (2-sep): la fusión en "Gastos Indirectos" es solo del
         # libro individual. Sin `resaltar_parciales`: aquí la celda DETALLE
-        # lleva el color del avión.
+        # lleva el color del avión. Su nota dice dónde queda el TUA pagado
+        # con las columnas de la hoja de vuelos de cada variante.
         _hoja_gastos(
             wb.create_sheet("repartidos a aviones"),
             "Otros gastos repartidos a aviones",
             cons.otros_gastos, cons,
-            nota=_NOTA_REPARTIDOS_A_AVIONES,
+            nota=(
+                _CPH_NOTA_REPARTIDOS_A_AVIONES
+                if maestra.disp.costo_por_hora
+                else _NOTA_REPARTIDOS_A_AVIONES
+            ),
             maestra=maestra,
         )
         # Hoja "inventario" (tiendita, 30-ago): resumen POR ÍTEM del periodo

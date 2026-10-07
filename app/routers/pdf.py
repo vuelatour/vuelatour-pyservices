@@ -182,11 +182,14 @@ def balance_general_xlsx(payload: BalanceGeneralRequest) -> Response:
     de empresa, repartidos a aviones, inventario, balance por avión con
     socios y pendientes de captura).
 
-    El API manda todo precalculado; aquí SOLO se renderiza.
+    El API manda todo precalculado; aquí SOLO se renderiza. Desde el
+    6-oct-2026 (API 0.0.64) el libro sale en dos variantes y el nombre del
+    archivo dice cuál es (`balance-mensual-…` / `balance-general-…`, como el
+    del API; él pone el suyo al descargar).
     """
     xlsx_bytes = render_balance_general_xlsx(payload)
     filename = (
-        f"balance-general-vuelatour-"
+        f"balance-{payload.variante}-vuelatour-"
         f"{payload.periodo_desde or 's-f'}-{payload.periodo_hasta or 's-f'}.xlsx"
     )
     return Response(

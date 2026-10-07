@@ -15,15 +15,22 @@ siempre, BYTE-IDÉNTICO; 'general' = la hoja «reporte horas FLOTA» con el
 juego de columnas `_COLS_GENERAL`. Mismos números del API en las dos: las
 fórmulas se verifican con el evaluador independiente contra el número que
 manda el API (payloads del espejo de `test_balance_formulas`).
+
+Revisión del 6-oct-2026: el libro de hoy se congela también por BYTES (la
+huella de layout no veía notas, bordes ni fuentes) y la regla «jamás letras
+fijas» se prueba con OTROS juegos de columnas y el libro completo (sin eso,
+una fórmula con letras fijas pasaba toda la suite).
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import zipfile
 from io import BytesIO
 
+import openpyxl
 import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
@@ -37,23 +44,25 @@ from app.schemas.reportes import (
     BalanceGeneralRequest,
     BalanceOtroMovimientoFila,
 )
-from app.services import xlsx_formulas
+from app.services import balance_avion_xlsx, xlsx_formulas
 from app.services.balance_avion_xlsx import (
-    _COBRO1_COL,
-    _COBRO_MXN_LETRAS,
     _COLS,
     _COLS_GENERAL,
-    _COMISION_COL,
+    _CPH_NOTA_REPARTIDOS_A_AVIONES,
     _DISP_GENERAL,
     _DISP_MENSUAL,
-    _LETRA,
+    _GRUPO_COSTO_HORA,
     _LEYENDA_PROVISION,
     _NOTA_CALCULADO_POR_SISTEMA_CELDA,
+    _NOTA_REPARTIDOS_A_AVIONES,
     _TITULO_GRUPO_COSTO_HORA,
     _TOTAL_MAP,
+    _TOTAL_MAP_GENERAL,
     AMBER,
     HORAS,
+    MONEY,
     TC,
+    TC_OFICIAL_FILL,
     _disposicion,
     _es_provision,
     _formula_cita,
@@ -140,6 +149,33 @@ def _celda(ws, fila: int, encabezado: str):
 
 def _fila_de(ws, clave: str) -> int:
     return next(c.row for c in ws["A"] if c.value == clave)
+
+
+def _relleno(celda) -> str | None:
+    return celda.fill.fgColor.rgb if celda.fill.fill_type else None
+
+
+def _formulas_del_bloque(ws, f: int) -> dict[str, str]:
+    """Fórmulas de la fila `f` del bloque COSTO POR HORA con la letra que
+    tiene cada columna EN ESTA HOJA (se busca por su encabezado)."""
+    k, l_ = _letra(ws, "VENTA AVIÓN\nMXN"), _letra(ws, "IVA VENTA\nAVIÓN MXN")
+    t, z = _letra(ws, COSTO_POR_HORA[1]), _letra(ws, COSTO_POR_HORA[7])
+    y, ae = _letra(ws, COSTO_POR_HORA[8]), _letra(ws, COSTO_POR_HORA[5])
+    an, ao = _letra(ws, COSTO_POR_HORA[4]), _letra(ws, COSTO_POR_HORA[2])
+    ag, ah = _letra(ws, COSTO_POR_HORA[6]), _letra(ws, COSTO_POR_HORA[9])
+    return {
+        "TOTAL COBRADO\nS/IVA (PESOS)": f"=ROUND({k}{f}-{l_}{f},2)",
+        # «el total de todos los gastos, entre el tiempo volado, entre el
+        # tipo de cambio del día, entre 1.16» — en el orden del API.
+        "COSTO X HORA\n(DLLS S/IVA)": f"={y}{f}/{z}{f}/{t}{f}/$D$1",
+        "IVA X HR\n(DLLS)": f"=ROUND(ROUND({an}{f},2)-ROUND({ao}{f},2),2)",
+        "COSTO HR\nMÁS IVA (DLLS)": f"={ae}{f}/{t}{f}",
+        "TOTAL PARA\nPROVEEDOR (DLLS)": f"={y}{f}/{z}{f}",
+        "IVA TOTAL\nPAGADO (DLLS)": f"={ae}{f}-{ae}{f}/$D$1",
+        "IVA TOTAL\nPAGADO (PESOS)": f"={ag}{f}*{z}{f}",
+        "TOTAL PAGADO\nS/IVA (PESOS)": f"={y}{f}-{ah}{f}",
+        "REMANENTE VENTA\nMENOS COMPRA (PESOS)": f"=ROUND({k}{f}-{y}{f},2)",
+    }
 
 
 def _miembros(data: bytes) -> dict[str, bytes]:
@@ -245,12 +281,34 @@ def test_juego_de_columnas_del_balance_general() -> None:
     assert _DISP_GENERAL.costo_por_hora and _DISP_GENERAL.comision_col is None
 
 
+# Letras del juego de siempre (Balance mensual y libro individual), ESCRITAS A
+# MANO: las del libro de hoy. Ya no hay mapas de letras a nivel de módulo
+# (`_LETRA`, `_COBRO1_COL`… se retiraron en la revisión del 6-oct-2026: una
+# fórmula nueva escrita con ellos apuntaría, en silencio, a las letras del
+# mensual dentro del Balance general); todo sale de la disposición.
+_LETRAS_MENSUAL = {
+    "clave": "A", "fecha": "B", "ruta": "C", "estado": "D",
+    "horas_cobradas": "E", "tarifa_usd": "F", "iva_hr_usd": "G", "total_usd": "H",
+    "iva_usd": "I", "tc_venta": "J", "total_mxn": "K", "iva_mxn": "L", "subtotal_mxn": "M",
+    "tiempo_vuelo": "N", "taco_inicio": "O", "taco_fin": "P",
+    "op_mxn": "Q", "piloto_mxn": "R", "otros_mxn": "S", "permiso_afac_mxn": "T",
+    "costo_total_mxn": "U", "tc_costos": "V",
+    "costo_usd": "W", "costo_usd_siva": "X", "iva_pagado_usd": "Y", "iva_pagado_mxn": "Z",
+    "remanente_mxn": "AA", "dif_iva_mxn": "AB", "comision_vendedor_mxn": "AC",
+    "ganancia_mxn": "AD", "ganancia_usd": "AE",
+    "costo_hr_usd": "AF", "costo_hr_usd_siva": "AG",
+    "status_cobro": "AH",
+    "cobrado_real_mxn": "AQ", "cobrado_mxn": "AR",
+    "por_cobrar_mxn": "AS", "por_cobrar_usd": "AT", "factura_vuelatour": "AU",
+}  # fmt: skip
+
+
 def test_el_juego_de_siempre_no_se_movio() -> None:
     assert _DISP_MENSUAL.cols == tuple(_COLS)
-    assert _DISP_MENSUAL.letra == _LETRA
-    assert _DISP_MENSUAL.cobro1_col == _COBRO1_COL
-    assert list(_DISP_MENSUAL.cobro_mxn_letras) == _COBRO_MXN_LETRAS
-    assert _DISP_MENSUAL.comision_col == _COMISION_COL
+    assert _DISP_MENSUAL.letra == _LETRAS_MENSUAL
+    assert _DISP_MENSUAL.cobro1_col == 35  # COBRO 1 FECHA = AI
+    assert _DISP_MENSUAL.cobro_mxn_letras == ("AJ", "AL", "AN", "AP")
+    assert _DISP_MENSUAL.comision_col == 29  # COMISIÓN VENDEDOR MXN = AC
     assert _DISP_MENSUAL.total_map is _TOTAL_MAP
     assert not _DISP_MENSUAL.costo_por_hora
 
@@ -311,25 +369,7 @@ def test_formulas_de_la_fila_citan_el_bloque_como_la_hoja_del_cliente() -> None:
     wb, _ = _libros(render_balance_general_xlsx(_general()))
     ws = wb[MAESTRA]
     f = _fila_de(ws, "#401 · Cliente Uno")
-    k, l_ = _letra(ws, "VENTA AVIÓN\nMXN"), _letra(ws, "IVA VENTA\nAVIÓN MXN")
-    t, z = _letra(ws, COSTO_POR_HORA[1]), _letra(ws, COSTO_POR_HORA[7])
-    y, ae = _letra(ws, COSTO_POR_HORA[8]), _letra(ws, COSTO_POR_HORA[5])
-    an, ao = _letra(ws, COSTO_POR_HORA[4]), _letra(ws, COSTO_POR_HORA[2])
-    ag, ah = _letra(ws, COSTO_POR_HORA[6]), _letra(ws, COSTO_POR_HORA[9])
-    esperadas = {
-        "TOTAL COBRADO\nS/IVA (PESOS)": f"=ROUND({k}{f}-{l_}{f},2)",
-        # «el total de todos los gastos, entre el tiempo volado, entre el
-        # tipo de cambio del día, entre 1.16» — en el orden del API.
-        "COSTO X HORA\n(DLLS S/IVA)": f"={y}{f}/{z}{f}/{t}{f}/$D$1",
-        "IVA X HR\n(DLLS)": f"=ROUND(ROUND({an}{f},2)-ROUND({ao}{f},2),2)",
-        "COSTO HR\nMÁS IVA (DLLS)": f"={ae}{f}/{t}{f}",
-        "TOTAL PARA\nPROVEEDOR (DLLS)": f"={y}{f}/{z}{f}",
-        "IVA TOTAL\nPAGADO (DLLS)": f"={ae}{f}-{ae}{f}/$D$1",
-        "IVA TOTAL\nPAGADO (PESOS)": f"={ag}{f}*{z}{f}",
-        "TOTAL PAGADO\nS/IVA (PESOS)": f"={y}{f}-{ah}{f}",
-        "REMANENTE VENTA\nMENOS COMPRA (PESOS)": f"=ROUND({k}{f}-{y}{f},2)",
-    }
-    for encabezado, formula in esperadas.items():
+    for encabezado, formula in _formulas_del_bloque(ws, f).items():
         assert _celda(ws, f, encabezado).value == formula, encabezado
     # El layout congelado (si alguien mueve una columna, esto lo grita).
     assert ws[f"U{f}"].value == f"=AA{f}/Z{f}/T{f}/$D$1"
@@ -401,6 +441,39 @@ def test_fila_sin_tc_ni_horas_deja_vacio_lo_que_el_api_no_manda() -> None:
     for encabezado in COSTO_POR_HORA[2:5]:
         assert _celda(ws, cancelado, encabezado).value is None, encabezado
     assert str(_celda(ws, cancelado, "TOTAL PARA\nPROVEEDOR (DLLS)").value).startswith("=")
+
+
+def test_columnas_que_repiten_un_dato_heredan_sus_senales() -> None:
+    """TOTAL COBRADO S/IVA (PESOS) repite TOTAL S/IVA MXN y TIEMPO
+    CALZOS/HOBS (HR) repite TIEMPO VUELO HR —el divisor de COSTO X HORA: unas
+    horas infladas lo bajan—; llevan el azul del T.C. oficial y el ámbar (con
+    su nota) del salto de taco de su columna de origen (revisión 6-oct-2026:
+    antes solo la columna de origen avisaba)."""
+    req = _general()
+    cons = req.consolidado
+    marcado = cons.vuelos[0].model_copy(
+        update={
+            "tc_venta_oficial": True,
+            "salto_taco_interno": True,
+            "salto_taco_interno_detalle": "tramo 2 PTU-CUN (+0.4 h)",
+        }
+    )
+    vuelos = [marcado, *cons.vuelos[1:]]
+    req = req.model_copy(update={"consolidado": cons.model_copy(update={"vuelos": vuelos})})
+    ws = _libros(render_balance_general_xlsx(req))[0][MAESTRA]
+    azul, ambar = "00" + TC_OFICIAL_FILL, "00" + AMBER
+    for encabezado in ("TOTAL S/IVA\nMXN", COSTO_POR_HORA[0]):
+        assert _relleno(_celda(ws, 3, encabezado)) == azul, encabezado
+    origen, repetida = _celda(ws, 3, "TIEMPO\nVUELO HR"), _celda(ws, 3, COSTO_POR_HORA[1])
+    assert _relleno(origen) == _relleno(repetida) == ambar
+    assert repetida.comment.text == origen.comment.text
+    assert repetida.comment.text.endswith("tramo 2 PTU-CUN (+0.4 h)")
+    # Sin señales en la fila, las dos columnas del bloque van sin relleno.
+    for fila, v in enumerate(vuelos[1:], start=4):
+        assert not (v.tc_venta_oficial or v.salto_taco_interno), v.clave
+        for encabezado in COSTO_POR_HORA[:2]:
+            assert _relleno(_celda(ws, fila, encabezado)) is None, (fila, encabezado)
+            assert _celda(ws, fila, encabezado).comment is None, (fila, encabezado)
 
 
 def test_desglose_del_costo_en_la_nota_de_total_para_proveedor() -> None:
@@ -528,6 +601,12 @@ def test_las_demas_hojas_tienen_los_mismos_numeros_en_las_dos_variantes(caso) ->
             continue
         a = {c.coordinate: c.value for fila in vm[hoja].iter_rows() for c in fila}
         b = {c.coordinate: c.value for fila in vg[hoja].iter_rows() for c in fila}
+        if hoja == "repartidos a aviones":
+            # Texto, no número: su nota nombra la columna de cada variante.
+            b = {
+                k: _NOTA_REPARTIDOS_A_AVIONES if x == _CPH_NOTA_REPARTIDOS_A_AVIONES else x
+                for k, x in b.items()
+            }
         assert a == b, hoja
     # Las citas a la hoja maestra apuntan a SU columna en la variante (en los
     # payloads con vuelos y T.C. promedio; sin ellos las celdas van vacías).
@@ -542,6 +621,35 @@ def test_las_demas_hojas_tienen_los_mismos_numeros_en_las_dos_variantes(caso) ->
         if "otros gastos" in fg.sheetnames:
             assert fg["otros gastos"]["B5"].value == f"={tc}"
             assert fg["otros gastos"]["D5"].value == f"={horas}"
+
+
+def test_nota_de_repartidos_a_aviones_nombra_la_columna_de_cada_variante() -> None:
+    """'repartidos a aviones' decía que el TUA pagado «queda solo como nota en
+    OPERACIONES»: el Balance general ya no tiene esa columna, ahí vive en la
+    nota del desglose de TOTAL PARA PROVEEDOR (PESOS) (revisión 6-oct-2026).
+    El Balance mensual conserva su texto (byte a byte, abajo)."""
+    req = tf._general()
+    for variante, nota in (
+        ("mensual", _NOTA_REPARTIDOS_A_AVIONES),
+        ("general", _CPH_NOTA_REPARTIDOS_A_AVIONES),
+    ):
+        ws = load_workbook(BytesIO(render_balance_general_xlsx(_con_variante(req, variante))))[
+            "repartidos a aviones"
+        ]
+        notas = [
+            c.value
+            for c in ws["A"]
+            if isinstance(c.value, str) and c.value.startswith("REPARTIDOS A AVIONES =")
+        ]
+        assert notas == [nota], variante
+    assert _NOTA_REPARTIDOS_A_AVIONES.endswith(
+        "queda solo como nota en OPERACIONES y vive en 'otros movimientos'."
+    )
+    assert "OPERACIONES" not in _CPH_NOTA_REPARTIDOS_A_AVIONES
+    assert _CPH_NOTA_REPARTIDOS_A_AVIONES.endswith(
+        "queda solo como nota en el desglose de TOTAL PARA PROVEEDOR (PESOS) de la hoja de "
+        "vuelos (parte Operación) y vive en 'otros movimientos'."
+    )
 
 
 def test_resumen_y_balance_son_identicos_en_las_dos_variantes() -> None:
@@ -586,6 +694,115 @@ def test_cita_a_una_columna_que_la_variante_no_tiene_va_como_valor_con_nota() ->
 
 
 # ---------------------------------------------------------------------------
+# 4b) Regla dura «jamás letras fijas», con el libro COMPLETO: otro juego de
+#     columnas y todo sigue cuadrando (revisión 6-oct-2026). Sin esto, una
+#     fórmula o una cita escrita con letras fijas pasaba la suite entera:
+#     coincide con el layout de hoy.
+# ---------------------------------------------------------------------------
+
+_JUEGOS_MUTADOS = (
+    "columna real antes de VENTA",
+    "OPERACIONES dentro del bloque",
+    "sin TIPO CAMBIO COSTOS",
+)
+
+
+def _juego_mutado(caso: str) -> list[tuple[str, str, str | None, str | None]]:
+    cols = list(_COLS_GENERAL)
+    if caso == "columna real antes de VENTA":  # corre todas las letras desde E
+        i = next(i for i, c in enumerate(cols) if c[0] == "VENTA")
+        cols.insert(i, ("", "OPERADOR", "operador_externo", None))
+    elif caso == "OPERACIONES dentro del bloque":  # corre medio bloque
+        i = next(i for i, c in enumerate(cols) if c[0] == _GRUPO_COSTO_HORA)
+        cols.insert(i + 3, (_GRUPO_COSTO_HORA, "OPERACIONES", "op_mxn", MONEY))
+    else:  # la columna que citan 'combustible' y las hojas de gastos
+        cols = [c for c in cols if c[2] != "tc_costos"]
+    return cols
+
+
+@pytest.mark.parametrize("caso", _JUEGOS_MUTADOS)
+def test_otro_juego_de_columnas_sigue_cuadrando(caso, monkeypatch, registros) -> None:
+    cols = _juego_mutado(caso)
+    monkeypatch.setattr(
+        balance_avion_xlsx,
+        "_DISP_GENERAL",
+        _disposicion(
+            cols,
+            total_map=_TOTAL_MAP_GENERAL,
+            fills=_DISP_GENERAL.fills,
+            detalle_attr={},
+            titulos_grupo=_DISP_GENERAL.titulos_grupo,
+            costo_por_hora=True,
+        ),
+    )
+    req = _general()
+    data = render_balance_general_xlsx(req)
+    # Ninguna fórmula volvió a valor y el evaluador independiente cuadra.
+    assert registros[-1].degradadas() == []
+    assert verificar_libro(data)
+    wb, wv = _libros(data)
+    ws = wb[MAESTRA]
+    assert [c.value for c in ws[2]] == [c[1] for c in cols]
+    # Cada celda numérica es el número del API de SU llave.
+    for k, v in enumerate(req.consolidado.vuelos):
+        for i, (_g, encabezado, clave, fmt) in enumerate(cols, start=1):
+            if clave is None or fmt is None:
+                continue
+            esperado = _valor_columna(clave, v)
+            visto = wv[MAESTRA].cell(row=3 + k, column=i).value
+            if esperado is None:
+                assert visto is None, (caso, 3 + k, encabezado)
+            else:
+                assert visto == pytest.approx(esperado, abs=1e-9), (caso, 3 + k, encabezado)
+    # Las fórmulas del bloque citan las letras de ESTE juego.
+    f = _fila_de(ws, "#401 · Cliente Uno")
+    for encabezado, formula in _formulas_del_bloque(ws, f).items():
+        assert _celda(ws, f, encabezado).value == formula, (caso, encabezado)
+    # TOTALES: cada Σ suma su propia columna.
+    tot = _fila_de(ws, "TOTALES")
+    sumas = [c for c in ws[tot] if isinstance(c.value, str) and c.value.startswith("=")]
+    assert sumas
+    for c in sumas:
+        assert c.value == f"=ROUND(SUM({c.column_letter}3:{c.column_letter}{tot - 1}),2)", caso
+
+    # Las demás hojas citan la fila TOTALES con la letra de la llave EN ESTE
+    # juego; si el juego no la tiene, el VALOR del API con la nota.
+    def cita(encabezado: str) -> str | None:
+        if encabezado not in [c.value for c in ws[2]]:
+            return None
+        return f"'{MAESTRA}'!${_letra(ws, encabezado)}${tot}"
+
+    tc, horas = cita("TIPO CAMBIO\nCOSTOS"), cita("TIEMPO\nVUELO HR")
+    assert horas is not None and (tc is None) == (caso == "sin TIPO CAMBIO COSTOS")
+    t = req.consolidado.totales
+    esperadas = [
+        ("combustible", "D5", tc, f"={tc}", t.tc_promedio),
+        ("combustible", "F5", horas, f"=ROUND(E5/{horas},2)", None),
+        ("otros gastos", "B5", tc, f"={tc}", t.tc_promedio),
+        ("otros gastos", "D5", horas, f"={horas}", None),
+        ("repartidos a aviones", "B5", tc, f"={tc}", t.tc_promedio),
+        ("repartidos a aviones", "D5", horas, f"={horas}", None),
+    ]
+    for hoja, coord, ref, formula, valor in esperadas:
+        celda = wb[hoja][coord]
+        if ref is not None:
+            assert (celda.value, celda.comment) == (formula, None), (caso, hoja, coord)
+        else:
+            assert celda.value == valor, (caso, hoja, coord)
+            assert celda.comment.text == _NOTA_CALCULADO_POR_SISTEMA_CELDA, (caso, hoja, coord)
+    # Y ninguna otra celda del libro cita otra columna de la hoja de vuelos.
+    permitidas = {r for r in (tc, horas) if r}
+    for hoja in wb.sheetnames:
+        if hoja == MAESTRA:
+            continue
+        for fila in wb[hoja].iter_rows():
+            for c in fila:
+                if isinstance(c.value, str) and MAESTRA in c.value:
+                    refs = set(re.findall(rf"'{re.escape(MAESTRA)}'!\$[A-Z]+\$\d+", c.value))
+                    assert refs and refs <= permitidas, (caso, hoja, c.coordinate, c.value)
+
+
+# ---------------------------------------------------------------------------
 # 5) Balance MENSUAL: el libro de hoy, byte a byte.
 # ---------------------------------------------------------------------------
 
@@ -609,6 +826,96 @@ _CASOS_MENSUAL = {
     # minúsculas y NO se pinta de amarillo.
     "pago real": lambda: t_comision._general(True, filas=[t_comision._FILA_PAGO_REAL]),
 }
+# Los BYTES del libro de hoy (revisión 6-oct-2026): `_firma_libro` es una
+# huella del layout y no ve el tamaño de las notas (openpyxl no relee el VML),
+# el color ni los otros lados de un borde, ni el nombre de la fuente. Aquí va
+# cada miembro del .xlsx salvo docProps/core.xml (lleva la hora): los
+# primeros 16 hex de su sha256 (64 bits, de sobra para notar un byte movido).
+# Se calcularon renderizando estos payloads con el código ANTERIOR a la
+# variante (`git archive 93486c1 app tests`, con sus propios helpers de
+# tests) y openpyxl 3.1.5; el código nuevo da exactamente los mismos. Si
+# falla SOLO porque cambió la versión de openpyxl (y `_FIRMAS_HOY` sigue
+# igual), se regeneran con ese árbol de 93486c1 y la versión nueva.
+_OPENPYXL_HUELLAS = "3.1.5"
+_MIEMBROS_HOY = {
+    "fórmulas": {
+        "[Content_Types].xml": "90c274d39d8df938",
+        "_rels/.rels": "c545941ba36c15fc",
+        "docProps/app.xml": "209fca6b00afe72a",
+        "xl/_rels/workbook.xml.rels": "fee7f7835a21adf6",
+        "xl/comments/comment1.xml": "1f01ffd50cbe956e",
+        "xl/comments/comment2.xml": "a623ddcb4e5ebb3c",
+        "xl/drawings/commentsDrawing1.vml": "f3fd6ba45292a07d",
+        "xl/drawings/commentsDrawing2.vml": "a3fb237fe6d57d83",
+        "xl/styles.xml": "c00b3c833322f4b3",
+        "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
+        "xl/workbook.xml": "e9b5be0ab87733e4",
+        "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
+        "xl/worksheets/_rels/sheet9.xml.rels": "06a3b87cfefe7f5f",
+        "xl/worksheets/sheet1.xml": "ed85f7783357e4ef",
+        "xl/worksheets/sheet10.xml": "b134206c4fd136b1",
+        "xl/worksheets/sheet2.xml": "9db705574eaea0cd",
+        "xl/worksheets/sheet3.xml": "bb3dc0f4f2b56702",
+        "xl/worksheets/sheet4.xml": "b4271af6eb64e959",
+        "xl/worksheets/sheet5.xml": "0122d2728a5bfe58",
+        "xl/worksheets/sheet6.xml": "91c22671b5955760",
+        "xl/worksheets/sheet7.xml": "d35dd9696ae4e87e",
+        "xl/worksheets/sheet8.xml": "85aaef47b6b15de9",
+        "xl/worksheets/sheet9.xml": "fc8fb7c900b61fab",
+    },
+    "empresa": {
+        "[Content_Types].xml": "90c274d39d8df938",
+        "_rels/.rels": "c545941ba36c15fc",
+        "docProps/app.xml": "209fca6b00afe72a",
+        "xl/_rels/workbook.xml.rels": "fee7f7835a21adf6",
+        "xl/comments/comment1.xml": "1f01ffd50cbe956e",
+        "xl/comments/comment2.xml": "51429da7b4342562",
+        "xl/drawings/commentsDrawing1.vml": "f3fd6ba45292a07d",
+        "xl/drawings/commentsDrawing2.vml": "14fe3cbfa808de3c",
+        "xl/styles.xml": "2354a5c4769e8a1b",
+        "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
+        "xl/workbook.xml": "e9b5be0ab87733e4",
+        "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
+        "xl/worksheets/_rels/sheet9.xml.rels": "06a3b87cfefe7f5f",
+        "xl/worksheets/sheet1.xml": "b0d80f991bd39ac2",
+        "xl/worksheets/sheet10.xml": "245576c8b1d18f98",
+        "xl/worksheets/sheet2.xml": "9db705574eaea0cd",
+        "xl/worksheets/sheet3.xml": "bb3dc0f4f2b56702",
+        "xl/worksheets/sheet4.xml": "b4271af6eb64e959",
+        "xl/worksheets/sheet5.xml": "0122d2728a5bfe58",
+        "xl/worksheets/sheet6.xml": "91c22671b5955760",
+        "xl/worksheets/sheet7.xml": "d35dd9696ae4e87e",
+        "xl/worksheets/sheet8.xml": "85aaef47b6b15de9",
+        "xl/worksheets/sheet9.xml": "fd277d78da5b85d8",
+    },
+    "pago real": {
+        "[Content_Types].xml": "aab5d091f752ef52",
+        "_rels/.rels": "c545941ba36c15fc",
+        "docProps/app.xml": "209fca6b00afe72a",
+        "xl/_rels/workbook.xml.rels": "7676081832cc25e3",
+        "xl/comments/comment1.xml": "5da58ad45ce720b4",
+        "xl/comments/comment2.xml": "4538ed5560018e12",
+        "xl/drawings/commentsDrawing1.vml": "d883bb9ec4031f10",
+        "xl/drawings/commentsDrawing2.vml": "ed0e12dacd2b3460",
+        "xl/styles.xml": "c6184aacbdeea286",
+        "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
+        "xl/workbook.xml": "6c579d04c9cd1373",
+        "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
+        "xl/worksheets/_rels/sheet3.xml.rels": "06a3b87cfefe7f5f",
+        "xl/worksheets/sheet1.xml": "3affe542cc6fd992",
+        "xl/worksheets/sheet2.xml": "946870294a3621b2",
+        "xl/worksheets/sheet3.xml": "495b31f28f184ace",
+        "xl/worksheets/sheet4.xml": "fb8f4d129040df3f",
+        "xl/worksheets/sheet5.xml": "9095ac67c5861e2b",
+        "xl/worksheets/sheet6.xml": "2d5e2e80fcfd0233",
+        "xl/worksheets/sheet7.xml": "29118b7c10960b3e",
+        "xl/worksheets/sheet8.xml": "f231507baa758a09",
+    },
+}
+
+
+def _huellas_bytes(data: bytes) -> dict[str, str]:
+    return {n: hashlib.sha256(b).hexdigest()[:16] for n, b in _miembros(data).items()}
 
 
 @pytest.mark.parametrize("caso", list(_CASOS_MENSUAL))
@@ -616,6 +923,10 @@ def test_mensual_es_el_libro_de_hoy(caso) -> None:
     req = _CASOS_MENSUAL[caso]()
     data = render_balance_general_xlsx(req)
     assert _firma_libro(data) == _FIRMAS_HOY[caso]
+    # Byte a byte: cada miembro del .xlsx es el del libro de hoy.
+    assert _huellas_bytes(data) == _MIEMBROS_HOY[caso], (
+        f"openpyxl {openpyxl.__version__} (huellas calculadas con {_OPENPYXL_HUELLAS})"
+    )
     # Con la llave en cualquiera de sus formas «mensual», byte a byte igual.
     base = _miembros(data)
     for variante in ("mensual", None, " MENSUAL ", "otra"):
@@ -624,7 +935,8 @@ def test_mensual_es_el_libro_de_hoy(caso) -> None:
 
 def test_mensual_y_general_difieren_solo_en_la_hoja_maestra_y_sus_citas() -> None:
     """Fuera de la hoja maestra, lo único distinto entre las dos variantes son
-    las celdas que la citan, con la letra de SU columna en cada juego."""
+    las celdas que la citan, con la letra de SU columna en cada juego, y la
+    nota de 'repartidos a aviones' (nombra la columna de cada variante)."""
     req = tf._general()
     mensual = render_balance_general_xlsx(req)
     general = render_balance_general_xlsx(_con_variante(req, "general"))
@@ -634,7 +946,7 @@ def test_mensual_y_general_difieren_solo_en_la_hoja_maestra_y_sus_citas() -> Non
         f"'{MAESTRA}'!${_DISP_MENSUAL.letra[k]}$": f"'{MAESTRA}'!${_DISP_GENERAL.letra[k]}$"
         for k in ("tc_costos", "tiempo_vuelo")
     }
-    citas = set()
+    citas, notas = set(), set()
     for hoja in wm.sheetnames:
         if hoja == MAESTRA:
             continue
@@ -643,6 +955,10 @@ def test_mensual_y_general_difieren_solo_en_la_hoja_maestra_y_sus_citas() -> Non
                 otro = wg[hoja][c.coordinate].value
                 if c.value == otro:
                     continue
+                if c.value == _NOTA_REPARTIDOS_A_AVIONES:
+                    assert otro == _CPH_NOTA_REPARTIDOS_A_AVIONES, (hoja, c.coordinate)
+                    notas.add(hoja)
+                    continue
                 assert isinstance(c.value, str) and MAESTRA in c.value, (hoja, c.coordinate)
                 esperado = c.value
                 for antes, ahora in cambio.items():
@@ -650,6 +966,7 @@ def test_mensual_y_general_difieren_solo_en_la_hoja_maestra_y_sus_citas() -> Non
                 assert otro == esperado, (hoja, c.coordinate)
                 citas.add(hoja)
     assert citas == {"combustible", "otros gastos", "repartidos a aviones"}
+    assert notas == {"repartidos a aviones"}
     resto = (MAESTRA, *citas)
     assert _firma_libro(mensual, sin_hojas=resto) == _firma_libro(general, sin_hojas=resto)
 
@@ -680,10 +997,6 @@ _FILA_COLAPSADA = {
 }
 
 
-def _relleno(celda) -> str | None:
-    return celda.fill.fgColor.rgb if celda.fill.fill_type else None
-
-
 def test_es_provision_solo_con_la_marca_en_mayusculas() -> None:
     assert _es_provision(BalanceOtroMovimientoFila(**t_comision._FILA_PROVISION))
     assert _es_provision(BalanceOtroMovimientoFila(**_FILA_COLAPSADA))
@@ -692,6 +1005,19 @@ def test_es_provision_solo_con_la_marca_en_mayusculas() -> None:
     assert not _es_provision(BalanceOtroMovimientoFila(**t_comision._FILA_PAGO_REAL))
     assert not _es_provision(BalanceOtroMovimientoFila(concepto_egreso="TUA pagado"))
     assert not _es_provision(BalanceOtroMovimientoFila())
+    # Un PROVEEDOR en mayúsculas no es la marca (revisión 6-oct-2026): la fila
+    # suelta lleva «<categoría> · <proveedor>», como la arma el API, y la razón
+    # social del CFDI suele venir en mayúsculas.
+    for concepto in (
+        "Combustible · PROVISIONES AEREAS DEL SURESTE",
+        "Hangar · PROVISION AEREA SA DE CV",
+        "Mantenimiento · PROVISIÓN Y SERVICIOS DEL CARIBE (USD sin TC)",
+    ):
+        fila = BalanceOtroMovimientoFila(concepto_egreso=concepto, egreso_mxn=5000)
+        assert not _es_provision(fila), concepto
+    assert not _es_provision(
+        BalanceOtroMovimientoFila(nota_egreso="FBO · PROVISIONES DEL CARIBE = $350.00")
+    )
 
 
 @pytest.mark.parametrize("variante", ["mensual", "general"])
@@ -749,18 +1075,25 @@ def test_ruta_acepta_la_variante(monkeypatch, request) -> None:
     headers = {"X-Internal-Token": TOKEN}
     payload = tf._general().model_dump(mode="json")
 
+    periodo = f"{payload['periodo_desde']}-{payload['periodo_hasta']}"
+
     res = client.post(
         "/pdf/balance-general-xlsx", json={**payload, "variante": "general"}, headers=headers
     )
     assert res.status_code == 200, res.text
     ws = load_workbook(BytesIO(res.content))[MAESTRA]
     assert [c.value for c in ws[2]] == [c[1] for c in _COLS_GENERAL]
+    # El nombre del archivo dice cuál de los dos libros es (como el del API).
+    disposicion = res.headers["content-disposition"]
+    assert f'filename="balance-general-vuelatour-{periodo}.xlsx"' in disposicion
 
     sin_llave = {k: v for k, v in payload.items() if k != "variante"}
     res = client.post("/pdf/balance-general-xlsx", json=sin_llave, headers=headers)
     assert res.status_code == 200, res.text
     ws = load_workbook(BytesIO(res.content))[MAESTRA]
     assert [c.value for c in ws[2]] == [c[1] for c in _COLS]
+    disposicion = res.headers["content-disposition"]
+    assert f'filename="balance-mensual-vuelatour-{periodo}.xlsx"' in disposicion
 
 
 def test_columnas_por_llave_no_por_letra() -> None:
