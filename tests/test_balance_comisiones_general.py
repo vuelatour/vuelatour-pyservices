@@ -511,9 +511,11 @@ _FILA_CUBIERTA = {
     "avion_color": "#2563EB",
     "estado": "COMPLETADO",
     "fecha_vuelo": "2026-09-03",
+    # Texto REAL del API 0.0.66 (7b561fc5): sin gasto real capturado lleva la
+    # marca «· PROVISIÓN (…)» que pinta el amarillo pedido el 6-oct.
     "concepto_egreso": (
         "pago comisión vendedor (Pablo Canales) · cubierto por el avión XA-TST "
-        "(provisión $2,360.00 en su balance)"
+        "(provisión $2,360.00 en su balance) · PROVISIÓN (sin gasto real capturado)"
     ),
     "egreso_mxn": 0.0,
     "fecha_egreso": "2026-09-03",
@@ -567,20 +569,23 @@ def test_otros_movimientos_sin_la_linea_de_ingreso(variante) -> None:
     assert "a cargo del avión" not in a2
     assert a2.index("cubierto por el avión") < a2.index(" UNA FILA POR VUELO")
     # Las filas, tal cual las arma el API: lo cobrado UNA vez y el pago
-    # cubierto por el avión (0) o solo su exceso; ninguna es PROVISIÓN
-    # amarilla (la marca es «· PROVISIÓN (» en mayúsculas).
+    # cubierto por el avión (0, con la marca «· PROVISIÓN (» ⇒ amarillo) o
+    # solo su exceso cuando hay gasto real (sin marca ⇒ sin amarillo).
     assert om["C4"].value == _FILA_CUBIERTA["concepto_egreso"]
     assert (om["D4"].value, om["G4"].value) == (0.0, 2360.0)
     assert (om["D5"].value, om["G5"].value) == (320.0, 1180.0)
     assert omv["I4"].value == 2360.0 and omv["I5"].value == 860.0
-    rellenos = {
-        om.cell(row=f, column=c).fill.fgColor.rgb
-        for f in (4, 5)
-        for c in range(1, 11)
-        if om.cell(row=f, column=c).fill.fill_type
-    }
-    assert "00" + AMBER not in rellenos
-    assert _LEYENDA_PROVISION not in [c.value for c in om["A"]]
+
+    def _rellenos(fila: int) -> set[str]:
+        return {
+            om.cell(row=fila, column=c).fill.fgColor.rgb
+            for c in range(1, 11)
+            if om.cell(row=fila, column=c).fill.fill_type
+        }
+
+    assert "00" + AMBER in _rellenos(4)
+    assert "00" + AMBER not in _rellenos(5)
+    assert _LEYENDA_PROVISION in [c.value for c in om["A"]]
     tot = next(c.row for c in om["A"] if c.value == "TOTALES")
     assert omv[f"G{tot}"].value == r2(2360.0 + 1180.0 + 85.33)
     assert omv[f"D{tot}"].value == 320.0
