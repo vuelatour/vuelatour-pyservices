@@ -120,6 +120,13 @@ FUERA = [
     "GANANCIA\nUSD",
     "COSTO X HORA\nUSD",
     "COSTO X HORA\nUSD S/IVA",
+    # 8-oct-2026 («estos valores están duplicados… eliminar tacómetro inicial
+    # y final, solo en la general»): el bloque ya trae tiempo, T.C. y costo.
+    "TIEMPO\nVUELO HR",
+    "TACO\nINICIO",
+    "TACO\nFINAL",
+    "COSTO TOTAL\nMXN",
+    "TIPO CAMBIO\nCOSTOS",
 ]
 
 
@@ -272,22 +279,22 @@ def test_juego_de_columnas_del_balance_general() -> None:
     encabezados = [c[1] for c in _COLS_GENERAL]
     mensual = [c[1] for c in _COLS]
     assert encabezados == [
-        *mensual[: mensual.index("TACO\nFINAL") + 1],
-        "COSTO TOTAL\nMXN",
-        "TIPO CAMBIO\nCOSTOS",
+        # CLAVE..ESTADO y VENTA; desde el 8-oct-2026 SIN TIEMPO / TACÓMETRO
+        # ni «COSTO TOTAL (MXN)»: el bloque ya trae tiempo, T.C. y costo.
+        *mensual[: mensual.index("TIEMPO\nVUELO HR")],
         *COSTO_POR_HORA,
         # Del 6 al 7-oct-2026 (API 0.0.65) aquí iba COMISIONES; desde el API
         # 0.0.66 el Balance general ya no la lleva (vive en el libro
         # individual): el bloque son las 12 del cliente.
         *mensual[mensual.index("STATUS") :],
     ]
-    assert len(encabezados) == 44
+    assert len(encabezados) == 39
     assert not set(FUERA) & set(encabezados)
     assert "COMISIONES\nMXN" not in encabezados
     grupos = [c[0] for c in _COLS_GENERAL]
-    assert grupos[16:18] == ["COSTO TOTAL (MXN)"] * 2
-    assert grupos[18:30] == ["COSTO POR HORA"] * 12
-    assert grupos[30] == "STATUS DE COBROS"
+    assert grupos[13:25] == ["COSTO POR HORA"] * 12
+    assert grupos[25] == "STATUS DE COBROS"
+    assert "TIEMPO / TACÓMETRO" not in grupos and "COSTO TOTAL (MXN)" not in grupos
     claves = [c[2] for c in _COLS_GENERAL if c[2]]
     assert len(claves) == len(set(claves))
     assert _DISP_GENERAL.cols == tuple(_COLS_GENERAL)
@@ -378,13 +385,12 @@ def test_valor_de_cada_columna_sale_del_api() -> None:
 def test_encabezado_dice_balance_general_y_conserva_las_constantes() -> None:
     wb, _ = _libros(render_balance_general_xlsx(_general()))
     ws = wb[MAESTRA]
-    assert ws.max_column == 44
+    assert ws.max_column == 39
     assert [c.value for c in ws[2]] == [c[1] for c in _COLS_GENERAL]
     grupos = {c.value: c.coordinate for c in ws[1] if c.column > 4 and c.value}
+    # 8-oct-2026: sin los grupos TIEMPO / TACÓMETRO y COSTO TOTAL (MXN).
     assert list(grupos) == [
         "VENTA",
-        "TIEMPO / TACÓMETRO",
-        "COSTO TOTAL (MXN)",
         _TITULO_GRUPO_COSTO_HORA,
         "STATUS DE COBROS",
     ]
@@ -406,13 +412,13 @@ def test_formulas_de_la_fila_citan_el_bloque_como_la_hoja_del_cliente() -> None:
     f = _fila_de(ws, "#401 · Cliente Uno")
     for encabezado, formula in _formulas_del_bloque(ws, f).items():
         assert _celda(ws, f, encabezado).value == formula, encabezado
-    # El layout congelado (si alguien mueve una columna, esto lo grita).
-    assert ws[f"U{f}"].value == f"=AA{f}/Z{f}/T{f}/$D$1"
-    assert ws[f"AD{f}"].value == f"=ROUND(K{f}-AA{f},2)"
+    # El layout congelado (si alguien mueve una columna, esto lo grita):
+    # desde el 8-oct-2026 el bloque empieza en N (sin TIEMPO / TACÓMETRO ni
+    # COSTO TOTAL (MXN)).
+    assert ws[f"P{f}"].value == f"=V{f}/U{f}/O{f}/$D$1"
+    assert ws[f"Y{f}"].value == f"=ROUND(K{f}-V{f},2)"
     # Datos (no son aritmética de celdas del libro): valor.
     for encabezado in (
-        "COSTO TOTAL\nMXN",
-        "TIPO CAMBIO\nCOSTOS",
         "TIEMPO\nCALZOS/HOBS (HR)",
         "TIPO\nCAMBIO",
         "TOTAL PARA\nPROVEEDOR (PESOS)",
@@ -499,9 +505,12 @@ def test_columnas_que_repiten_un_dato_heredan_sus_senales() -> None:
     azul, ambar = "00" + TC_OFICIAL_FILL, "00" + AMBER
     for encabezado in ("TOTAL S/IVA\nMXN", COSTO_POR_HORA[0]):
         assert _relleno(_celda(ws, 3, encabezado)) == azul, encabezado
-    origen, repetida = _celda(ws, 3, "TIEMPO\nVUELO HR"), _celda(ws, 3, COSTO_POR_HORA[1])
-    assert _relleno(origen) == _relleno(repetida) == ambar
-    assert repetida.comment.text == origen.comment.text
+    # 8-oct-2026: TIEMPO VUELO HR ya no va en el general; la señal del salto
+    # interno vive en TIEMPO CALZOS/HOBS (HR), que repite ese dato.
+    assert "TIEMPO\nVUELO HR" not in [c.value for c in ws[2]]
+    repetida = _celda(ws, 3, COSTO_POR_HORA[1])
+    assert _relleno(repetida) == ambar
+    assert repetida.comment.text.startswith("Salto entre tramos del vuelo")
     assert repetida.comment.text.endswith("tramo 2 PTU-CUN (+0.4 h)")
     # Sin señales en la fila, las dos columnas del bloque van sin relleno.
     for fila, v in enumerate(vuelos[1:], start=4):
@@ -524,9 +533,13 @@ def test_desglose_del_costo_en_la_nota_de_total_para_proveedor() -> None:
     # Interno sin costos: sin nota.
     interno = _fila_de(ws, "#406 · Interno")
     assert _celda(ws, interno, "TOTAL PARA\nPROVEEDOR (PESOS)").comment is None
-    # COSTO TOTAL va como valor «calculado por el sistema» (nota en su encabezado).
-    encabezado = ws.cell(row=2, column=_col(ws, "COSTO TOTAL\nMXN"))
-    assert encabezado.comment.text.startswith("Calculado por el sistema: COSTO TOTAL = operación")
+    # TOTAL PARA PROVEEDOR (PESOS) es el COSTO TOTAL del vuelo y, desde el
+    # 8-oct-2026, su único lugar en el general: va como valor «calculado por
+    # el sistema» (nota en su encabezado; antes en COSTO TOTAL MXN).
+    encabezado = ws.cell(row=2, column=_col(ws, "TOTAL PARA\nPROVEEDOR (PESOS)"))
+    assert encabezado.comment.text.startswith(
+        "Calculado por el sistema: TOTAL PARA PROVEEDOR (PESOS) = COSTO TOTAL del vuelo = operación"
+    )
     # La otra nota de encabezado (7-oct-2026): REMANENTE va antes de
     # comisiones, que no van en esta hoja (ya no hay columna COMISIONES).
     remanente = ws.cell(row=2, column=_col(ws, COSTO_POR_HORA[-1]))
@@ -571,7 +584,6 @@ def test_totales_del_api_sumas_y_promedios() -> None:
         "TOTAL COBRADO\nS/IVA (PESOS)": t.subtotal_mxn,
         "TIEMPO\nCALZOS/HOBS (HR)": t.tiempo_vuelo,
         "TOTAL PARA\nPROVEEDOR (PESOS)": t.costo_total_mxn,
-        "COSTO TOTAL\nMXN": t.costo_total_mxn,
         "REMANENTE VENTA\nMENOS COMPRA (PESOS)": t.remanente_mxn,
         "POR COBRAR\nUSD": t.por_cobrar_usd,
     }
@@ -580,7 +592,6 @@ def test_totales_del_api_sumas_y_promedios() -> None:
         assert _celda(ws, tot, encabezado).value == f"=ROUND(SUM({letra}3:{letra}{tot - 1}),2)"
         assert _celda(wsv, tot, encabezado).value == total, encabezado
     # Promedios del consolidado: valor (promedio de los promedios de cada libro).
-    assert _celda(ws, tot, "TIPO CAMBIO\nCOSTOS").value == t.tc_promedio
     assert _celda(ws, tot, "TIPO\nCAMBIO").value == t.tc_promedio
     assert _celda(ws, tot, "COSTO HR\nMÁS IVA (DLLS)").value == t.costo_hr_prom_usd
 
@@ -659,7 +670,7 @@ def test_totales_del_bloque_que_el_api_no_manda(registros) -> None:
     assert (MAESTRA, celda.coordinate) in verificadas
     assert _celda(wsv, tot, "IVA X HR\n(DLLS)").value == 16.2 == tf.r2(117.47 - 101.27)
     # Ya no hay huecos en los bloques de costo de la fila TOTALES.
-    for encabezado in ("COSTO TOTAL\nMXN", "TIPO CAMBIO\nCOSTOS", *COSTO_POR_HORA):
+    for encabezado in COSTO_POR_HORA:
         assert isinstance(_celda(wsv, tot, encabezado).value, (int, float)), encabezado
     # La nota al pie lo dice (ya no «van sin total»).
     pie = [c.value for c in ws["A"] if isinstance(c.value, str)]
@@ -840,8 +851,9 @@ def test_las_demas_hojas_tienen_los_mismos_numeros_en_las_dos_variantes(caso) ->
     if req.consolidado.vuelos and t.tc_promedio is not None and t.tiempo_vuelo:
         maestra = fg[MAESTRA]
         tot = _fila_de(maestra, "TOTALES")
-        tc = f"'{MAESTRA}'!${_letra(maestra, 'TIPO CAMBIO' + chr(10) + 'COSTOS')}${tot}"
-        horas = f"'{MAESTRA}'!${_letra(maestra, 'TIEMPO' + chr(10) + 'VUELO HR')}${tot}"
+        # 8-oct-2026: citan las columnas del bloque (alias de llave).
+        tc = f"'{MAESTRA}'!${_letra(maestra, 'TIPO' + chr(10) + 'CAMBIO')}${tot}"
+        horas = f"'{MAESTRA}'!${_letra(maestra, 'TIEMPO' + chr(10) + 'CALZOS/HOBS (HR)')}${tot}"
         assert fg["combustible"]["D5"].value == f"={tc}"
         assert fg["combustible"]["F5"].value == f"=ROUND(E5/{horas},2)"
         if "otros gastos" in fg.sheetnames:
@@ -926,10 +938,13 @@ def test_cita_a_una_columna_que_la_variante_no_tiene_va_como_valor_con_nota() ->
 #     coincide con el layout de hoy.
 # ---------------------------------------------------------------------------
 
+# 8-oct-2026: el caso «sin TIPO CAMBIO COSTOS» se retiró con la columna (el
+# T.C. vive solo en TIPO CAMBIO del bloque y las demás hojas lo citan por
+# alias); la cita que cae a valor con nota sigue probada con el juego de
+# siempre (`test_sin_la_columna_que_citan_las_hojas_de_gastos_van_como_valor`).
 _JUEGOS_MUTADOS = (
     "columna real antes de VENTA",
     "OPERACIONES dentro del bloque",
-    "sin TIPO CAMBIO COSTOS",
 )
 
 
@@ -938,11 +953,9 @@ def _juego_mutado(caso: str) -> list[tuple[str, str, str | None, str | None]]:
     if caso == "columna real antes de VENTA":  # corre todas las letras desde E
         i = next(i for i, c in enumerate(cols) if c[0] == "VENTA")
         cols.insert(i, ("", "OPERADOR", "operador_externo", None))
-    elif caso == "OPERACIONES dentro del bloque":  # corre medio bloque
+    else:  # "OPERACIONES dentro del bloque": corre medio bloque
         i = next(i for i, c in enumerate(cols) if c[0] == _GRUPO_COSTO_HORA)
         cols.insert(i + 3, (_GRUPO_COSTO_HORA, "OPERACIONES", "op_mxn", MONEY))
-    else:  # la columna que citan 'combustible' y las hojas de gastos
-        cols = [c for c in cols if c[2] != "tc_costos"]
     return cols
 
 
@@ -1013,8 +1026,9 @@ def test_otro_juego_de_columnas_sigue_cuadrando(caso, monkeypatch, registros) ->
             return None
         return f"'{MAESTRA}'!${_letra(ws, encabezado)}${tot}"
 
-    tc, horas = cita("TIPO CAMBIO\nCOSTOS"), cita("TIEMPO\nVUELO HR")
-    assert horas is not None and (tc is None) == (caso == "sin TIPO CAMBIO COSTOS")
+    # Desde el 8-oct-2026 citan las columnas del bloque (alias de llave).
+    tc, horas = cita("TIPO\nCAMBIO"), cita("TIEMPO\nCALZOS/HOBS (HR)")
+    assert tc is not None and horas is not None
     t = req.consolidado.totales
     esperadas = [
         ("combustible", "D5", tc, f"={tc}", t.tc_promedio),
@@ -1374,8 +1388,15 @@ def test_columnas_por_llave_no_por_letra() -> None:
     assert _DISP_MENSUAL.letra["tc_costos"] == _DISP_FLOTA.letra["tc_costos"] == "V"
     assert _DISP_MENSUAL.letra["ganancia_mxn"] == "AD"
     assert _DISP_FLOTA.letra["ganancia_mxn"] == "AC"
-    assert _DISP_GENERAL.letra["tc_costos"] == "R"
-    assert _DISP_GENERAL.letra["tiempo_vuelo"] == _DISP_MENSUAL.letra["tiempo_vuelo"] == "N"
+    assert _DISP_MENSUAL.letra["tiempo_vuelo"] == "N"
+    # Variante general (8-oct-2026): tiempo, T.C. y costo total viven SOLO en
+    # el bloque COSTO POR HORA; su atributo es un ALIAS de esa columna.
+    assert _DISP_GENERAL.letra["cph_tc"] == _DISP_GENERAL.letra["tc_costos"] == "U"
+    assert _DISP_GENERAL.letra["cph_tiempo_hr"] == _DISP_GENERAL.letra["tiempo_vuelo"] == "O"
+    assert _DISP_GENERAL.letra["cph_proveedor_mxn"] == _DISP_GENERAL.letra["costo_total_mxn"] == "V"
+    assert "taco_inicio" not in _DISP_GENERAL.letra and "remanente_mxn" in _DISP_GENERAL.letra
+    # Con la columna propia presente, esta manda (sin alias).
+    assert _DISP_FLOTA.letra["tc_costos"] == "V" and "cph_tc" not in _DISP_FLOTA.letra
     assert _DISP_GENERAL.cobro1_col == next(
         i for i, c in enumerate(_COLS_GENERAL, start=1) if c[1] == "COBRO 1\nFECHA"
     )

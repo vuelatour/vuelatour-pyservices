@@ -459,30 +459,35 @@ _TOTALES_PROMEDIO = ("tc_promedio", "costo_hr_prom_usd")
 # vuelo» (las de su hoja «utilidades»), con la fórmula: «es el total de todos
 # los gastos, entre el tiempo volado, entre el tipo de cambio del día, entre
 # 1.16 (para sacar subtotal) y el resultado sería el costo por hora».
-# Mismos campos del API (no hay números nuevos): CLAVE..ESTADO, VENTA y
-# TIEMPO / TACÓMETRO iguales; «COSTO TOTAL (MXN)» = COSTO TOTAL + TIPO CAMBIO
-# COSTOS; «COSTO POR HORA» = las 12 columnas del cliente EN SU ORDEN y con
-# sus nombres (repiten a propósito la venta s/IVA, el tiempo, el T.C. y el
-# costo total: el bloque se lee solo, como su hoja); STATUS DE COBROS y
-# FACTURA VUELATOUR iguales. Fuera: OPERACIONES, PILOTO, OTROS, PERMISO AFAC
-# (su desglose va en la NOTA de TOTAL PARA PROVEEDOR (PESOS)) e INDICADORES
-# (cubiertos por el bloque nuevo; DIF. IVA y GANANCIA salen). La 3.ª
-# posición de cada tupla es la LLAVE de la columna: el atributo del vuelo
-# o, en las que repiten un dato o lo derivan, una llave `cph_*`
-# (`_ORIGEN_GENERAL` / `_valor_columna`). Toda fórmula cita columnas por su
-# llave (`_Disposicion.letra`), jamás por una letra fija.
+# Mismos campos del API (no hay números nuevos): CLAVE..ESTADO y VENTA
+# iguales; «COSTO POR HORA» = las 12 columnas del cliente EN SU ORDEN y con
+# sus nombres (repiten a propósito la venta s/IVA: el bloque se lee solo,
+# como su hoja); STATUS DE COBROS y FACTURA VUELATOUR iguales. Fuera:
+# OPERACIONES, PILOTO, OTROS, PERMISO AFAC (su desglose va en la NOTA de
+# TOTAL PARA PROVEEDOR (PESOS)) e INDICADORES (cubiertos por el bloque nuevo;
+# DIF. IVA y GANANCIA salen). **8-oct-2026 (pedido del cliente: «estos
+# valores están duplicados… eliminar tacómetro inicial y final, solo en la
+# general»): fuera también TIEMPO / TACÓMETRO (TIEMPO VUELO HR, TACO INICIO,
+# TACO FINAL) y «COSTO TOTAL (MXN)» (COSTO TOTAL MXN, TIPO CAMBIO COSTOS)** —
+# el bloque ya trae el tiempo (TIEMPO CALZOS/HOBS), el T.C. (TIPO CAMBIO) y
+# el costo total (TOTAL PARA PROVEEDOR (PESOS)); los tacómetros de cada vuelo
+# siguen en el Balance mensual. Esas tres columnas del bloque son ahora el
+# ÚNICO lugar del dato y las demás hojas las citan por ALIAS de llave
+# (`tiempo_vuelo` → `cph_tiempo_hr`, `tc_costos` → `cph_tc`,
+# `costo_total_mxn` → `cph_proveedor_mxn`; `_disposicion`). La 3.ª posición
+# de cada tupla es la LLAVE de la columna: el atributo del vuelo o, en las
+# que repiten un dato o lo derivan, una llave `cph_*` (`_ORIGEN_GENERAL` /
+# `_valor_columna`). Toda fórmula cita columnas por su llave
+# (`_Disposicion.letra`), jamás por una letra fija.
 # COMISIONES: del 6-oct-2026 (API 0.0.65) al 7-oct-2026 iban al final del
 # bloque y REMANENTE VENTA MENOS COMPRA las restaba. Desde el API 0.0.66 la
 # hoja de vuelos del Balance general ya no las lleva (pedido del cliente: se
 # duplicaban con 'otros movimientos'; ver `_COLS_FLOTA`) y REMANENTE VENTA
 # MENOS COMPRA vuelve a ser VENTA − PROVEEDOR, la definición del cliente: su
 # llave `cph_remanente_mxn` repite el REMANENTE del API (antes de comisiones).
-_GRUPO_COSTO_TOTAL = "COSTO TOTAL (MXN)"
 _GRUPO_COSTO_HORA = "COSTO POR HORA"
 _COLS_GENERAL: list[tuple[str, str, str | None, str | None]] = [
-    *(c for c in _COLS if c[0] in ("", "VENTA", "TIEMPO / TACÓMETRO")),
-    (_GRUPO_COSTO_TOTAL, "COSTO TOTAL\nMXN", "costo_total_mxn", MONEY),
-    (_GRUPO_COSTO_TOTAL, "TIPO CAMBIO\nCOSTOS", "tc_costos", TC),
+    *(c for c in _COLS if c[0] in ("", "VENTA")),
     (_GRUPO_COSTO_HORA, "TOTAL COBRADO\nS/IVA (PESOS)", "cph_cobrado_siva_mxn", MONEY),
     (_GRUPO_COSTO_HORA, "TIEMPO\nCALZOS/HOBS (HR)", "cph_tiempo_hr", HORAS),
     (_GRUPO_COSTO_HORA, "COSTO X HORA\n(DLLS S/IVA)", "costo_hr_usd_siva", MONEY),
@@ -497,11 +502,14 @@ _COLS_GENERAL: list[tuple[str, str, str | None, str | None]] = [
     (_GRUPO_COSTO_HORA, "REMANENTE VENTA\nMENOS COMPRA (PESOS)", "cph_remanente_mxn", MONEY),
     *(c for c in _COLS if c[0] == "STATUS DE COBROS"),
 ]
-# Columnas del bloque COSTO POR HORA que REPITEN un dato de otra columna de
-# la fila: llave → atributo del vuelo. Mismo número: TOTAL COBRADO S/IVA lleva
-# la misma fórmula que TOTAL S/IVA MXN, REMANENTE VENTA MENOS COMPRA la del
-# REMANENTE (VENTA − PROVEEDOR, antes de comisiones) y las otras tres son
-# valor.
+# Columnas del bloque COSTO POR HORA que REPITEN un dato del vuelo: llave →
+# atributo del vuelo. Mismo número: TOTAL COBRADO S/IVA lleva la misma
+# fórmula que TOTAL S/IVA MXN, REMANENTE VENTA MENOS COMPRA la del REMANENTE
+# (VENTA − PROVEEDOR, antes de comisiones) y las otras tres son valor. Desde
+# el 8-oct-2026 el tiempo, el T.C. y el costo total ya NO tienen otra columna
+# en el general: el atributo entra a `_Disposicion.letra` como ALIAS de su
+# columna del bloque (`_disposicion`), y así `maestra.total('tc_costos')`,
+# `rango('tiempo_vuelo')` y las señales por origen siguen funcionando.
 _ORIGEN_GENERAL = {
     "cph_cobrado_siva_mxn": "subtotal_mxn",
     "cph_tiempo_hr": "tiempo_vuelo",
@@ -551,7 +559,10 @@ class _Disposicion:
     hoja antes de comisiones (`_antes_de_comisiones`)."""
 
     cols: tuple[tuple[str, str, str | None, str | None], ...]
-    letra: dict[str, str]  # llave → letra de su columna
+    # Llave → letra de su columna. En un juego con COSTO POR HORA, un dato
+    # cuya columna propia no está (tiempo, T.C., costo total; 8-oct-2026)
+    # entra como ALIAS de la columna del bloque que lo repite.
+    letra: dict[str, str]
     cobro1_col: int
     cobro_mxn_letras: tuple[str, ...]
     comision_col: int | None  # COMISIONES MXN (su encabezado lleva la nota)
@@ -575,9 +586,18 @@ def _disposicion(
     if len(claves) != len(set(claves)):
         raise ValueError("llave de columna repetida en la hoja maestra")
     cobro1 = next(i for i, c in enumerate(cols, start=1) if c[1] == "COBRO 1\nFECHA")
+    letra = {c[2]: get_column_letter(i) for i, c in enumerate(cols, start=1) if c[2]}
+    if costo_por_hora:
+        # Alias (8-oct-2026): el atributo de un dato que SOLO vive en el
+        # bloque COSTO POR HORA resuelve a la letra de esa columna; si el
+        # juego trae la columna propia, esta manda. Sin la columna del bloque
+        # tampoco hay alias (la cita cae al VALOR del API con nota).
+        for cph, origen in _ORIGEN_GENERAL.items():
+            if origen not in letra and cph in letra:
+                letra[origen] = letra[cph]
     return _Disposicion(
         cols=tuple(cols),
-        letra={c[2]: get_column_letter(i) for i, c in enumerate(cols, start=1) if c[2]},
+        letra=letra,
         cobro1_col=cobro1,
         cobro_mxn_letras=tuple(get_column_letter(cobro1 + 1 + 2 * k) for k in range(4)),
         comision_col=next(
@@ -602,7 +622,7 @@ _DISP_FLOTA = _disposicion(
 _DISP_GENERAL = _disposicion(
     _COLS_GENERAL,
     total_map=_TOTAL_MAP_GENERAL,
-    fills={"VENTA": FILL_VENTA, _GRUPO_COSTO_TOTAL: FILL_COSTOS, "STATUS DE COBROS": FILL_COBROS},
+    fills={"VENTA": FILL_VENTA, "STATUS DE COBROS": FILL_COBROS},
     # El desglose de operación/piloto/otros/AFAC va en UNA nota, la de TOTAL
     # PARA PROVEEDOR (PESOS) (`_nota_desglose_costo`).
     detalle_attr={},
@@ -1562,9 +1582,9 @@ def _hay_pago_vendedor_real(om: BalanceHojaOtrosMovimientos | None) -> bool:
 _CPH_NOTA_AFAC = (
     "La tarifa AFAC es POR AVIÓN y este Balance general ya no lleva la "
     "columna PERMISO AFAC: el permiso (provisión) de cada vuelo va dentro de "
-    "COSTO TOTAL y de TOTAL PARA PROVEEDOR (PESOS) — su monto está en la "
-    "nota de esa celda. La fórmula con la tarifa de cada avión está en su "
-    "libro individual (Reportes › Balance por avión)."
+    "TOTAL PARA PROVEEDOR (PESOS) — su monto está en la nota de esa celda. La "
+    "fórmula con la tarifa de cada avión está en su libro individual "
+    "(Reportes › Balance por avión)."
 )
 _CPH_NOTA_FACTOR_IVA = (
     "IVA de los costos (16 %): COSTO X HORA (DLLS S/IVA) = TOTAL PARA "
@@ -1590,7 +1610,7 @@ _CPH_NOTA_REMANENTE = (
     "(PESOS), antes de comisiones."
 )
 _CPH_NOTA_TOTALES = (
-    "Fila TOTALES: TIPO CAMBIO COSTOS, TIPO CAMBIO y COSTO HR MÁS IVA son "
+    "Fila TOTALES: TIPO CAMBIO y COSTO HR MÁS IVA son "
     "PROMEDIOS (promedio de los promedios de cada avión); COSTO X HORA (DLLS "
     "S/IVA) = ese COSTO HR MÁS IVA ÷ 1.16 e IVA X HR = la diferencia de los "
     "dos; las demás son sumas (TOTAL PARA PROVEEDOR (DLLS), IVA TOTAL PAGADO y "
@@ -1598,7 +1618,7 @@ _CPH_NOTA_TOTALES = (
 )
 _CPH_COMBUSTIBLE_COLA_TUA = (
     " (litros y $/L incluidos) y resta una sola vez en la hoja 'balance'. Por "
-    "eso COSTO TOTAL, TOTAL PARA PROVEEDOR, COSTO X HORA y REMANENTE de las "
+    "eso TOTAL PARA PROVEEDOR, COSTO X HORA y REMANENTE de las "
     "filas van SIN combustible (y el TUA pagado tampoco resta, ver **): la "
     "utilidad real del periodo se lee en la hoja 'balance', no en la fila. "
     "IVA TOTAL PAGADO también deriva solo de los costos de la fila (sin gas "
@@ -1606,7 +1626,7 @@ _CPH_COMBUSTIBLE_COLA_TUA = (
 )
 _CPH_COMBUSTIBLE_COLA_EXTENSION = (
     " (litros y $/L incluidos) y resta una sola vez en la hoja 'balance'. Por "
-    "eso COSTO TOTAL, TOTAL PARA PROVEEDOR, COSTO X HORA y REMANENTE de las "
+    "eso TOTAL PARA PROVEEDOR, COSTO X HORA y REMANENTE de las "
     "filas van SIN combustible (ni el TUA pagado ni la extensión de horario "
     "restan, ver **): la utilidad real del periodo se lee en la hoja "
     "'balance', no en la fila. IVA TOTAL PAGADO también deriva solo de los "
@@ -1627,6 +1647,14 @@ _CPH_TRASLADOS_EXTENSION = (
     "horario (IVA incluido) $x**'); lo cobrado y lo pagado viven en 'otros "
     "movimientos'. Los servicios FBO sí son costo (parte Otros del desglose)."
 )
+# 8-oct-2026: el general ya no lleva TACO INICIO / TACO FINAL ni TIEMPO VUELO
+# HR; la señal del salto interno vive en TIEMPO CALZOS/HOBS (HR).
+_CPH_NOTA_TACOS_AMBAR = (
+    "TIEMPO CALZOS/HOBS (HR) en ámbar = salto entre tramos DEL MISMO vuelo "
+    "(el tramo culpable está en la nota) — mismo amarillo que el panel. Los "
+    "tacómetros inicial y final de cada vuelo (y su salto en la cadena) "
+    "están en el Balance mensual."
+)
 _CPH_RENGLON_TUA = (
     "TUA pagado del periodo (solo nota en el desglose de TOTAL PARA "
     "PROVEEDOR, no resta en este libro):"
@@ -1640,6 +1668,13 @@ _CPH_RENGLON_EXTENSION = (
 # VALOR del API con esta nota (en la hoja maestra, en el encabezado de su
 # columna; en otra hoja, en la celda).
 _NOTA_CALCULADO_POR_SISTEMA = {
+    "cph_proveedor_mxn": (
+        "Calculado por el sistema: TOTAL PARA PROVEEDOR (PESOS) = COSTO TOTAL "
+        "del vuelo = operación + piloto + otros + permiso AFAC (provisión), sin "
+        "combustible. Esas columnas no van en este Balance general: el "
+        "desglose de cada vuelo está en la nota de su celda y en el Balance "
+        "mensual la columna COSTO TOTAL MXN es la fórmula que las suma."
+    ),
     "costo_total_mxn": (
         "Calculado por el sistema: COSTO TOTAL = operación + piloto + otros + "
         "permiso AFAC (provisión) del vuelo, sin combustible. Esas columnas no "
@@ -1722,7 +1757,7 @@ def _notas_pie_costo_por_hora(req: BalanceAvionRequest, hay_extension: bool) -> 
         + (_CPH_COMBUSTIBLE_COLA_EXTENSION if hay_extension else _CPH_COMBUSTIBLE_COLA_TUA),
         _CPH_TRASLADOS_EXTENSION if hay_extension else _CPH_TRASLADOS_TUA,
         _NOTA_COMPARTIDO,
-        _NOTA_TACOS_AMBAR,
+        _CPH_NOTA_TACOS_AMBAR,
     )
 
 
@@ -1941,6 +1976,12 @@ def _hoja_maestra(
                         formula = None
                         if val is not None:
                             calculadas.add(i)
+                    if attr == "cph_proveedor_mxn" and val is not None:
+                        # TOTAL PARA PROVEEDOR (PESOS) es el COSTO TOTAL del
+                        # vuelo y, desde el 8-oct-2026, su único lugar en el
+                        # general: la nota «calculado por el sistema» va en
+                        # su encabezado (antes en COSTO TOTAL MXN).
+                        calculadas.add(i)
                     cell = _formula(ws, row, i, formula, val, fmt)
                 if attr == "horas_cobradas" and horas_menores:
                     fill = AMBER
@@ -2214,7 +2255,7 @@ def _hoja_maestra(
     # filas de vuelo + TOTALES de cada columna que esta variante tenga.
     _rojo_si_negativo(
         ws,
-        *(
+        *dict.fromkeys(
             f"{letra}{maestra.fila_ini}:{letra}{maestra.fila_tot}"
             for attr in _COLUMNAS_NEGATIVO_ROJO
             if (letra := disp.letra.get(attr)) is not None

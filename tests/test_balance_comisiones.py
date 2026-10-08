@@ -718,7 +718,7 @@ def test_variante_general_remanente_antes_de_comisiones(registros) -> None:
     assert verificar_libro(data)
     wb, wv = _libros(data)
     ws, wsv = wb[MAESTRA], wv[MAESTRA]
-    assert ws.max_column == len(_COLS_GENERAL) == 44
+    assert ws.max_column == len(_COLS_GENERAL) == 39
     assert COMISIONES not in [c.value for c in ws[2]]
     rem = _col(ws, REMANENTE_CPH)
     assert ws.cell(row=2, column=rem + 1).value == "STATUS"

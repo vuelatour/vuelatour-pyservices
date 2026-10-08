@@ -383,13 +383,14 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   ella solo las letras con que la citan y la nota de 'repartidos a aviones',
   que en la general dice que el TUA pagado queda en el desglose de TOTAL PARA
   PROVEEDOR (PESOS): `_CPH_NOTA_REPARTIDOS_A_AVIONES`; la de siempre
-  nombraba OPERACIONES): `_COLS_GENERAL` (44 columnas; 45 con COMISIONES
-  del 6 al 7-oct-2026, ver las dos entradas siguientes) = CLAVE..
-  ESTADO, VENTA y TIEMPO iguales; «COSTO TOTAL (MXN)» = COSTO TOTAL + TIPO
-  CAMBIO COSTOS; «COSTO POR HORA» = las 12 columnas de la hoja «utilidades»
-  del cliente en su orden y con sus nombres (repiten a propósito venta s/IVA,
-  tiempo, T.C. y costo total: el bloque se lee solo); STATUS DE COBROS y
-  FACTURA iguales. Fuera OPERACIONES/PILOTO/OTROS/AFAC —su desglose va en la
+  nombraba OPERACIONES): `_COLS_GENERAL` (39 columnas desde el 8-oct-2026;
+  44 del 6 al 8-oct y 45 con COMISIONES del 6 al 7-oct, ver las entradas
+  siguientes) = CLAVE..ESTADO y VENTA iguales; «COSTO POR HORA» = las 12
+  columnas de la hoja «utilidades» del cliente en su orden y con sus nombres
+  (repite a propósito la venta s/IVA: el bloque se lee solo); STATUS DE
+  COBROS y FACTURA iguales. Hasta el 8-oct llevaba también TIEMPO /
+  TACÓMETRO y «COSTO TOTAL (MXN)» (COSTO TOTAL + TIPO CAMBIO COSTOS); ver la
+  entrada «SIN COLUMNAS DUPLICADAS» de abajo. Fuera OPERACIONES/PILOTO/OTROS/AFAC —su desglose va en la
   NOTA de TOTAL PARA PROVEEDOR (PESOS): «Operación $x · Piloto $y · Otros $z
   · Permiso AFAC $w» + sus líneas de detalle (`_nota_desglose_costo`)— e
   INDICADORES. **Columnas por LLAVE, jamás letras fijas**: `_Disposicion`
@@ -479,6 +480,30 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   (`tests/test_balance_general_costo_hora.py::test_mensual_es_el_libro_de_hoy`)
   sí cambian con cualquier regla nueva y se recongelan a propósito (8-oct).
   Tests: `tests/test_balance_formato_negativo.py`.
+- **BALANCE GENERAL SIN COLUMNAS DUPLICADAS** (8-oct-2026; pedido del
+  cliente con captura: «estos valores están duplicados, me ayudan eliminando
+  los marcados… y eliminar tacómetro inicial y final (solo en la general)»).
+  La variante general (`_COLS_GENERAL`) va SIN el grupo TIEMPO / TACÓMETRO
+  (TIEMPO VUELO HR, TACO INICIO, TACO FINAL) ni «COSTO TOTAL (MXN)» (COSTO
+  TOTAL MXN, TIPO CAMBIO COSTOS): 39 columnas, el bloque COSTO POR HORA
+  empieza en N y STATUS queda en Z. Las tres columnas del bloque que
+  repetían esos datos (TIEMPO CALZOS/HOBS (HR), TIPO CAMBIO, TOTAL PARA
+  PROVEEDOR (PESOS)) son ahora su ÚNICO lugar: `_disposicion(…,
+  costo_por_hora=True)` mete en `letra` un ALIAS por cada par de
+  `_ORIGEN_GENERAL` cuyo atributo no tenga columna propia (`tiempo_vuelo` →
+  `cph_tiempo_hr`, `tc_costos` → `cph_tc`, `costo_total_mxn` →
+  `cph_proveedor_mxn`), así `maestra.total('tc_costos')`, `rango(…)`, las
+  citas de 'combustible' / hojas de gastos y las señales por origen (ámbar
+  del salto interno en TIEMPO CALZOS/HOBS) siguen funcionando sin tocar a
+  nadie; con la columna propia presente, esta manda y no hay alias. La nota
+  «calculado por el sistema» pasa del encabezado de COSTO TOTAL MXN al de
+  TOTAL PARA PROVEEDOR (PESOS) (`_NOTA_CALCULADO_POR_SISTEMA["cph_proveedor_mxn"]`);
+  notas al pie ajustadas (`_CPH_NOTA_AFAC`, `_CPH_NOTA_TOTALES`,
+  `_CPH_COMBUSTIBLE_COLA_*`, nueva `_CPH_NOTA_TACOS_AMBAR` en lugar de
+  `_NOTA_TACOS_AMBAR`). El Balance mensual y el individual NO cambian (sus
+  huellas byte a byte siguen iguales). Fórmulas del bloque intactas: cada
+  una cita por llave y la fila es la misma aritmética del API; el caso
+  mutado «sin TIPO CAMBIO COSTOS» de los tests se retiró con la columna.
 - **COMISIONES a cargo del avión** (6-oct-2026, API 0.0.65; pedido: «cuando
   hay una comisión de un banco, en la parte de total cobrado no refleja el
   monto real que entró a la cuenta» y «la comisión del banco y vendedor se
@@ -595,7 +620,7 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   COMISIONES: mensual = `_COLS_FLOTA` (`_COLS` sin `comisiones_mxn`, 46
   columnas: de AC en adelante todo corre una — GANANCIA MXN = AC, COBRO 1
   FECHA = AH) con `_DISP_FLOTA`; variante general = `_COLS_GENERAL` de vuelta a
-  las 12 columnas del cliente (44). `_hoja_maestra` elige el juego (el
+  las 12 columnas del cliente (44 entonces; 39 desde el 8-oct-2026). `_hoja_maestra` elige el juego (el
   individual sigue con `_DISP_MENSUAL`, intacto) y, si el juego no trae
   COMISIONES (`comision_col` None), pinta `_antes_de_comisiones(req)`: fila
   con comisiones ⇒ GANANCIA MXN = `remanente_mxn` del API (fórmula `=AA`) y

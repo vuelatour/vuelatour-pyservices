@@ -134,6 +134,6 @@ def test_balance_general_variante_general() -> None:
     _assert_maestra(
         _hoja_con(wb, 2, "REMANENTE VENTA\nMENOS COMPRA (PESOS)"),
         ("REMANENTE VENTA\nMENOS COMPRA (PESOS)",),
-        sin="COSTO TOTAL\nMXN",
+        sin="VENTA AVIÓN\nMXN",
     )
     _assert_balance(wb["balance"])
