@@ -459,6 +459,26 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   hoja es la de siempre. Tests:
   `tests/test_balance_general_costo_hora.py` (+ dos libros de la variante en
   `_LIBROS` de `tests/test_balance_formulas.py`).
+- **NEGATIVOS EN ROJO con formato condicional** (8-oct-2026; pedido del
+  cliente con la captura del RESUMEN: la GANANCIA −11,299.66 del N58BT en
+  rojo). `_rojo_si_negativo(ws, *rangos)` agrega una REGLA de Excel (`cfRule`
+  cellIs `lessThan 0`, relleno `FFC7CE` + letra `9C0006` = preset «Relleno
+  rojo claro con texto rojo oscuro»), NO un relleno fijo: la evalúa Excel con
+  el número que la celda muestre, también si la oficina edita la fórmula.
+  Dónde: hoja maestra —`_COLUMNAS_NEGATIVO_ROJO` = REMANENTE VENTA−COSTO,
+  GANANCIA MXN/USD y REMANENTE VENTA MENOS COMPRA (variante general), filas +
+  TOTALES, las que tenga cada juego de columnas—, RESUMEN flota (GANANCIA
+  MXN, aviones + TOTALES), hoja 'balance' (las tres filas UTILIDAD y el
+  MONTO USD de cada socio; el RESULTADO del bloque VUELATOUR (empresa)),
+  'otros movimientos' (REMANENTE, filas + TOTALES) y 'refacciones' (GANANCIA
+  MXN). Los colores fijos que ya había (verde/rojo en UTILIDAD COBRADA y en
+  el RESULTADO) se quedan: la regla los pisa solo cuando el valor es negativo.
+  El post-proceso de `xlsx_formulas` no toca `<conditionalFormatting>` (su
+  regex exige `<c` + espacio). Las huellas de LAYOUT (`_firma_hoja`) no miran
+  las reglas; las huellas BYTE A BYTE del libro mensual
+  (`tests/test_balance_general_costo_hora.py::test_mensual_es_el_libro_de_hoy`)
+  sí cambian con cualquier regla nueva y se recongelan a propósito (8-oct).
+  Tests: `tests/test_balance_formato_negativo.py`.
 - **COMISIONES a cargo del avión** (6-oct-2026, API 0.0.65; pedido: «cuando
   hay una comisión de un banco, en la parte de total cobrado no refleja el
   monto real que entró a la cuenta» y «la comisión del banco y vendedor se

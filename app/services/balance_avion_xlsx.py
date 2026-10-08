@@ -90,6 +90,7 @@ from datetime import datetime
 
 from openpyxl import Workbook
 from openpyxl.comments import Comment
+from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
@@ -147,6 +148,35 @@ TC = "0.00####"
 
 _thin = Side(style="thin", color="D5DBE3")
 _border = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
+
+
+# Formato condicional «es menor que 0» (8-oct-2026, pedido del cliente con la
+# captura del RESUMEN: la GANANCIA negativa del N58BT en rojo). Es una REGLA
+# de Excel (cfRule), no un relleno fijo: Excel la evalúa con el número que la
+# celda muestre, también cuando la oficina edita la fórmula. Colores del
+# preset «Resaltar reglas de celdas › Es menor que… › Relleno rojo claro con
+# texto rojo oscuro». Se aplica a TODAS las celdas de ganancia / utilidad /
+# remanente de los dos libros (`_rojo_si_negativo`): hoja maestra
+# (`_COLUMNAS_NEGATIVO_ROJO`, filas + TOTALES), RESUMEN del general, cascada y
+# socios de 'balance' (y el RESULTADO del bloque VUELATOUR), 'otros
+# movimientos' (remanente) y GANANCIA de 'refacciones'. Las huellas de layout
+# de los tests no miran las reglas condicionales: las hojas SE VEN iguales
+# mientras nada sea negativo.
+_FILL_NEGATIVO = PatternFill("solid", fgColor="FFC7CE", bgColor="FFC7CE")
+_FONT_NEGATIVO = Font(color="9C0006")
+_COLUMNAS_NEGATIVO_ROJO = ("remanente_mxn", "ganancia_mxn", "ganancia_usd", "cph_remanente_mxn")
+
+
+def _rojo_si_negativo(ws: Worksheet, *rangos: str) -> None:
+    """Relleno rojo claro + letra rojo oscuro en las celdas de `rangos` cuyo
+    valor sea < 0, con formato condicional de Excel (una regla por rango)."""
+    for rango in rangos:
+        ws.conditional_formatting.add(
+            rango,
+            CellIsRule(
+                operator="lessThan", formula=["0"], fill=_FILL_NEGATIVO, font=_FONT_NEGATIVO
+            ),
+        )
 
 
 def _hex(color: str | None) -> str | None:
@@ -2180,6 +2210,16 @@ def _hoja_maestra(
             anchos[i] = _ANCHO_COSTO_HORA
     for i in range(1, n + 1):
         ws.column_dimensions[get_column_letter(i)].width = anchos.get(i, 13)
+    # GANANCIA / REMANENTE negativos en rojo (regla de Excel, 8-oct-2026):
+    # filas de vuelo + TOTALES de cada columna que esta variante tenga.
+    _rojo_si_negativo(
+        ws,
+        *(
+            f"{letra}{maestra.fila_ini}:{letra}{maestra.fila_tot}"
+            for attr in _COLUMNAS_NEGATIVO_ROJO
+            if (letra := disp.letra.get(attr)) is not None
+        ),
+    )
     ws.freeze_panes = "D3"
     return maestra
 
@@ -2342,6 +2382,10 @@ def _hoja_gastos(ws: Worksheet, titulo: str, hoja: BalanceAvionHojaGastos,
         )
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
         row += 1
+
+    # GANANCIA MXN negativa en rojo (hoja 'refacciones'), 8-oct-2026.
+    if con_costo_venta and hoja.filas:
+        _rojo_si_negativo(ws, f"I8:I{ultima}")
 
     if nota:
         row += 1
@@ -3019,6 +3063,8 @@ def _bloque_balance(
             color=color or ("000000" if bold else MUTED),
         )
         cell.border = _border
+        if label.startswith("UTILIDAD"):
+            _rojo_si_negativo(ws, cell.coordinate)
         if label == _FILA_INDIRECTOS and b.otros_usd is not None and b.otros_usd != 0:
             cell.comment = _nota_otros_en_indirectos(b.otros_usd, general)
         if label in notas_previas and val is not None:
@@ -3040,6 +3086,7 @@ def _bloque_balance(
                 s.monto_usd, MONEY, bold=True,
             )
             mc.border = _border
+            _rojo_si_negativo(ws, mc.coordinate)
             if celdas_empresa is not None and s.es_empresa:
                 celdas_empresa.append(
                     _CeldaSocioEmpresa(
@@ -3249,6 +3296,7 @@ def _bloque_empresa(
         bold=True,
         color=None if res is None else (GREEN if res >= 0 else RED),
     )
+    _rojo_si_negativo(ws, f"B{row}")
     row += 2
 
     # Pie: la `nota` del API (base de cada línea con sus números) + la base
@@ -4022,6 +4070,9 @@ def _hoja_resumen_general(
             filas_avion=(4, row - 1) if req.resumen else None,
         )
         row += 1
+    # GANANCIA MXN negativa en rojo (aviones + TOTALES), 8-oct-2026.
+    if row > 4:
+        _rojo_si_negativo(ws, f"I4:I{row - 1}")
     row += 1
     # Cómo se nombra el costo de las salidas en el índice de hojas: con el
     # API 0.0.36 (`regla_costo`) es el último precio de compra; con uno
@@ -4268,6 +4319,8 @@ def _hoja_otros_movimientos(
         cell.fill = PatternFill("solid", fgColor=LIGHT)
         if row > 4:
             xlsx_formulas.escribir(cell, formulas[col], val)
+    # REMANENTE negativo en rojo (filas + TOTALES), 8-oct-2026.
+    _rojo_si_negativo(ws, f"I4:I{row}")
     # Leyenda del amarillo (solo si alguna fila lo trae: sin provisiones la
     # hoja es la de siempre).
     if hay_provision:

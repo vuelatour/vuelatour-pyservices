@@ -1102,6 +1102,12 @@ _CASOS_MENSUAL = {
 # SOLO el RESUMEN (sheet1), la hoja de vuelos (sheet2), sus notas (comment1) y
 # —si sus notas de cobro se corren de columna— su dibujo VML.
 _OPENPYXL_HUELLAS = "3.1.5"
+# REGENERADAS A PROPÓSITO el 8-oct-2026 (negativos en rojo, formato
+# condicional de Excel; `tests/test_balance_formato_negativo.py`): cambian
+# SOLO `xl/styles.xml` (el <dxf> de la regla) y las hojas que la llevan —
+# RESUMEN, maestra, 'otros movimientos' y 'balance' (sheet1/2/3/9)—; la huella
+# de LAYOUT (`_FIRMAS_HOY`, celda por celda) quedó IDÉNTICA: las hojas se ven
+# igual mientras ningún valor sea negativo.
 _MIEMBROS_HOY = {
     "fórmulas": {
         "[Content_Types].xml": "90c274d39d8df938",
@@ -1112,21 +1118,21 @@ _MIEMBROS_HOY = {
         "xl/comments/comment2.xml": "a623ddcb4e5ebb3c",
         "xl/drawings/commentsDrawing1.vml": "ac327951e7ea7e41",
         "xl/drawings/commentsDrawing2.vml": "a3fb237fe6d57d83",
-        "xl/styles.xml": "c00b3c833322f4b3",
+        "xl/styles.xml": "d4005b41be4c7036",
         "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
         "xl/workbook.xml": "e9b5be0ab87733e4",
         "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
         "xl/worksheets/_rels/sheet9.xml.rels": "06a3b87cfefe7f5f",
-        "xl/worksheets/sheet1.xml": "11198654c746e7ba",
+        "xl/worksheets/sheet1.xml": "603a679e7306df23",
         "xl/worksheets/sheet10.xml": "b134206c4fd136b1",
-        "xl/worksheets/sheet2.xml": "aef1be8a0b07a387",
-        "xl/worksheets/sheet3.xml": "bb3dc0f4f2b56702",
+        "xl/worksheets/sheet2.xml": "0947df37ec261fbf",
+        "xl/worksheets/sheet3.xml": "5ee21c84b48c0698",
         "xl/worksheets/sheet4.xml": "b4271af6eb64e959",
         "xl/worksheets/sheet5.xml": "0122d2728a5bfe58",
         "xl/worksheets/sheet6.xml": "91c22671b5955760",
         "xl/worksheets/sheet7.xml": "d35dd9696ae4e87e",
         "xl/worksheets/sheet8.xml": "85aaef47b6b15de9",
-        "xl/worksheets/sheet9.xml": "fc8fb7c900b61fab",
+        "xl/worksheets/sheet9.xml": "6611d82d2f59871d",
     },
     "empresa": {
         "[Content_Types].xml": "90c274d39d8df938",
@@ -1137,21 +1143,21 @@ _MIEMBROS_HOY = {
         "xl/comments/comment2.xml": "51429da7b4342562",
         "xl/drawings/commentsDrawing1.vml": "ac327951e7ea7e41",
         "xl/drawings/commentsDrawing2.vml": "14fe3cbfa808de3c",
-        "xl/styles.xml": "2354a5c4769e8a1b",
+        "xl/styles.xml": "30527d4a9b32515f",
         "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
         "xl/workbook.xml": "e9b5be0ab87733e4",
         "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
         "xl/worksheets/_rels/sheet9.xml.rels": "06a3b87cfefe7f5f",
-        "xl/worksheets/sheet1.xml": "78a2ec673cf7e685",
+        "xl/worksheets/sheet1.xml": "63d0cefedf987cba",
         "xl/worksheets/sheet10.xml": "245576c8b1d18f98",
-        "xl/worksheets/sheet2.xml": "aef1be8a0b07a387",
-        "xl/worksheets/sheet3.xml": "bb3dc0f4f2b56702",
+        "xl/worksheets/sheet2.xml": "0947df37ec261fbf",
+        "xl/worksheets/sheet3.xml": "5ee21c84b48c0698",
         "xl/worksheets/sheet4.xml": "b4271af6eb64e959",
         "xl/worksheets/sheet5.xml": "0122d2728a5bfe58",
         "xl/worksheets/sheet6.xml": "91c22671b5955760",
         "xl/worksheets/sheet7.xml": "d35dd9696ae4e87e",
         "xl/worksheets/sheet8.xml": "85aaef47b6b15de9",
-        "xl/worksheets/sheet9.xml": "fd277d78da5b85d8",
+        "xl/worksheets/sheet9.xml": "1a2f5573d138c689",
     },
     "pago real": {
         "[Content_Types].xml": "aab5d091f752ef52",
@@ -1162,14 +1168,14 @@ _MIEMBROS_HOY = {
         "xl/comments/comment2.xml": "4538ed5560018e12",
         "xl/drawings/commentsDrawing1.vml": "286be680ad384252",
         "xl/drawings/commentsDrawing2.vml": "ed0e12dacd2b3460",
-        "xl/styles.xml": "c6184aacbdeea286",
+        "xl/styles.xml": "4205549284535169",
         "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
         "xl/workbook.xml": "6c579d04c9cd1373",
         "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
         "xl/worksheets/_rels/sheet3.xml.rels": "06a3b87cfefe7f5f",
-        "xl/worksheets/sheet1.xml": "c3accfcefc62223b",
-        "xl/worksheets/sheet2.xml": "8898065df845db3c",
-        "xl/worksheets/sheet3.xml": "495b31f28f184ace",
+        "xl/worksheets/sheet1.xml": "c1beadfc62d58ffc",
+        "xl/worksheets/sheet2.xml": "8d392909d65e081f",
+        "xl/worksheets/sheet3.xml": "373e122fa2c825e5",
         "xl/worksheets/sheet4.xml": "fb8f4d129040df3f",
         "xl/worksheets/sheet5.xml": "9095ac67c5861e2b",
         "xl/worksheets/sheet6.xml": "2d5e2e80fcfd0233",
