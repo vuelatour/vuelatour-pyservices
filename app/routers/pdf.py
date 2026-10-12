@@ -16,6 +16,8 @@ from app.schemas.tabla import TablaXlsxRequest
 from app.schemas.zip import ZipRequest
 from app.security import require_internal_token
 from app.services.balance_avion_xlsx import (
+    libro_balance_avion,
+    libro_balance_general,
     render_balance_avion_xlsx,
     render_balance_general_xlsx,
 )
@@ -155,6 +157,36 @@ def reporte_vuelo_xlsx(payload: ReporteVueloRequest) -> Response:
     )
 
 
+def _archivo_balance_avion(payload: BalanceAvionRequest) -> str:
+    return (
+        f"balance-{payload.matricula or 'avion'}-"
+        f"{payload.periodo_desde or 's-f'}-{payload.periodo_hasta or 's-f'}.xlsx"
+    )
+
+
+def _archivo_balance_general(payload: BalanceGeneralRequest) -> str:
+    return (
+        f"balance-{payload.variante}-vuelatour-"
+        f"{payload.periodo_desde or 's-f'}-{payload.periodo_hasta or 's-f'}.xlsx"
+    )
+
+
+@router.post("/balance-avion-libro")
+def balance_avion_libro(payload: BalanceAvionRequest) -> dict:
+    """Balance por avión como LIBRO JSON para la vista en pantalla del panel
+    (12-oct-2026): el MISMO libro de `/balance-avion-xlsx`, hoja por hoja y
+    celda por celda (números del API, texto formateado, fórmulas visibles,
+    estilos, notas), sin descargar nada. Contrato en `libro_json`."""
+    return libro_balance_avion(payload, archivo=_archivo_balance_avion(payload))
+
+
+@router.post("/balance-general-libro")
+def balance_general_libro(payload: BalanceGeneralRequest) -> dict:
+    """Balance mensual / general VuelaTour como LIBRO JSON para la vista en
+    pantalla (12-oct-2026): el MISMO libro de `/balance-general-xlsx`."""
+    return libro_balance_general(payload, archivo=_archivo_balance_general(payload))
+
+
 @router.post("/balance-avion-xlsx")
 def balance_avion_xlsx(payload: BalanceAvionRequest) -> Response:
     """Balance mensual por avión en Excel (réplica del control del equipo).
@@ -162,10 +194,7 @@ def balance_avion_xlsx(payload: BalanceAvionRequest) -> Response:
     El API manda todo precalculado; aquí SOLO se renderiza el libro.
     """
     xlsx_bytes = render_balance_avion_xlsx(payload)
-    filename = (
-        f"balance-{payload.matricula or 'avion'}-"
-        f"{payload.periodo_desde or 's-f'}-{payload.periodo_hasta or 's-f'}.xlsx"
-    )
+    filename = _archivo_balance_avion(payload)
     return Response(
         content=xlsx_bytes,
         media_type=XLSX_MEDIA,
@@ -188,10 +217,7 @@ def balance_general_xlsx(payload: BalanceGeneralRequest) -> Response:
     del API; él pone el suyo al descargar).
     """
     xlsx_bytes = render_balance_general_xlsx(payload)
-    filename = (
-        f"balance-{payload.variante}-vuelatour-"
-        f"{payload.periodo_desde or 's-f'}-{payload.periodo_hasta or 's-f'}.xlsx"
-    )
+    filename = _archivo_balance_general(payload)
     return Response(
         content=xlsx_bytes,
         media_type=XLSX_MEDIA,

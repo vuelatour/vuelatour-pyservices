@@ -114,7 +114,7 @@ from app.schemas.reportes import (
     BalanceOtroMovimientoFila,
     TcHoy,
 )
-from app.services import xlsx_formulas
+from app.services import libro_json, xlsx_formulas
 from app.services._formato import _tc_txt
 from app.services.caja_chica_xlsx import _texto_literal
 from app.services.tabla_xlsx import sheet_title
@@ -3986,10 +3986,12 @@ def _hoja_inventario(ws: Worksheet, inv: BalanceHojaInventario,
     ws.freeze_panes = "A5"
 
 
-def render_balance_avion_xlsx(req: BalanceAvionRequest) -> bytes:
-    """Libro INDIVIDUAL de un avión. Pestañas, en orden: reporte horas,
-    cobranza, combustible, Gastos Indirectos, refacciones (solo si el API
-    la manda), permisos, balance, pendientes de captura."""
+def construir_balance_avion(req: BalanceAvionRequest) -> Workbook:
+    """Libro INDIVIDUAL de un avión (openpyxl, sin guardar). Pestañas, en
+    orden: reporte horas, cobranza, combustible, Gastos Indirectos,
+    refacciones (solo si el API la manda), permisos, balance, pendientes de
+    captura. Lo cierran `render_balance_avion_xlsx` (.xlsx) y
+    `libro_balance_avion` (JSON para la vista en pantalla, 12-oct-2026)."""
     wb = Workbook()
     maestra = _hoja_maestra(wb.active, req)
     _hoja_cobranza(wb.create_sheet("cobranza"), req)
@@ -4019,8 +4021,29 @@ def render_balance_avion_xlsx(req: BalanceAvionRequest) -> bytes:
     )
     _hoja_pendientes(wb.create_sheet("pendientes de captura"), req)
 
-    # Fórmulas verificadas contra el API + su valor en caché (5-oct-2026).
-    return xlsx_formulas.guardar(wb)
+    return wb
+
+
+def render_balance_avion_xlsx(req: BalanceAvionRequest) -> bytes:
+    """El libro individual como .xlsx: fórmulas verificadas contra el API +
+    su valor en caché (5-oct-2026)."""
+    return xlsx_formulas.guardar(construir_balance_avion(req))
+
+
+def _titulo_balance_avion(req: BalanceAvionRequest) -> str:
+    periodo = f"{req.periodo_desde or 's/f'} a {req.periodo_hasta or 's/f'}"
+    return f"Balance {req.matricula or 'avión'} · {periodo}"
+
+
+def libro_balance_avion(req: BalanceAvionRequest, *, archivo: str | None = None) -> dict:
+    """El MISMO libro individual, como JSON para verlo en pantalla (12-oct-2026):
+    `archivo` es el nombre con el que se descargaría el .xlsx."""
+    return libro_json.exportar_libro(
+        construir_balance_avion(req),
+        titulo=_titulo_balance_avion(req),
+        archivo=archivo,
+        generado=req.generado,
+    )
 
 
 def _fila_resumen(ws: Worksheet, row: int, f: BalanceGeneralResumenFila,
@@ -4373,7 +4396,7 @@ def _hoja_otros_movimientos(
     ws.freeze_panes = "A4"
 
 
-def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
+def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
     """Balance general VuelaTour (regla del cliente, 18-ago; hojas 29-ago;
     apartado propio en Reportes desde el 2-sep-2026 — antes era la opción
     "Toda la flota" del balance por avión): RESUMEN + los datos de TODOS
@@ -4549,4 +4572,27 @@ def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
         _hoja_pendientes(wb.create_sheet("pendientes de captura"), cons)
 
     # Fórmulas verificadas contra el API + su valor en caché (5-oct-2026).
-    return xlsx_formulas.guardar(wb)
+    return wb
+
+
+def render_balance_general_xlsx(req: BalanceGeneralRequest) -> bytes:
+    """El libro de flota como .xlsx: fórmulas verificadas contra el API + su
+    valor en caché (5-oct-2026)."""
+    return xlsx_formulas.guardar(construir_balance_general(req))
+
+
+def _titulo_balance_general(req: BalanceGeneralRequest) -> str:
+    libro = "general" if req.variante == VARIANTE_BALANCE_GENERAL else "mensual"
+    periodo = f"{req.periodo_desde or 's/f'} a {req.periodo_hasta or 's/f'}"
+    return f"Balance {libro} VuelaTour · {periodo}"
+
+
+def libro_balance_general(req: BalanceGeneralRequest, *, archivo: str | None = None) -> dict:
+    """El MISMO libro de flota («Balance mensual» o «Balance general» según
+    `variante`), como JSON para verlo en pantalla (12-oct-2026)."""
+    return libro_json.exportar_libro(
+        construir_balance_general(req),
+        titulo=_titulo_balance_general(req),
+        archivo=archivo,
+        generado=req.generado,
+    )

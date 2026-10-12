@@ -934,6 +934,32 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   preview y panel; renombrar una clase del marcado rompe el contrato con el
   panel. Tests: última sección de `tests/test_cotizacion_interna_pdf.py`.
 
+- **Libro de Excel → JSON para la VISTA EN PANTALLA** (12-oct-2026; pedido:
+  «ver el balance como el Excel sin descargarlo… mismo formato, colores y
+  estructura», y después «editar la celda y que afecte a lo relacionado»).
+  `app/services/libro_json.py` (genérico, cualquier libro openpyxl):
+  `exportar_libro(wb, titulo, archivo, generado)` verifica las fórmulas
+  (`xlsx_formulas.asegurar_valores`: las que no reproducen al API vuelven a
+  valor, igual que `guardar`) y vuelca hojas, celdas (`v` crudo, `t` TEXTO
+  como lo mostraría Excel —`formatear(valor, number_format)`: `#,##0.00`,
+  `"$"#,##0.00`, `0.00####`, `0.0%`, `0.00"%"`, secciones «pos;neg;cero»,
+  `General`—, `f` fórmula visible, `s` índice de estilo, `n` nota), estilos
+  sin repetir (relleno, color, negrita/cursiva/subrayado, tamaño, alineación,
+  ajuste, sangría, bordes `lrtb`, formato), combinadas, anchos/altos,
+  paneles congelados, color de pestaña y el formato condicional «cellIs» YA
+  RESUELTO (el rojo de los negativos). Contrato en la cabecera del módulo
+  (`version` 1; el panel lo tipa 1:1). Fase 2: `vincular(cell, {tipo, id,
+  campo})` anota el registro del API de una celda (registro pegado al libro,
+  las celdas no admiten atributos) y viaja como `vinculo`. Los balances se
+  parten en `construir_balance_avion` / `construir_balance_general`
+  (openpyxl sin guardar) + `render_*_xlsx` (= `guardar`) + `libro_balance_*`
+  (= JSON); rutas `POST /pdf/balance-avion-libro` y
+  `POST /pdf/balance-general-libro` (mismo payload que las .xlsx; `archivo`
+  = el nombre con que se descargaría). Regla: lo que se ve en pantalla es lo
+  que se descargaría — `tests/test_libro_json.py` compara el JSON contra el
+  .xlsx real (hojas, valores de la caché de cada fórmula, combinadas) y
+  congela el formato de número y cada rasgo del contrato.
+
 ## Conciliación
 
 - Estado de cuenta de PAYWISE (9-sep-2026): `estado_cuenta._parse_paywise`

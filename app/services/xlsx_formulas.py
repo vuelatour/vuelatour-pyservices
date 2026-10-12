@@ -607,6 +607,19 @@ def _a_valores(wb: Workbook) -> None:
                 ws[coord].value = f.valor
 
 
+def asegurar_valores(wb: Workbook) -> None:
+    """Para la VISTA en pantalla (`libro_json`, 12-oct-2026): verifica las
+    fórmulas igual que `guardar` —las que no reproducen al API vuelven a ser
+    valor— pero sin serializar el libro. Si la verificación falla por un error
+    ajeno a una fórmula, TODAS vuelven a valor (misma regla: jamás un número
+    sin verificar)."""
+    try:
+        finalizar(wb)
+    except Exception:
+        logger.exception("no se pudieron verificar las fórmulas: la vista sale con valores")
+        _a_valores(wb)
+
+
 def guardar(wb: Workbook) -> bytes:
     """Verifica las fórmulas, guarda el libro e inyecta su caché. Si la
     verificación falla (un error que no es de una fórmula: revisión
