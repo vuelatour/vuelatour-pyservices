@@ -135,7 +135,6 @@ class CotizacionPdfRequest(BaseModel):
     modelos_cotizados: list[str] = Field(default_factory=list)
 
 
-
 # ===== Cotización de GRUPO (4-sep-2026): varios aviones para un mismo
 # cliente, UN documento y UN total. El API (`groups-pdf.service`) manda el
 # consolidado YA calculado (Σ de los desgloses canónicos de los hijos vivos,
@@ -845,6 +844,13 @@ class BalanceAvionVuelo(BaseModel):
     piloto_detalle: list[str] = Field(default_factory=list)
     otros_detalle: list[str] = Field(default_factory=list)
     permiso_afac_mxn: float | None = None
+    # ADITIVO (12-oct-2026, API 0.0.69): la «Aportación AFAC USD/hr» del
+    # AVIÓN de la fila. En el Balance general (hoja de vuelos de la flota)
+    # cada fila trae la tarifa de su avión y PERMISO AFAC (PROVISIÓN) lleva
+    # fórmula por fila (pedido de Ale: «una de las columnas de Permisos de
+    # AFAC necesitamos que venga con la fórmula en el excel»). None = API
+    # previo o avión sin tarifa (la columna va como valor / vacía).
+    permiso_afac_usd_hr: float | None = None
     costo_total_mxn: float | None = None
     tc_costos: float | None = None
     # --- Bloque INDICADORES USD e IVA ---
@@ -1145,6 +1151,44 @@ class BalanceOtroMovimientoFila(BaseModel):
     nota_egreso: str | None = None
 
 
+class BalanceAfacProvisionAvion(BaseModel):
+    """Provisión AFAC del periodo de UN avión: Σ de su columna PERMISO AFAC
+    (PROVISIÓN) — ya cargada a cada vuelo en su libro."""
+
+    matricula: str = ""
+    tarifa_usd_hr: float | None = None
+    vuelos: int = 0
+    monto_mxn: float = 0.0
+
+
+class BalanceAfacPagado(BaseModel):
+    """Permiso AFAC PAGADO en el periodo (gasto categoría PERMISO; la fila
+    de la hoja «permisos» del libro individual de ese avión)."""
+
+    matricula: str = ""
+    fecha: str | None = None
+    detalle: str = ""
+    monto_mxn: float | None = None
+
+
+class BalanceAfacOtrosMovimientos(BaseModel):
+    """Bloque «PERMISOS AFAC» de la pestaña «otros movimientos» (12-oct-2026,
+    API 0.0.69; pedido de Ale: «en el balance general en la página de otros
+    movimientos no se ven los AFAC, aquí deben estar también»). INFORMATIVO:
+    la provisión ya resta en cada avión (columna PERMISO AFAC (PROVISIÓN) de
+    la hoja de vuelos) y los permisos pagados viven en la hoja «permisos» del
+    libro individual; aquí se ven juntos, provisión vs pagado, SIN entrar a
+    los TOTALES de la pestaña (si entraran, se contarían dos veces)."""
+
+    provision: list[BalanceAfacProvisionAvion] = Field(default_factory=list)
+    provision_total_mxn: float = 0.0
+    pagados: list[BalanceAfacPagado] = Field(default_factory=list)
+    pagados_total_mxn: float = 0.0
+    # provisión − pagado: lo que queda del fondo (negativo = se pagó más de
+    # lo provisionado en el periodo).
+    remanente_mxn: float = 0.0
+
+
 class BalanceHojaOtrosMovimientos(BaseModel):
     filas: list[BalanceOtroMovimientoFila] = Field(default_factory=list)
     # Movimientos SIN avión y SIN vuelo (dinero de empresa).
@@ -1157,6 +1201,10 @@ class BalanceHojaOtrosMovimientos(BaseModel):
     # (None/False, o un API viejo) el Excel es byte-idéntico al de antes —
     # esas leyendas siguen siendo verdaderas mientras no haya gasto real.
     hay_pago_vendedor_real: bool | None = None
+    # ADITIVO (12-oct-2026, API 0.0.69): bloque informativo «PERMISOS AFAC»
+    # (provisión vs pagado). None = API previo o periodo sin provisión ni
+    # permisos pagados: la pestaña es la de siempre.
+    afac: BalanceAfacOtrosMovimientos | None = None
 
 
 class BalanceAvionRequest(BaseModel):
@@ -1186,9 +1234,7 @@ class BalanceAvionRequest(BaseModel):
     permisos: BalanceAvionHojaGastos = Field(default_factory=BalanceAvionHojaGastos)
     # Pestaña mensual de combustible (26-ago-2026); default vacío = skew
     # tolerante con un API viejo que aún no la manda.
-    combustible: BalanceAvionHojaCombustible = Field(
-        default_factory=BalanceAvionHojaCombustible
-    )
+    combustible: BalanceAvionHojaCombustible = Field(default_factory=BalanceAvionHojaCombustible)
     balance: BalanceAvionBalanceBloque = Field(default_factory=BalanceAvionBalanceBloque)
     # Pestaña "Otros movimientos" (28-ago): solo la manda el GENERAL; None =
     # no se pinta (skew tolerante con API viejo).

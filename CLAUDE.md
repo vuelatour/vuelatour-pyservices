@@ -959,6 +959,36 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   que se descargaría — `tests/test_libro_json.py` compara el JSON contra el
   .xlsx real (hojas, valores de la caché de cada fórmula, combinadas) y
   congela el formato de número y cada rasgo del contrato.
+- **PERMISO AFAC con fórmula POR FILA en la hoja de la flota y bloque
+  «PERMISOS AFAC» en 'otros movimientos' (12-oct-2026, API 0.0.69).** Pedido
+  de Ale: «una de las columnas de Permisos de AFAC necesitamos que venga con
+  la fórmula en el excel» (el cliente señaló la columna T, PERMISO AFAC
+  (PROVISIÓN)) y «en el balance general en la página de otros movimientos no
+  se ven los AFAC, aquí deben estar también». (1) La tarifa AFAC es POR
+  AVIÓN y la hoja «reporte horas FLOTA» mezcla aviones, así que `$B$1` no
+  sirve ahí: cada fila trae `permiso_afac_usd_hr` (ADITIVO del API) y
+  la hoja gana la columna «AFAC USD/HR (tarifa del avión)» AL FINAL
+  (`_COL_TARIFA_AFAC`, `_COLS_FLOTA_AFAC`/`_DISP_FLOTA_AFAC`, grupo «TARIFA
+  AFAC»; ninguna letra se corre: T sigue siendo PERMISO AFAC) **SOLO cuando
+  alguna fila trae la tarifa** (`_trae_tarifa_afac`): con un API previo el
+  libro es byte-idéntico al de siempre (y las firmas de los demás tests no
+  se mueven); `_formula_fila` escribe `ROUND(<tarifa de la fila> ×
+  TIPO CAMBIO COSTOS × HORAS COBRADAS, 2)` en las filas con tarifa y deja el
+  valor en las demás (EXTERNOS, avión sin tarifa, API previo). El libro
+  INDIVIDUAL conserva `$B$1`; la variante «general» (costo por hora) no
+  lleva PERMISO AFAC. Notas: B1 (`_NOTA_B1_TARIFA_POR_AVION`) y el encabezado
+  de la columna (`_NOTA_ENCABEZADO_TARIFA_AFAC`). (2) `BalanceHojaOtrosMovimientos.afac`
+  (ADITIVO, `BalanceAfacOtrosMovimientos`): `_bloque_afac_otros_movimientos`
+  pinta DEBAJO de TOTALES —para no entrar a sus sumas— una fila por avión
+  con su provisión del periodo (ingreso, «provisión AFAC del periodo · N
+  vuelos · tarifa X USD/hr»), una por permiso pagado (egreso) y SUBTOTAL AFAC
+  con fórmulas (Σ y provisión − pagado), con la leyenda de que es INFORMATIVO:
+  la provisión ya resta en cada avión y los permisos pagados viven en la hoja
+  «permisos» del libro individual. Sin `afac` la pestaña es la de siempre.
+  Las firmas de valores NO cambian (los fixtures compartidos no llevan la
+  tarifa; `_general_con_tarifa_afac` la pone solo en su test). Tests:
+  `test_general_maestra_tarifa_por_avion_y_promedios_como_valor` y
+  `test_general_otros_movimientos_bloque_permisos_afac`.
 
 ## Conciliación
 

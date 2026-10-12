@@ -23,10 +23,17 @@ from io import BytesIO
 
 import pytest
 from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
 
-from app.schemas.reportes import BalanceAvionRequest, BalanceGeneralRequest
+from app.schemas.reportes import (
+    BalanceAfacOtrosMovimientos,
+    BalanceAvionRequest,
+    BalanceGeneralRequest,
+)
 from app.services import xlsx_formulas
 from app.services.balance_avion_xlsx import (
+    _COLS_FLOTA,
+    _COLS_FLOTA_AFAC,
     render_balance_avion_xlsx,
     render_balance_general_xlsx,
 )
@@ -906,17 +913,55 @@ def test_gastos_indirectos_fusionados_no_se_inventan_centavos() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_general_maestra_tarifa_por_avion_y_promedios_como_valor() -> None:
+def _general_con_tarifa_afac() -> BalanceGeneralRequest:
+    """El general con la tarifa AFAC de cada avión en SUS filas, como la manda
+    el API 0.0.69 (XA-TST 25 USD/hr; XB-DOS sin tarifa). Los fixtures
+    compartidos no la llevan para que las firmas de los demás tests sigan
+    siendo las del libro de siempre."""
     req = _general()
+    claves_tst = {f["clave"] for f in _payload_tst()["vuelos"]}
+    for v in req.consolidado.vuelos:
+        v.permiso_afac_usd_hr = 25.0 if v.clave in claves_tst else None
+    return req
+
+
+def test_general_maestra_tarifa_por_avion_y_promedios_como_valor() -> None:
+    req = _general_con_tarifa_afac()
     wb, wv = _libros(render_balance_general_xlsx(req))
     ws = wb["reporte horas FLOTA"]
     assert ws["B1"].value is None
     assert "POR AVIÓN" in ws["B1"].comment.text
+    assert "AFAC USD/HR" in ws["B1"].comment.text
     assert ws["D1"].value == 1.16
     filas = range(3, 3 + len(req.consolidado.vuelos))
-    for fila in filas:
+    # 12-oct-2026 (API 0.0.69): la tarifa AFAC de CADA avión viaja en la fila
+    # (columna AFAC USD/HR, al final) y PERMISO AFAC (PROVISIÓN) —sigue en
+    # T— lleva su fórmula en las filas con tarifa; sin tarifa, valor/vacío.
+    col_tarifa = _col(ws, "AFAC USD/HR\n(tarifa del avión)")
+    assert col_tarifa == len(_COLS_FLOTA_AFAC), "la tarifa va AL FINAL: ninguna letra se corre"
+    assert len(_COLS_FLOTA_AFAC) == len(_COLS_FLOTA) + 1
+    # Sin la tarifa en ninguna fila (API previo) la hoja es la de siempre.
+    ws_sin = _libros(render_balance_general_xlsx(_general()))[0]["reporte horas FLOTA"]
+    assert "AFAC USD/HR" not in ws_sin["B1"].comment.text
+    assert ws_sin.cell(row=2, column=len(_COLS_FLOTA)).value == "FACTURA\nVUELATOUR"
+    assert ws_sin.cell(row=2, column=len(_COLS_FLOTA) + 1).value is None
+    letra_tarifa = get_column_letter(col_tarifa)
+    assert "ROUND(esta tarifa × TIPO CAMBIO COSTOS × HORAS COBRADAS, 2)" in (
+        ws.cell(row=2, column=col_tarifa).comment.text
+    )
+    con_formula = 0
+    for fila, v in zip(filas, req.consolidado.vuelos, strict=True):
         valor = ws[f"T{fila}"].value
-        assert not (isinstance(valor, str) and valor.startswith("=")), fila
+        tarifa = ws[f"{letra_tarifa}{fila}"].value
+        assert tarifa == v.permiso_afac_usd_hr
+        if v.permiso_afac_usd_hr and v.permiso_afac_mxn is not None:
+            assert valor == f"=ROUND({letra_tarifa}{fila}*V{fila}*E{fila},2)", fila
+            assert wv["reporte horas FLOTA"][f"T{fila}"].value == v.permiso_afac_mxn
+            con_formula += 1
+        else:
+            assert not (isinstance(valor, str) and valor.startswith("=")), fila
+    assert con_formula > 0, "XA-TST (tarifa 25) debe llevar la fórmula en sus vuelos"
+    assert any(v.permiso_afac_usd_hr is None for v in req.consolidado.vuelos)  # XB-DOS
     sin_tc = next(f for f in filas if ws[f"A{f}"].value == "#403 · Traslado")
     # Sin la columna COMISIONES (AC) desde el 7-oct-2026: GANANCIA USD = AD y
     # COSTO X HORA USD = AE en la hoja de vuelos del general.
@@ -964,6 +1009,63 @@ def test_general_otros_gastos_balance_inventario_y_otros_movimientos() -> None:
     assert om[f"G{tot}"].value == f"=ROUND(SUM(G4:G{tot - 1}),2)"
     assert om[f"I{tot}"].value == f"=ROUND(G{tot}-D{tot},2)"
     assert wv["otros movimientos"][f"I{tot}"].value == r2(1250.5 + 3000 + 85.33 - 1100.25)
+
+
+def test_general_otros_movimientos_bloque_permisos_afac() -> None:
+    """12-oct-2026 (API 0.0.69): «en el balance general en la página de
+    otros movimientos no se ven los AFAC, aquí deben estar también». Bloque
+    INFORMATIVO debajo de TOTALES: provisión por avión, permisos pagados y un
+    SUBTOTAL con fórmulas; los TOTALES de la pestaña no cambian."""
+    base = _general()
+    wb0, wv0 = _libros(render_balance_general_xlsx(base))
+    om0 = wb0["otros movimientos"]
+    tot = next(c.row for c in om0["A"] if c.value == "TOTALES")
+    assert not any(c.value == "SUBTOTAL AFAC" for c in om0["A"])
+
+    req = _general()
+    assert req.consolidado.otros_movimientos is not None
+    req.consolidado.otros_movimientos.afac = BalanceAfacOtrosMovimientos.model_validate(
+        {
+            "provision": [
+                {"matricula": "XA-TST", "tarifa_usd_hr": 25.0, "vuelos": 4, "monto_mxn": 3465.0},
+                {"matricula": "XB-DOS", "tarifa_usd_hr": None, "vuelos": 0, "monto_mxn": 0.0},
+            ],
+            "provision_total_mxn": 3465.0,
+            "pagados": [
+                {
+                    "matricula": "XA-TST",
+                    "fecha": "2026-09-05",
+                    "detalle": "AFAC anual",
+                    "monto_mxn": 2500.0,
+                }
+            ],
+            "pagados_total_mxn": 2500.0,
+            "remanente_mxn": 965.0,
+        }
+    )
+    wb, wv = _libros(render_balance_general_xlsx(req))
+    om = wb["otros movimientos"]
+    # TOTALES intactos (misma fila, mismas fórmulas, mismo número).
+    assert om[f"A{tot}"].value == "TOTALES"
+    assert om[f"G{tot}"].value == f"=ROUND(SUM(G4:G{tot - 1}),2)"
+    assert wv["otros movimientos"][f"I{tot}"].value == wv0["otros movimientos"][f"I{tot}"].value
+    titulo = next(c.row for c in om["A"] if c.value and str(c.value).startswith("PERMISOS AFAC"))
+    assert titulo > tot
+    assert "NO entran a los TOTALES" in om[f"A{titulo + 1}"].value
+    inicio = titulo + 2
+    assert om[f"A{inicio}"].value == "XA-TST"
+    assert om[f"F{inicio}"].value == "provisión AFAC del periodo · 4 vuelos · tarifa 25.00 USD/hr"
+    assert om[f"G{inicio}"].value == 3465.0
+    assert om[f"A{inicio + 2}"].value == "XA-TST"
+    assert om[f"C{inicio + 2}"].value == "permiso AFAC pagado · AFAC anual"
+    assert om[f"D{inicio + 2}"].value == 2500.0
+    sub = inicio + 3
+    assert om[f"A{sub}"].value == "SUBTOTAL AFAC"
+    assert om[f"D{sub}"].value == f"=ROUND(SUM(D{inicio}:D{sub - 1}),2)"
+    assert om[f"G{sub}"].value == f"=ROUND(SUM(G{inicio}:G{sub - 1}),2)"
+    assert om[f"I{sub}"].value == f"=ROUND(G{sub}-D{sub},2)"
+    assert wv["otros movimientos"][f"I{sub}"].value == 965.0
+    assert verificar_libro(render_balance_general_xlsx(req))
 
 
 # ---------------------------------------------------------------------------
