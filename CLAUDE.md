@@ -207,7 +207,9 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `categoria` como `str` (un código nuevo no da 422). Tests:
   `tests/test_comision_vendedor_notas.py` (textos viejos LITERALES sin
   bandera, textos nuevos con ella, individual, concepto y nota tal cual,
-  rutas con el payload nuevo).
+  rutas con el payload nuevo). Desde el 12-oct-2026 (API 0.0.73) la bandera
+  `sin_provision_vendedor` MANDA sobre esta: ver «SIN PROVISIÓN del pago al
+  vendedor en 'otros movimientos'» más abajo.
 - **FACTURA VUELATOUR en la hoja maestra de los balances** (30-sep-2026, API
   0.0.45). Pedido de Marie para Ale, con la foto del «reporte horas XA-VGV»:
   «se ocupa que diga el num de factura que nosotros emitimos del servicio …
@@ -457,7 +459,10 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   provisión» en minúsculas y NO se pinta; tampoco un PROVEEDOR en mayúsculas
   de una fila suelta («Combustible · PROVISIONES AEREAS DEL SURESTE»: la
   primera versión buscaba la subcadena y lo pintaba). Sin provisiones la
-  hoja es la de siempre. Tests:
+  hoja es la de siempre. Desde el API 0.0.73 (12-oct-2026) la marca YA NO
+  VIAJA: sin gasto real la fila no lleva egreso y no hay nada que pintar
+  (ver «SIN PROVISIÓN del pago al vendedor en 'otros movimientos'»); la
+  lógica del amarillo se conserva tal cual para un API previo. Tests:
   `tests/test_balance_general_costo_hora.py` (+ dos libros de la variante en
   `_LIBROS` de `tests/test_balance_formulas.py`).
 - **NEGATIVOS EN ROJO con formato condicional** (8-oct-2026; pedido del
@@ -699,6 +704,91 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `test_balance_comisiones`, `test_balance_general_costo_hora`,
   `test_balance_factura_vuelatour`, `test_balance_cobrado_con`,
   `test_comision_vendedor_notas`).
+- **SIN PROVISIÓN del pago al vendedor en 'otros movimientos'** (12-oct-2026,
+  API 0.0.73, invariante 58 del API; pedido del cliente —punto 17 del lote
+  del 12-oct— precisado con la captura de la hoja en pantalla: «provisión:
+  los gastos que todavía no se hacen no deben aparecer» … «son estas las
+  provisiones que están en amarillo las que te digo»: las filas «pago
+  comisión vendedor (Pablo Canales) · cubierto por el avión … · PROVISIÓN
+  (sin gasto real capturado)» con $0.00 en amarillo y, sin provisión del
+  avión, «… · PROVISIÓN (mismo monto que lo cobrado…)» con el monto).
+  **El cambio es del API**: mientras no exista el gasto real «Comisión del
+  vendedor» ligado al vuelo, la fila ya NO lleva egreso (ni concepto, ni
+  monto, ni fecha, ni marca); el ingreso cobrado al cliente sigue (es
+  dinero real) y el remanente = ingreso (la fórmula `ROUND(G−D,2)` de
+  siempre: el egreso vacío cuenta 0, verificada sin degradar). Con gasto
+  real todo sigue EXACTAMENTE como hoy (gasto real pre-vigencia con
+  faltan/excede; «cubierto por el avión» con exceso, o con parcial a
+  $0.00). **Aquí no se calcula nada: solo cambian 7 leyendas (las 6 del
+  contrato y la base del pie del bloque VUELATOUR, abajo), y SOLO con
+  la bandera ADITIVA** `sin_provision_vendedor: bool | None = None`
+  (`BalanceHojaOtrosMovimientos`, junto a `hay_pago_vendedor_real`, para
+  el GENERAL; `BalanceAvionRequest` al nivel RAÍZ, para el libro
+  INDIVIDUAL — un API previo no la manda). `_sin_provision_vendedor`
+  exige `is True` y MANDA sobre `hay_pago_vendedor_real`
+  (`_fragmento_om_pago_vendedor` / `_fragmento_resumen_pago_vendedor`: un
+  solo texto con o sin pago real en el periodo). Textos EXACTOS del
+  contrato (es-MX): fila 2 de 'otros movimientos'
+  `_OM_PAGO_VENDEDOR_SIN_PROVISION` («el pago de la comisión al vendedor va
+  apareado en la misma fila SOLO cuando se captura en Gastos el gasto real
+  «Comisión del vendedor» ligado al vuelo (con «faltan $…» o «excede $…» si
+  no cuadra con lo cobrado); mientras no se capture, la fila no lleva
+  egreso ni provisión (pedido del 12-oct-2026: los gastos que todavía no se
+  hacen no aparecen). Ese pago NO se captura como «Otros gastos
+  VuelaTour»: quedaría duplicado en la hoja 'otros gastos'.»); RESUMEN
+  `_RESUMEN_PAGO_VENDEDOR_SIN_PROVISION` («(ingreso cobrado; el pago al
+  vendedor se aparea solo cuando se captura el gasto real «Comisión del
+  vendedor»: sin él no se provisiona nada en esa hoja).»); con vuelos de
+  la regla y el API 0.0.66+ (`cubre_avion`)
+  `_OM_REGLA_COMISIONES_CUBRE_AVION_SIN_PROVISION` («… la cubre el avión
+  con su PROVISIÓN en su columna COMISIONES; aquí el pago al vendedor
+  aparece solo cuando se captura el gasto real y resta únicamente lo que
+  ese pago exceda la provisión del avión …»),
+  `_EMPRESA_REGLA_COMISIONES_CUBRE_AVION_SIN_PROVISION` («… (los egresos
+  propios solo traen lo que un pago real capturado la exceda) …») y
+  `_RESUMEN_REGLA_CUBRE_AVION_SIN_PROVISION` («… solo queda lo que un pago
+  real capturado la exceda.»); libro INDIVIDUAL con la bandera raíz
+  `_MAESTRA_PAGO_VENDEDOR_SIN_PROVISION` («(el pago se aparea ahí cuando se
+  captura el gasto real «Comisión del vendedor»).»). Revisión adversaria
+  del mismo día: la BASE del pie del bloque VUELATOUR (empresa) decía «… y
+  lo pagado o provisionado — no es lo cobrado …» también con la bandera,
+  pegada a la regla nueva que dice lo contrario; con la bandera
+  `_bloque_empresa` usa `_NOTA_EMPRESA_BASE_SIN_PROVISION` («Ingresos y
+  egresos propios = hoja 'otros movimientos': lo cotizado de los vuelos del
+  periodo (no cancelados) más los otros ingresos registrados, y lo pagado
+  (el pago al vendedor solo cuando se captura el gasto real «Comisión del
+  vendedor») — no es lo cobrado: el RESULTADO no es dinero en caja.») con o
+  sin regla, también en el pie fijo de respaldo sin `nota`; la `nota` del
+  API 0.0.73 que va justo arriba dice a su vez «pago al vendedor (solo el
+  gasto real «Comisión del vendedor» capturado; …)». Sin la bandera
+  (ausente/null/false) los textos de hoy BYTE A BYTE (las huellas
+  congeladas de los demás tests no se mueven); `_OM_REGLA_COMISIONES` /
+  `_EMPRESA_REGLA_COMISIONES` (API 0.0.65) no tienen versión con bandera.
+  **El amarillo NO se toca** (`_MARCA_PROVISION`, `_LEYENDA_PROVISION`,
+  `_es_provision`): no depende de la bandera sino del texto de cada fila;
+  con el API nuevo no llega ninguna marca y no se pinta nada (tampoco la
+  leyenda); con uno previo sigue pintando. **Lo que NO cambia**: el Libro
+  Dinero sigue provisionando (`dinero_xlsx`, se le dirá al cliente), la
+  columna COMISIONES del individual y el reparto siguen cargando la
+  provisión del vendedor (decisión del 6-oct-2026), y el libro JSON de la
+  pantalla es el mismo libro. Consecuencia aceptada (del API): en vuelos
+  SIN provisión del avión el remanente y el bloque VUELATOUR suben lo que
+  valía la provisión hasta que se capture el gasto real. **Orden de
+  deploy: API 0.0.73 antes que pyservices** (con el API nuevo y un
+  pyservices previo las filas ya salen sin egreso y solo las leyendas
+  quedan un rato desfasadas; al revés, las leyendas nuevas no se activan
+  porque falta la bandera). Tests: `tests/test_comision_vendedor_notas.py`
+  (sección 12-oct-2026: los 6 textos del contrato y la base del bloque como
+  literales, bandera encendida/apagada por cada texto —fila 2 y RESUMEN con
+  y sin pago real, las tres «cubre avión», maestra individual, la base del
+  bloque VUELATOUR con «cubre avión», con regla sin él, sin regla y en el
+  pie fijo sin `nota`—, render del general con el
+  payload del 0.0.73 SIN marca en las dos variantes: ninguna celda ámbar,
+  sin leyenda, sin «PROVISIÓN (» en la pestaña, fila sin egreso con
+  remanente = ingreso y fórmula viva, las tres filas con gasto real
+  iguales que hoy, TOTALES = Σ filas; tolerancia: la marca pinta aunque
+  viaje la bandera; la bandera de la hoja no toca el individual; rutas
+  xlsx y libro JSON).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

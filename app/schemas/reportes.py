@@ -1201,6 +1201,20 @@ class BalanceHojaOtrosMovimientos(BaseModel):
     # (None/False, o un API viejo) el Excel es byte-idéntico al de antes —
     # esas leyendas siguen siendo verdaderas mientras no haya gasto real.
     hay_pago_vendedor_real: bool | None = None
+    # ADITIVO (12-oct-2026, API 0.0.73, invariante 58 del API; pedido del
+    # cliente: «provisión: los gastos que todavía no se hacen no deben
+    # aparecer»): `true` = el libro viene de un API que YA NO pinta la
+    # PROVISIÓN del pago al vendedor en las filas de 'otros movimientos':
+    # mientras no exista el gasto real «Comisión del vendedor» ligado al
+    # vuelo la fila no lleva egreso (ni concepto, ni monto, ni marca); el
+    # ingreso cobrado sigue y el remanente = ingreso. Con gasto real, todo
+    # como antes. Con la bandera cambian SOLO las leyendas (fila 2 de la
+    # pestaña, nota del RESUMEN y base del bloque VUELATOUR (empresa)); sin
+    # ella (None/False, o un API previo que sigue provisionando) los textos
+    # de siempre, byte a byte. El amarillo NO depende de esta bandera: lo
+    # decide la marca «· PROVISIÓN (» de cada fila (`_es_provision`), que
+    # con el API nuevo ya no llega.
+    sin_provision_vendedor: bool | None = None
     # ADITIVO (12-oct-2026, API 0.0.69): bloque informativo «PERMISOS AFAC»
     # (provisión vs pagado). None = API previo o periodo sin provisión ni
     # permisos pagados: la pestaña es la de siempre.
@@ -1246,6 +1260,16 @@ class BalanceAvionRequest(BaseModel):
     # COMISIONES, COBRADO REAL y 'cobranza' nombran esa regla; sin ella (API
     # 0.0.65) dicen «septiembre 2026», como siempre.
     regla_comisiones: str | None = None
+    # ADITIVO (12-oct-2026, API 0.0.73, invariante 58 del API): el payload
+    # INDIVIDUAL de cada avión trae `sin_provision_vendedor: true` al nivel
+    # raíz cuando viene de un API que ya no provisiona el pago al vendedor
+    # en 'otros movimientos' del Balance general (la misma señal que
+    # `BalanceHojaOtrosMovimientos.sin_provision_vendedor`). Aquí solo
+    # cambia el fragmento del pago al vendedor de la nota de COMISIONES de
+    # la hoja de vuelos del libro individual
+    # (`_MAESTRA_PAGO_VENDEDOR_SIN_PROVISION`); sin ella (None/False, API
+    # previo) el libro es el de siempre, byte a byte.
+    sin_provision_vendedor: bool | None = None
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod
