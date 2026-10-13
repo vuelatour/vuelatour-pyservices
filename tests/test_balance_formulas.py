@@ -1217,7 +1217,10 @@ def test_general_otros_movimientos_bloque_permisos_afac() -> None:
     """12-oct-2026 (API 0.0.69): «en el balance general en la página de
     otros movimientos no se ven los AFAC, aquí deben estar también». Bloque
     INFORMATIVO debajo de TOTALES: provisión por avión, permisos pagados y un
-    SUBTOTAL con fórmulas; los TOTALES de la pestaña no cambian."""
+    SUBTOTAL con fórmulas; los TOTALES de la pestaña no cambian. Es el caso
+    «API 0.0.69–0.0.73: `afac` sin bandera ⇒ bloque informativo»: desde el
+    0.0.74 (`afac_en_filas`, invariante 62 del API) las filas AFAC suman en
+    la tabla y el bloque no se pinta (`test_balance_otros_movimientos_afac`)."""
     base = _general()
     wb0, wv0 = _libros(render_balance_general_xlsx(base))
     om0 = wb0["otros movimientos"]

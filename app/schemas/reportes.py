@@ -1182,6 +1182,12 @@ class BalanceOtroMovimientoFila(BaseModel):
     # COMENTARIO de la celda de ingreso / egreso. None = API viejo.
     nota_ingreso: str | None = None
     nota_egreso: str | None = None
+    # ADITIVO (13-oct-2026, API 0.0.74, invariante 62 del API): 'AFAC' = fila
+    # por avión de PERMISOS AFAC (ingreso: provisión del periodo; egreso:
+    # permisos pagados), al final de `filas`; con `afac_en_filas` se pinta un
+    # encabezado de sección antes de la primera. None = fila de vuelo o
+    # suelta, o API previo.
+    seccion: str | None = None
 
 
 class BalanceAfacProvisionAvion(BaseModel):
@@ -1211,7 +1217,9 @@ class BalanceAfacOtrosMovimientos(BaseModel):
     la provisión ya resta en cada avión (columna PERMISO AFAC (PROVISIÓN) de
     la hoja de vuelos) y los permisos pagados viven en la hoja «permisos» del
     libro individual; aquí se ven juntos, provisión vs pagado, SIN entrar a
-    los TOTALES de la pestaña (si entraran, se contarían dos veces)."""
+    los TOTALES de la pestaña (si entraran, se contarían dos veces).
+    Solo lo manda un API 0.0.69–0.0.73 (desde el 0.0.74 las filas AFAC suman
+    en `filas`, invariante 62 del API); se pinta SOLO sin `afac_en_filas`."""
 
     provision: list[BalanceAfacProvisionAvion] = Field(default_factory=list)
     provision_total_mxn: float = 0.0
@@ -1259,8 +1267,17 @@ class BalanceHojaOtrosMovimientos(BaseModel):
     comision_vendedor_solo_gasto_real: bool | None = None
     # ADITIVO (12-oct-2026, API 0.0.69): bloque informativo «PERMISOS AFAC»
     # (provisión vs pagado). None = API previo o periodo sin provisión ni
-    # permisos pagados: la pestaña es la de siempre.
+    # permisos pagados: la pestaña es la de siempre. Desde el API 0.0.74 ya
+    # no viaja (las filas AFAC suman en `filas`); se conserva por skew y se
+    # pinta SOLO sin `afac_en_filas`.
     afac: BalanceAfacOtrosMovimientos | None = None
+    # ADITIVO (13-oct-2026, API 0.0.74, invariante 62 del API): True = las
+    # filas AFAC ya viajan en `filas` (`seccion == 'AFAC'`) y SUMAN en TOTALES
+    # y en el bloque VUELATOUR; con ella el bloque `afac` NO se pinta aunque
+    # llegara y se activan `_OM_SECCION_AFAC`, `_OM_AFAC_EN_FILAS`,
+    # `_EMPRESA_*_AFAC` y `_EMPRESA_AFAC_EN_FILAS`. None/False = API previo ⇒
+    # libro de siempre, byte a byte.
+    afac_en_filas: bool | None = None
 
 
 class BalanceAvionRequest(BaseModel):

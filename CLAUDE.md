@@ -1286,7 +1286,71 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   Las firmas de valores NO cambian (los fixtures compartidos no llevan la
   tarifa; `_general_con_tarifa_afac` la pone solo en su test). Tests:
   `test_general_maestra_tarifa_por_avion_y_promedios_como_valor` y
-  `test_general_otros_movimientos_bloque_permisos_afac`.
+  `test_general_otros_movimientos_bloque_permisos_afac`. **(2) SUPERSEDIDO el
+  13-oct-2026 con `afac_en_filas`** (entrada siguiente): el bloque
+  informativo queda solo para un API previo (0.0.69–0.0.73).
+- **PERMISOS AFAC como FILAS que SUMAN en 'otros movimientos'** (13-oct-2026,
+  API 0.0.74, invariante 62 del API; decisión 2 del lote del cliente: «AFAC
+  en "otros movimientos" del Balance general: filas en la tabla principal
+  que suman en TOTALES (provisión AFAC del periodo = ingreso de VuelaTour
+  por avión; cada permiso pagado = egreso), ya no bloque informativo bajo
+  totales»). **El cambio es del API**: anexa AL FINAL de `filas` (tras la
+  última fila por vuelo) UNA fila «AFAC · matrícula» por avión —INGRESO = la
+  provisión AFAC del periodo de su libro (Σ de su columna T), EGRESO = TODOS
+  los gastos «Permiso» de su hoja 'permisos' (sean o no de AFAC), remanente
+  = provisión − pagado— y deja de mandar `afac`. **Aquí no se calcula
+  nada**: montos, notas y remanente llegan hechos; cada fila pasa por
+  `pinta()` de siempre (swatch del avión en A, `ROUND(G{r}-D{r},2)`, notas
+  como comentario, rojo si negativo) y SUMA en TOTALES con las MISMAS
+  fórmulas (`ROUND(SUM(D4:Dn),2)` / `ROUND(SUM(G4:Gn),2)`). Contrato
+  ADITIVO: `BalanceOtroMovimientoFila.seccion: str | None` ('AFAC' en esas
+  filas) y `BalanceHojaOtrosMovimientos.afac_en_filas: bool | None`
+  (`_afac_en_filas` exige `is True`); `afac` (`BalanceAfacOtrosMovimientos`)
+  se CONSERVA en el esquema y se pinta SOLO sin la bandera (un API
+  0.0.69–0.0.73). Con la bandera, y SOLO con ella: (1) encabezado de sección
+  `_OM_SECCION_AFAC` («PERMISOS AFAC POR AVIÓN · provisión del periodo
+  (ingreso de VuelaTour) vs permisos pagados (egreso)») justo antes de la
+  PRIMERA fila `seccion == 'AFAC'`: en A, negrita NAVY tamaño 10, relleno
+  LIGHT en A:J, sin montos (SUM lo ignora), SIN merge y SIN fila en blanco;
+  (2) la fila 2 suma `_OM_AFAC_EN_FILAS` AL FINAL (después del texto que
+  toque por `sin_provision_vendedor`/`comision_vendedor_solo_gasto_real`/
+  `hay_pago_vendedor_real` y de la regla; dice que la fila SÍ suma en
+  TOTALES y en el bloque VUELATOUR, qué es su ingreso y su egreso y que los
+  permisos de vuelos EXTERNOS no entran); (3) bloque VUELATOUR: etiquetas
+  `_EMPRESA_INGRESOS_AFAC` / `_EMPRESA_PAGOS_AFAC` (kwarg `afac_en_filas` de
+  `_bloque_empresa`, que pasa `construir_balance_general`) y
+  `_EMPRESA_AFAC_EN_FILAS` concatenado a la base del pie
+  (`_NOTA_EMPRESA_BASE` o `_NOTA_EMPRESA_BASE_SIN_PROVISION`) ANTES de la
+  regla, con `nota` del API y en el pie fijo (`_NOTA_BLOQUE_EMPRESA.replace`
+  lo hereda); (4) el bloque informativo `afac` NO se pinta aunque llegara
+  (payload mixto: nunca doble). Textos literales del contrato congelados en
+  `test_textos_son_los_del_contrato`; ninguno lleva «· PROVISIÓN (» (el
+  amarillo no se activa: «PERMISO AFAC (PROVISIÓN)» no tiene el punto medio
+  delante). `_TITULO_AFAC_OM` conserva «(informativo)» como discriminador:
+  los tests buscan el encabezado nuevo por IGUALDAD, nunca por el prefijo
+  «PERMISOS AFAC». **Skew en los dos sentidos**: API 0.0.74 + pyservices
+  previo ⇒ las filas se pintan y SUMAN como filas normales (sin encabezado
+  ni leyendas, sin bloque) y los números cuadran con el bloque VUELATOUR;
+  API 0.0.69–0.0.73 + pyservices nuevo ⇒ el bloque informativo de siempre,
+  pestaña idéntica; filas con `seccion` sin la bandera (ningún API las
+  manda) ⇒ filas normales sin encabezado. **Sin la bandera, libro byte a
+  byte** (todo texto nuevo cuelga de `is True` y el encabezado además de
+  `seccion == 'AFAC'`; nada depende de `afac` ni de `len(filas)`): huellas
+  `_FIRMAS_ANTES`, `_FIRMAS_HOY`/`_MIEMBROS_HOY` y las de empresa,
+  extensión y factura NO se regeneraron (con la llave ausente, null o
+  false). La variante «general» (costo por hora) pinta la MISMA pestaña; la
+  vista en pantalla (`libro_json`) hereda encabezado y filas solas. Orden de
+  deploy recomendado pyservices → API (los dos órdenes son numéricamente
+  seguros; con el API primero los INGRESOS PROPIOS suben sin que la etiqueta
+  lo diga). Tests: `tests/test_balance_otros_movimientos_afac.py`
+  (literales; encabezado, filas, comentarios, rojo y TOTALES con caché y
+  `verificar_libro`; un solo encabezado; payload mixto sin bloque; sin
+  bandera el bloque informativo y filas sin encabezado; fila 2 con y sin
+  bandera sobre cada texto base, también con la regla del API 0.0.74;
+  bloque VUELATOUR con y sin bandera, con `sin_provision`, con regla y pie
+  fijo; sin amarillo; parcial USD sin T.C.; esquemas, JSON del 0.0.74 y
+  mixto, rutas xlsx y libro JSON; huellas de valores, layout y bytes con la
+  llave ausente/null/false; variante general idéntica).
 
 ## Conciliación
 

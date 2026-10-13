@@ -1883,6 +1883,17 @@ def _solo_gasto_real_om(om: BalanceHojaOtrosMovimientos | None) -> bool:
     return om is not None and om.comision_vendedor_solo_gasto_real is True
 
 
+def _afac_en_filas(om: BalanceHojaOtrosMovimientos | None) -> bool:
+    """True solo si el API 0.0.74+ marcó la hoja con `afac_en_filas: true`
+    (13-oct-2026, invariante 62 del API): las filas «AFAC · matrícula»
+    (`seccion == 'AFAC'`) ya viajan al final de `filas` y SUMAN en TOTALES y
+    en el bloque VUELATOUR. Con ella: encabezado de sección, leyenda de la
+    fila 2, textos del bloque VUELATOUR y SIN bloque informativo `afac`.
+    None/False/ausente ⇒ libro de siempre (con un API 0.0.69–0.0.73, el
+    bloque informativo)."""
+    return om is not None and om.afac_en_filas is True
+
+
 def _fragmento_om_pago_vendedor(om: BalanceHojaOtrosMovimientos) -> str:
     """Fragmento del pago al vendedor de la fila 2 de 'otros movimientos':
     con `sin_provision_vendedor` (o, desde el API 0.0.74,
@@ -3663,6 +3674,20 @@ _EMPRESA_INGRESOS = (
 _EMPRESA_PAGOS = (
     "(−) EGRESOS PROPIOS USD (pago al vendedor, TUAs, extensión, comisión bancaria, sueltos)"
 )
+# PERMISOS AFAC como filas que SUMAN (13-oct-2026, API 0.0.74, invariante 62
+# del API; bandera `afac_en_filas` de 'otros movimientos'): las dos filas ya
+# incluyen la provisión AFAC del periodo de cada avión (ingreso) y los
+# permisos pagados (egreso), y el número sube de golpe con la provisión: la
+# etiqueta lo dice. Sin la bandera, `_EMPRESA_INGRESOS` / `_EMPRESA_PAGOS`
+# byte a byte.
+_EMPRESA_INGRESOS_AFAC = (
+    "(+) INGRESOS PROPIOS USD (TUAs, extras, pernocta, comisión — cotizado del "
+    "periodo; provisión AFAC de los aviones)"
+)
+_EMPRESA_PAGOS_AFAC = (
+    "(−) EGRESOS PROPIOS USD (pago al vendedor, TUAs, extensión, comisión "
+    "bancaria, permisos AFAC, sueltos)"
+)
 _EMPRESA_OTROS = "(−) OTROS GASTOS DE LA EMPRESA USD"
 _EMPRESA_TIENDA = "(+) UTILIDAD TIENDA (INVENTARIO) USD"
 _EMPRESA_RESULTADO = "RESULTADO VUELATOUR USD"
@@ -3693,6 +3718,17 @@ _NOTA_EMPRESA_BASE_SIN_PROVISION = (
     "registrados, y lo pagado (el pago al vendedor solo cuando se captura el "
     "gasto real «Comisión del vendedor») — no es lo cobrado: el RESULTADO no "
     "es dinero en caja."
+)
+# Con `afac_en_filas` (API 0.0.74, invariante 62 del API) se concatena a la
+# base del pie (`_NOTA_EMPRESA_BASE` o `_NOTA_EMPRESA_BASE_SIN_PROVISION`)
+# ANTES del fragmento de la regla: con la `nota` del API y en el pie fijo de
+# respaldo (que lo hereda por el `replace`). Sin la bandera no se agrega.
+_EMPRESA_AFAC_EN_FILAS = (
+    " Incluyen las filas «AFAC · matrícula» de 'otros movimientos': la "
+    "provisión AFAC del periodo de cada avión como ingreso (la que ese avión "
+    "ya carga como costo en su columna PERMISO AFAC) y los permisos AFAC "
+    "pagados como egreso, a USD con el T.C. promedio de costos del libro de "
+    "su avión."
 )
 # Pie de RESPALDO para un payload sin `nota` (con ella, el API ya explica
 # participación, otros gastos, tienda y gastos personales: repetirlo era
@@ -3737,6 +3773,7 @@ def _bloque_empresa(
     cubre_avion: bool = False,
     sin_provision: bool = False,
     solo_gasto_real: bool = False,
+    afac_en_filas: bool = False,
 ) -> int:
     """Bloque «VUELATOUR (empresa)» de la hoja 'balance' del GENERAL, después
     del último bloque de avión (6-oct-2026). Mismo estilo que la cascada de
@@ -3760,6 +3797,11 @@ def _bloque_empresa(
     los egresos propios ya no traen provisión del pago al vendedor, y la
     base misma del pie es `_NOTA_EMPRESA_BASE_SIN_PROVISION` —sin «o
     provisionado»— con o sin regla; sin la bandera, `_NOTA_EMPRESA_BASE`).
+    Con el API 0.0.74 (`afac_en_filas`, 13-oct-2026, invariante 62 del API)
+    los ingresos y egresos propios ya traen las filas «AFAC · matrícula»: las
+    etiquetas son `_EMPRESA_INGRESOS_AFAC` / `_EMPRESA_PAGOS_AFAC` y la base
+    del pie suma `_EMPRESA_AFAC_EN_FILAS` (antes de la regla); los números
+    los trae el API igual que siempre.
     Devuelve la siguiente fila libre."""
     t = ws.cell(row=row, column=1, value=_EMPRESA_TITULO)
     t.font = Font(bold=True, size=12, color="FFFFFF")
@@ -3821,12 +3863,12 @@ def _bloque_empresa(
         row += 1
 
     fila_ing = row
-    etiqueta(row, _EMPRESA_INGRESOS)
+    etiqueta(row, _EMPRESA_INGRESOS_AFAC if afac_en_filas else _EMPRESA_INGRESOS)
     monto(row, None, emp.ingresos_propios_usd, nota=_NOTA_EMPRESA_OTROS_MOVIMIENTOS)
     row += 1
 
     fila_pag = row
-    etiqueta(row, _EMPRESA_PAGOS)
+    etiqueta(row, _EMPRESA_PAGOS_AFAC if afac_en_filas else _EMPRESA_PAGOS)
     monto(row, None, emp.pagos_vendedor_usd, nota=_NOTA_EMPRESA_OTROS_MOVIMIENTOS)
     row += 1
 
@@ -3876,11 +3918,13 @@ def _bloque_empresa(
         regla_empresa = _EMPRESA_REGLA_COMISIONES
     # Con la bandera (API 0.0.73, o la del 0.0.74) la base ya no dice «o
     # provisionado»: los egresos propios no traen provisión del vendedor.
+    # Con `afac_en_filas` (API 0.0.74) la base dice además que incluye las
+    # filas «AFAC · matrícula» (antes de la regla); sin ella, byte a byte.
     base_om = (
         _NOTA_EMPRESA_BASE_SIN_PROVISION
         if (sin_provision or solo_gasto_real)
         else _NOTA_EMPRESA_BASE
-    )
+    ) + (_EMPRESA_AFAC_EN_FILAS if afac_en_filas else "")
     base = base_om + (regla_empresa.format(regla=regla_vigente) if regla_vigente else "")
     if emp.nota:
         for texto in (emp.nota, base):
@@ -4958,7 +5002,15 @@ def _hoja_otros_movimientos(
     textos de siempre. Con el API 0.0.74 (`hoja.comision_vendedor_solo_gasto
     _real`, 13-oct-2026, invariante 61) el pago REAL de los vuelos
     completados de la regla llega con egreso $0.00 «a cargo del avión …» y
-    la fila 2 lo explica (`_OM_REGLA_COMISIONES_GASTO_REAL`)."""
+    la fila 2 lo explica (`_OM_REGLA_COMISIONES_GASTO_REAL`). Con el API
+    0.0.74 (`hoja.afac_en_filas`, 13-oct-2026, invariante 62 del API) las
+    filas «AFAC · matrícula» (`seccion == 'AFAC'`) llegan al final de
+    `filas` y SUMAN en TOTALES como cualquier fila: se pinta un encabezado de
+    sección (`_OM_SECCION_AFAC`, sin montos, sin merge, sin fila en blanco)
+    justo antes de la primera, la fila 2 suma `_OM_AFAC_EN_FILAS` al final y
+    el bloque informativo `afac` (solo para un API 0.0.69–0.0.73) ya no se
+    pinta aunque llegara. Aquí no se calcula nada: montos, notas y remanente
+    llegan hechos."""
     if cubre_avion and _solo_gasto_real_om(hoja):
         # API 0.0.74 (invariante 61): «a cargo del avión» con egreso $0.00.
         regla_om = _OM_REGLA_COMISIONES_GASTO_REAL
@@ -4971,6 +5023,9 @@ def _hoja_otros_movimientos(
     ws.cell(row=1, column=1, value="OTROS MOVIMIENTOS VUELATOUR").font = Font(
         bold=True, size=12, color=NAVY
     )
+    # Filas AFAC que SUMAN (API 0.0.74, invariante 62): su leyenda va AL FINAL
+    # de la fila 2, después del texto de siempre; sin la bandera, byte a byte.
+    leyenda_afac = _OM_AFAC_EN_FILAS if _afac_en_filas(hoja) else ""
     ws.cell(
         row=2,
         column=1,
@@ -4991,7 +5046,7 @@ def _hoja_otros_movimientos(
         "los OTROS INGRESOS registrados en Ingresos (clave ING-n: intereses, "
         "reembolsos, ventas de activos…); los anticipos y las aportaciones NO "
         "aparecen: no son resultado (29-ago: los gastos de empresa viven en "
-        "la hoja 'otros gastos' — antes llamada 'gastos VuelaTour').",
+        "la hoja 'otros gastos' — antes llamada 'gastos VuelaTour')." + leyenda_afac,
     ).font = Font(italic=True, size=9, color=MUTED)
     headers = [
         "clave",
@@ -5082,7 +5137,19 @@ def _hoja_otros_movimientos(
             tot_i += f.ingreso_mxn
         row += 1
 
+    # Encabezado de la sección AFAC (API 0.0.74, invariante 62): justo antes
+    # de la PRIMERA fila `seccion == 'AFAC'`, dentro del rango de los SUM de
+    # TOTALES (no trae montos: SUM lo ignora), sin merge y sin fila en blanco
+    # antes. Solo con la bandera: un API previo nunca lo ve.
+    encabezado_afac_pendiente = _afac_en_filas(hoja)
     for f in hoja.filas:
+        if encabezado_afac_pendiente and f.seccion == "AFAC":
+            t = ws.cell(row=row, column=1, value=_OM_SECCION_AFAC)
+            t.font = Font(bold=True, size=10, color=NAVY)
+            for i in range(1, 11):
+                ws.cell(row=row, column=i).fill = PatternFill("solid", fgColor=LIGHT)
+            row += 1
+            encabezado_afac_pendiente = False
         pinta(f)
     if not hoja.filas and not hoja.filas_sueltas:
         ws.cell(row=row, column=1, value="Sin otros movimientos en el periodo.").font = Font(
@@ -5118,8 +5185,10 @@ def _hoja_otros_movimientos(
     # REMANENTE negativo en rojo (filas + TOTALES), 8-oct-2026.
     _rojo_si_negativo(ws, f"I4:I{row}")
     # PERMISOS AFAC: provisión vs pagado, INFORMATIVO (12-oct-2026). Debajo
-    # de TOTALES para que no entre en sus sumas.
-    if hoja.afac is not None:
+    # de TOTALES para que no entre en sus sumas. Solo para un API
+    # 0.0.69–0.0.73: con `afac_en_filas` (API 0.0.74) las filas AFAC ya suman
+    # en la tabla y el bloque NO se pinta aunque llegara (nunca doble).
+    if hoja.afac is not None and not _afac_en_filas(hoja):
         row = _bloque_afac_otros_movimientos(ws, hoja.afac, row + 2)
     # Leyenda del amarillo (solo si alguna fila lo trae: sin provisiones la
     # hoja es la de siempre).
@@ -5132,7 +5201,31 @@ def _hoja_otros_movimientos(
     ws.freeze_panes = "A4"
 
 
+# Bloque INFORMATIVO (12-oct-2026, API 0.0.69): solo para un API
+# 0.0.69–0.0.73; desde el 0.0.74 (`afac_en_filas`) las filas AFAC suman en la
+# tabla y estos textos no se pintan. `_TITULO_AFAC_OM` conserva
+# «(informativo)»: es el discriminador frente a `_OM_SECCION_AFAC`.
 _TITULO_AFAC_OM = "PERMISOS AFAC · provisión vs pagado (informativo)"
+# PERMISOS AFAC como FILAS que SUMAN (13-oct-2026, API 0.0.74, invariante 62
+# del API; solo con `afac_en_filas`): encabezado de la sección (antes de la
+# primera fila AFAC) y la leyenda que se concatena AL FINAL de la fila 2.
+# Ninguno lleva la marca «· PROVISIÓN (» del amarillo.
+_OM_SECCION_AFAC = (
+    "PERMISOS AFAC POR AVIÓN · provisión del periodo (ingreso de VuelaTour) "
+    "vs permisos pagados (egreso)"
+)
+_OM_AFAC_EN_FILAS = (
+    " PERMISOS AFAC POR AVIÓN: al final de las filas por vuelo hay una fila "
+    "«AFAC · matrícula» por avión que SÍ suma en TOTALES y en el bloque "
+    "VUELATOUR (empresa) de 'balance'. Su INGRESO es la provisión AFAC del "
+    "periodo que ese avión ya carga como costo en la columna PERMISO AFAC "
+    "(PROVISIÓN) de la hoja de vuelos (tarifa AFAC USD/hr del avión × tipo de "
+    "cambio de costos × horas cobradas); su EGRESO son TODOS los gastos "
+    "«Permiso» de ese avión en el periodo (los de la hoja 'permisos' de su "
+    "libro individual, sean o no de AFAC); remanente = provisión − pagado. "
+    "Los permisos de vuelos EXTERNOS no entran (se quedan en el libro "
+    "EXTERNOS)."
+)
 _LEYENDA_AFAC_OM = (
     "La provisión AFAC de cada vuelo ya está cargada a su avión en la columna "
     "PERMISO AFAC (PROVISIÓN) de la hoja de vuelos (tarifa AFAC USD/hr del avión "
@@ -5151,7 +5244,9 @@ def _bloque_afac_otros_movimientos(
     (12-oct-2026, API 0.0.69): una fila por avión con su provisión del
     periodo (ingreso: lo que el avión aportó), una fila por permiso pagado
     (egreso) y una fila de SUBTOTAL con fórmulas visibles (Σ y provisión −
-    pagado), fuera de TOTALES. Devuelve la fila siguiente al bloque."""
+    pagado), fuera de TOTALES. Devuelve la fila siguiente al bloque. Solo
+    para un API 0.0.69–0.0.73: desde el 0.0.74 (`afac_en_filas`) las filas
+    AFAC suman en la tabla y este bloque no se pinta."""
     t = ws.cell(row=row, column=1, value=_TITULO_AFAC_OM)
     t.font = Font(bold=True, size=10, color=NAVY)
     for i in range(1, 11):
@@ -5414,6 +5509,7 @@ def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
                 cubre_avion=cubre_avion,
                 sin_provision=_sin_provision_vendedor(cons.otros_movimientos),
                 solo_gasto_real=_solo_gasto_real_om(cons.otros_movimientos),
+                afac_en_filas=_afac_en_filas(cons.otros_movimientos),
             )
         for i, w in enumerate([46, 14, 16], start=1):
             ws_b.column_dimensions[get_column_letter(i)].width = w
