@@ -23,7 +23,10 @@ Ocho hojas en el orden del libro:
      la cuenta) y, aparte, COBRADO AVIÓN = la parte prorrateada al avión
      (antes de comisiones); cierra con FACTURA VUELATOUR (folio de la
      factura del servicio que el API ya resolvió, 30-sep-2026 — texto tal
-     cual, vacía sin dato).
+     cual; desde el 13-oct-2026 (API 0.0.74) «Pendiente de factura» / «No
+     lleva factura» llegan hechos del API y vacía = sin cobros, con la
+     bandera `factura_vuelatour_segun_cobros` que solo cambia la nota al
+     pie).
   2. cobranza — estatus de cobro por vuelo: venta avión prorrateada, total
      cotización (c/extras), depósitos reales (netos con la regla de
      septiembre 2026), comisión y cuenta del banco.
@@ -362,7 +365,11 @@ _COLS: list[tuple[str, str, str | None, str | None]] = [
     # 30-sep-2026 (API 0.0.45, pedido de Marie): folio de la factura del
     # servicio emitida al cliente, YA resuelto por el API (misma etiqueta que
     # el Libro Dinero y 'otros movimientos'). Texto tal cual; sin dato o con
-    # un API viejo, celda vacía. Va AL FINAL: no corre COBRO 1 ni COMISIONES
+    # un API viejo, celda vacía. Desde el 13-oct-2026 (API 0.0.74,
+    # invariante 60 del API) «Pendiente de factura» / «No lleva factura»
+    # llegan hechos del API y vacía = sin cobros (con la bandera
+    # `factura_vuelatour_segun_cobros`, que aquí solo cambia la nota al
+    # pie). Va AL FINAL: no corre COBRO 1 ni COMISIONES
     # (`_DISP_MENSUAL.cobro1_col` / `.comision_col`; todo índice se busca por
     # atributo).
     ("STATUS DE COBROS", "FACTURA\nVUELATOUR", "factura_vuelatour", None),
@@ -1562,6 +1569,33 @@ _NOTA_FACTURA_VUELATOUR = (
     "elaborada y enviada») y vacía = sin factura. Es la factura del VUELO "
     "completo: en un vuelo multi-avión todas sus filas traen la misma."
 )
+# Misma nota con la bandera `factura_vuelatour_segun_cobros` del API 0.0.74
+# (13-oct-2026, invariante 60 del API): sin factura registrada la columna
+# dice «Pendiente de factura» / «No lleva factura» según los cobros y la
+# solicitud, y vacía = sin cobros. `_NOTA_FACTURA_VUELATOUR` NO se toca (la
+# congelan los tests y las huellas de los libros sin bandera).
+_NOTA_FACTURA_VUELATOUR_SEGUN_COBROS = (
+    "FACTURA VUELATOUR = folio de la factura del servicio emitida al cliente "
+    "(timbrada, registrada en Facturas emitidas o capturada en el vuelo); sin "
+    "folio registrado dice el estatus del vuelo («Facturado» / «Factura "
+    "elaborada y enviada»); sin factura registrada dice «Pendiente de factura» "
+    "cuando algún cobro entró a HSBC o Scotiabank (o fue por transferencia, "
+    "link de pago HSBC o cheque sin cuenta capturada) o se pidió factura desde "
+    "el vuelo, «No lleva factura» cuando todos sus cobros fueron por "
+    "BillPocket, Paywise, efectivo o dólares, y vacía = vuelo sin cobros. Es "
+    "la factura del VUELO completo: en un vuelo multi-avión todas sus filas "
+    "traen la misma."
+)
+
+
+def _nota_factura_vuelatour(req: BalanceAvionRequest) -> str:
+    """Nota al pie de FACTURA VUELATOUR: la del API 0.0.74 SOLO con la
+    bandera raíz `factura_vuelatour_segun_cobros` en `True` (individual: el
+    payload raíz; «reporte horas FLOTA»: el `consolidado`); si no, la de
+    siempre."""
+    if req.factura_vuelatour_segun_cobros is True:
+        return _NOTA_FACTURA_VUELATOUR_SEGUN_COBROS
+    return _NOTA_FACTURA_VUELATOUR
 
 
 # Notas al pie de la hoja maestra que la variante general repite tal cual
@@ -1891,7 +1925,7 @@ def _notas_pie_costo_por_hora(req: BalanceAvionRequest, hay_extension: bool) -> 
         _con_regla(_NOTA_COBRADO_REAL_FLOTA, req.regla_comisiones),
         _CPH_NOTA_TOTALES,
         _NOTA_ESTATUS_COBRO,
-        _NOTA_FACTURA_VUELATOUR,
+        _nota_factura_vuelatour(req),
         _NOTA_COMBUSTIBLE_FILAS_SIN_GAS
         + " del libro individual de cada avión"
         + (_CPH_COMBUSTIBLE_COLA_EXTENSION if hay_extension else _CPH_COMBUSTIBLE_COLA_TUA),
@@ -2383,7 +2417,7 @@ def _hoja_maestra(
         "TIPO CAMBIO COSTOS y COSTO X HORA USD de la fila TOTALES son PROMEDIOS "
         "(los demás son sumas).",
         _NOTA_ESTATUS_COBRO,
-        _NOTA_FACTURA_VUELATOUR,
+        _nota_factura_vuelatour(req),
         _NOTA_COMBUSTIBLE_FILAS_SIN_GAS
         + (" del libro individual de cada avión" if general else "")
         + (_NOTA_COMBUSTIBLE_COLA_EXTENSION if hay_extension else _NOTA_COMBUSTIBLE_COLA_TUA),

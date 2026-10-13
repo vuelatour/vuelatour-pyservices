@@ -281,9 +281,11 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   su cascada ÚNICA `etiquetasFacturaDeVuelos` (CFDI timbrado vivo →
   facturas EMITIDAS vigentes «A-0424, A-0430» → `vuelo.factura_folio`
   tecleado → etiqueta del estatus «Facturado» / «Factura elaborada y
-  enviada» → null): la MISMA etiqueta de «FACTURA VUELATOUR» del Libro
-  Dinero y de «factura vuelatour» de 'otros movimientos'. **Aquí no se
-  decide nada**: se pinta tal cual. Es del VUELO (multi-avión: todas sus
+  enviada» → desde el 13-oct-2026 (API 0.0.74) «Pendiente de factura» /
+  «No lleva factura» según los cobros del vuelo → vacía = sin cobros; ver
+  «FACTURA VUELATOUR según los cobros»): la MISMA etiqueta de «FACTURA
+  VUELATOUR» del Libro Dinero y de «factura vuelatour» de 'otros
+  movimientos'. **Aquí no se decide nada**: se pinta tal cual. Es del VUELO (multi-avión: todas sus
   filas traen la misma; cancelados también). Validador LIBERAL
   `_factura_liberal`: número ⇒ texto («1234»; 1234.0 ⇒ «1234»), texto en
   blanco ⇒ None, booleano/objeto/NaN ⇒ None — nunca un 422 que tumbe el
@@ -297,7 +299,9 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   corre nada**: COBRO 1 = 35 y COMISIÓN VENDEDOR = 29 siguen igual (hoy
   `_DISP_MENSUAL.cobro1_col` / `.comision_col`), y lo demás se busca por
   atributo. Nota al pie `_NOTA_FACTURA_VUELATOUR` justo después
-  de la del ESTATUS DE COBRO (las notas de abajo bajan una fila). Sale en
+  de la del ESTATUS DE COBRO (las notas de abajo bajan una fila); desde el
+  13-oct-2026 la nota depende de la bandera raíz
+  `factura_vuelatour_segun_cobros` (`_nota_factura_vuelatour`). Sale en
   el libro INDIVIDUAL y en «reporte horas FLOTA» del GENERAL (los dos usan
   `_hoja_maestra`); 'cobranza' y el RESUMEN no cambian y 'otros
   movimientos' solo cambia con un folio que empiece con «=» (ahora texto). **Payload viejo (sin la clave) ⇒ libro idéntico salvo la columna
@@ -852,6 +856,54 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   iguales que hoy, TOTALES = Σ filas; tolerancia: la marca pinta aunque
   viaje la bandera; la bandera de la hoja no toca el individual; rutas
   xlsx y libro JSON).
+- **FACTURA VUELATOUR según los cobros** (13-oct-2026, API 0.0.74,
+  invariante 60 del API; decisión 4 del lote del cliente: un cobro que cae
+  en HSBC Dólares / HSBC Pesos / Scotiabank Dólares / Scotiabank Pesos
+  exige factura del servicio). **El cambio es del API**: la columna
+  «FACTURA VUELATOUR» trae, sin factura registrada, «Pendiente de factura»
+  (algún cobro exige factura, o se pidió desde el vuelo) / «No lleva
+  factura» (hay cobros y ninguno exige) / vacía = SIN COBROS (antes
+  significaba «sin factura»); los textos llegan hechos y se pintan TAL CUAL
+  (texto, sin color ni fórmula, con `_texto_literal`) en la hoja maestra
+  (individual y «reporte horas FLOTA», `_COLS`/`_COLS_FLOTA`/`_COLS_GENERAL`
+  sin cambio), en 'otros movimientos' col J y en el Libro Dinero (hoja 1 y
+  'Otros ingresos'; `_factura_liberal` ya acepta cualquier texto). **Aquí
+  solo cambia la nota al pie de la hoja maestra**, y SOLO con la bandera
+  raíz ADITIVA `BalanceAvionRequest.factura_vuelatour_segun_cobros: bool |
+  None = None` (el API 0.0.74 la manda en el libro individual, en cada
+  `aviones[]` y en el `consolidado` del general — a diferencia de
+  `sin_provision_vendedor`, porque las dos maestras salen de
+  `_hoja_maestra` y la nota se lee del `req` que recibe: el consolidado
+  en «reporte horas FLOTA», también en la variante general vía
+  `_notas_pie_costo_por_hora`): `_nota_factura_vuelatour(req)` devuelve
+  `_NOTA_FACTURA_VUELATOUR_SEGUN_COBROS` con `is True` («… sin factura
+  registrada dice «Pendiente de factura» cuando algún cobro entró a HSBC o
+  Scotiabank (o fue por transferencia, link de pago HSBC o cheque sin cuenta
+  capturada) o se pidió factura desde el vuelo, «No lleva factura» cuando
+  todos sus cobros fueron por BillPocket, Paywise, efectivo o dólares, y
+  vacía = vuelo sin cobros. …») y `_NOTA_FACTURA_VUELATOUR` LITERAL de
+  siempre con None/False/ausente (API ≤ 0.0.73): esa constante NO se toca
+  ni una letra (la congelan `startswith`/igualdad de
+  `test_balance_factura_vuelatour` y las huellas `_firma_hoja` de
+  extension_horario, inventario, `_FIRMAS_ANTES` de formulas y
+  `_FIRMAS_HOY`/`_MIEMBROS_HOY` de general_costo_hora, cuyos payloads no
+  traen la bandera). El Libro Dinero no tiene nota al pie que corregir
+  (agregar una cambiaría huellas sin bandera). **Skew en ambos sentidos**:
+  pyservices nuevo + API viejo ⇒ libro byte-idéntico; API nuevo +
+  pyservices viejo ⇒ `extra="ignore"` descarta la bandera, los textos
+  nuevos se pintan igual y solo la nota vieja («vacía = sin factura»)
+  queda desfasada; cero 422. Orden de deploy: pyservices → API. Tests:
+  `tests/test_balance_factura_vuelatour.py` (esquema aditivo; nota por
+  bandera ausente/None/False/True en el individual, en «reporte horas
+  FLOTA» y en la variante general, una sola vez y en la MISMA fila tras la
+  del ESTATUS DE COBRO; huellas `_firma_hoja` de las DOS maestras SIN
+  bandera congeladas con el código de HEAD 12b5e86 —idéntico a 4d206ab
+  para esta hoja— y comparadas; con la bandera la ÚNICA celda que cambia
+  es la de la nota; columnas 1..46 intactas; «Pendiente de factura» / «No
+  lleva factura» como texto en la maestra individual y FLOTA, en col J de
+  'otros movimientos' y en el Libro Dinero (hoja 1 y 'Otros ingresos');
+  rutas con el JSON del 0.0.74 —raíz, `aviones[]` y `consolidado`— y del
+  0.0.73).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

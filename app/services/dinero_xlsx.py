@@ -145,6 +145,10 @@ _COLS: list[tuple[str, str, str | None, str | None]] = [
     ("STATUS DE PAGOS", "PAGO 3\nFECHA", None, None),
     ("STATUS DE PAGOS", "PAGO 3\nCANTIDAD", None, MONEY),
     ("STATUS DE PAGOS", "DEBO", None, MONEY),
+    # Etiqueta del API tal cual (fuente única `etiquetasFacturaDeVuelos`);
+    # desde el 13-oct-2026 (API 0.0.74, invariante 60 del API) puede ser
+    # «Pendiente de factura» / «No lleva factura» (sin nota al pie que
+    # corregir en este libro: agregar una cambiaría las huellas sin bandera).
     ("", "FACTURA\nVUELATOUR", "factura_vuelatour", None),
     ("", "FACTURA\nPROVEEDOR", None, None),
 ]

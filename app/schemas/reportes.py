@@ -907,10 +907,14 @@ class BalanceAvionVuelo(BaseModel):
     # cascada única del API `etiquetasFacturaDeVuelos` (CFDI timbrado vivo →
     # facturas EMITIDAS vigentes «A-0424, A-0430» → `vuelo.factura_folio`
     # tecleado → etiqueta del estatus «Facturado» / «Factura elaborada y
-    # enviada» → None). La misma etiqueta que «FACTURA VUELATOUR» del Libro
-    # Dinero y «factura vuelatour» de 'otros movimientos'. Es del VUELO: en un
+    # enviada» → desde el 13-oct-2026 (API 0.0.74, invariante 60 del API)
+    # «Pendiente de factura» si algún cobro exige factura o hay solicitud
+    # viva / «No lleva factura» si hay cobros y ninguno exige → None = SIN
+    # COBROS). La misma etiqueta que «FACTURA VUELATOUR» del Libro Dinero y
+    # «factura vuelatour» de 'otros movimientos'. Es del VUELO: en un
     # multi-avión todas sus filas traen la misma. None/ausente (API viejo) ⇒
-    # celda vacía.
+    # celda vacía. Los textos nuevos se pintan TAL CUAL (`_factura_liberal`
+    # acepta cualquier texto).
     factura_vuelatour: str | None = None
 
     @field_validator("factura_vuelatour", mode="before")
@@ -1155,6 +1159,9 @@ class BalanceOtroMovimientoFila(BaseModel):
     ingreso_mxn: float | None = None
     fecha_ingreso: str | None = None
     remanente_mxn: float | None = None
+    # «factura vuelatour» (col J): la MISMA etiqueta que `factura_vuelatour`
+    # de la hoja maestra; desde el 13-oct-2026 (invariante 60 del API) puede
+    # ser «Pendiente de factura» / «No lleva factura» (texto tal cual).
     factura: str | None = None
     # Desglose línea por línea (una fila por vuelo, 28-ago): se pinta como
     # COMENTARIO de la celda de ingreso / egreso. None = API viejo.
@@ -1281,6 +1288,14 @@ class BalanceAvionRequest(BaseModel):
     # (`_MAESTRA_PAGO_VENDEDOR_SIN_PROVISION`); sin ella (None/False, API
     # previo) el libro es el de siempre, byte a byte.
     sin_provision_vendedor: bool | None = None
+    # ADITIVO (13-oct-2026, API 0.0.74, invariante 60 del API): la columna
+    # FACTURA VUELATOUR trae «Pendiente de factura» / «No lleva factura» /
+    # vacío = sin cobros según los cobros y la solicitud del vuelo. Aquí SOLO
+    # cambia la nota al pie de la hoja maestra (`_nota_factura_vuelatour`):
+    # en el libro individual (payload raíz) y en «reporte horas FLOTA» del
+    # general (que la recibe del `consolidado`). None/False/ausente (API
+    # previo) ⇒ la nota de hoy, libro byte a byte.
+    factura_vuelatour_segun_cobros: bool | None = None
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod
@@ -1720,6 +1735,10 @@ class DineroVueloFila(BaseModel):
     cobros: list[DineroCobroPago] = Field(default_factory=list)
     total_cobros_mxn: float | None = None
     me_deben_mxn: float | None = None
+    # «FACTURA VUELATOUR» del Libro Dinero: la misma etiqueta del API que en
+    # los balances; desde el 13-oct-2026 (invariante 60 del API) puede ser
+    # «Pendiente de factura» / «No lleva factura» (texto tal cual; None =
+    # sin cobros).
     factura_vuelatour: str | None = None
     # Total COMPLETO facturado al cliente (con TUAs/extras/pernocta + su IVA):
     # columna informativa junto al STATUS DE COBROS (regla 28-ago-2026).
@@ -1749,6 +1768,8 @@ class DineroOtroIngresoFila(BaseModel):
     ingreso_mxn: float | None = None
     fecha_ingreso: str | None = None
     remanente_mxn: float | None = None
+    # «factura vuelatour» de 'Otros ingresos': misma etiqueta que la hoja 1
+    # (invariante 60 del API: «Pendiente de factura» / «No lleva factura»).
     factura: str | None = None
 
 
