@@ -11,6 +11,13 @@ cuando un avión absorbe comisiones, la fila y la columna se llaman
 comisiones absorbidas el documento es el de siempre (comparado contra el
 código anterior: flujos de contenido del PDF y miembros del .xlsx
 idénticos, con y sin `regla_comisiones`).
+
+13-oct-2026 (API 0.0.74, invariante 61 del API; decisión 3 del lote del
+cliente: «comisión del vendedor SOLO como gasto real»): lo del vendedor en
+`comisiones_venta_usd` es su PAGO REAL (el gasto «Comisión del vendedor»
+capturado), ya no la provisión. Con la bandera ADITIVA
+`comision_vendedor_solo_gasto_real` las frases dicen «pago real»; sin ella
+(ausente/None/False) los documentos de siempre.
 """
 
 from __future__ import annotations
@@ -31,9 +38,12 @@ from app.services.reparto_comisiones import (
     ETIQUETA_COLUMNA,
     ETIQUETA_FILA,
     LINEA_COMISION_VENDEDOR,
+    LINEA_COMISION_VENDEDOR_GASTO_REAL,
     absorbe_comisiones,
     comisiones_al_avion,
     frase_regla,
+    linea_comision_vendedor,
+    solo_gasto_real,
 )
 from app.services.reparto_pdf import render_reparto_pdf
 from app.services.reparto_xlsx import render_reparto_xlsx
@@ -175,9 +185,11 @@ def test_pdf_nombra_la_regla_del_api() -> None:
 
 def test_linea_del_avion_cabe_en_su_columna() -> None:
     """La línea gris va en una celda de 120 mm (6 pt de relleno por lado) a
-    7.5 pt: más larga se encimaría con el monto."""
-    ancho = stringWidth(LINEA_COMISION_VENDEDOR, "Helvetica-Oblique", 7.5)
-    assert ancho <= 120 * mm - 12
+    7.5 pt: más larga se encimaría con el monto. También la del API 0.0.74."""
+    for linea in (LINEA_COMISION_VENDEDOR, LINEA_COMISION_VENDEDOR_GASTO_REAL):
+        ancho = stringWidth(linea, "Helvetica-Oblique", 7.5)
+        assert ancho <= 120 * mm - 12, linea
+    assert abs(len(LINEA_COMISION_VENDEDOR_GASTO_REAL) - len(LINEA_COMISION_VENDEDOR)) <= 2
 
 
 # ---------------------------------------------------------------------------
@@ -243,3 +255,124 @@ def test_rutas_aceptan_el_payload_del_api(monkeypatch, request) -> None:
     res = client.post("/pdf/reparto", json={**payload, "regla_comisiones": ["x"]}, headers=headers)
     assert res.status_code == 200, res.text
     assert ETIQUETA_FILA in _texto_pdf(res.content)
+
+
+# ===========================================================================
+# 13-oct-2026 (API 0.0.74, invariante 61): «comisión del vendedor SOLO como
+# gasto real». Bandera `comision_vendedor_solo_gasto_real`.
+# ===========================================================================
+
+FRASE_GASTO_REAL = (
+    "Con la regla de septiembre 2026 (por fecha del vuelo), el avión absorbe el pago "
+    "real de la comisión del vendedor (el gasto «Comisión del vendedor» ligado al vuelo) "
+    "y su parte de la comisión bancaria de sus cobros"
+)
+LINEA_GASTO_REAL = (
+    "   incluye comisión del vendedor cotizada (pre-IVA) — su pago real resta en Comisiones"
+)
+NOTA_OTROS_INGRESOS_COLA = (
+    "Lo cobrado al cliente por la comisión sigue siendo de VuelaTour; el pago real al "
+    "vendedor lo carga el avión ('otros movimientos' del Balance general lo muestra con "
+    "egreso $0.00)."
+)
+NOTA_POR_AVION_GASTO_REAL = (
+    "Comisión del vendedor cotizada por avión (ingreso de VuelaTour; con la regla de "
+    "septiembre 2026, por fecha del vuelo, su pago real (gasto capturado) lo absorbe el "
+    "avión en Comisiones): XB-TST $80.00."
+)
+
+
+def test_bandera_aditiva_con_default_none_y_textos_del_contrato() -> None:
+    assert _req().comision_vendedor_solo_gasto_real is None
+    assert not solo_gasto_real(_req())
+    for valor in (None, False):
+        assert not solo_gasto_real(_req(comision_vendedor_solo_gasto_real=valor))
+    req = _req(comision_vendedor_solo_gasto_real=True)
+    assert solo_gasto_real(req)
+    assert frase_regla(req) == FRASE_GASTO_REAL
+    assert LINEA_COMISION_VENDEDOR_GASTO_REAL == LINEA_GASTO_REAL
+    assert linea_comision_vendedor(req) == LINEA_GASTO_REAL
+    assert linea_comision_vendedor(_req()) == LINEA_COMISION_VENDEDOR
+    for t in (
+        FRASE_GASTO_REAL,
+        LINEA_GASTO_REAL,
+        NOTA_OTROS_INGRESOS_COLA,
+        NOTA_POR_AVION_GASTO_REAL,
+    ):
+        assert "provisi" not in t.lower()
+
+
+def test_pdf_con_la_bandera_dice_pago_real_y_nada_de_provision() -> None:
+    req = _req(comision_vendedor_solo_gasto_real=True)
+    texto = _texto_pdf(render_reparto_pdf(req))
+    assert f"{ETIQUETA_FILA} $-95.70" in texto
+    assert f"{FRASE_GASTO_REAL}: restan en {ETIQUETA_FILA}. {NOTA_OTROS_INGRESOS_COLA}" in texto
+    assert f"{FRASE_GASTO_REAL}: restan antes del saldo en {ETIQUETA_FILA}" in texto
+    assert LINEA_GASTO_REAL.strip() in texto
+    assert "provisi" not in texto.lower()
+    for vieja in _VIEJAS:
+        assert vieja not in texto, vieja
+    # Sin comisiones absorbidas la bandera no cambia nada: el de siempre.
+    assert _texto_pdf(
+        render_reparto_pdf(_req(0, comision_vendedor_solo_gasto_real=True))
+    ) == _texto_pdf(render_reparto_pdf(_req(0)))
+
+
+def test_pdf_sin_la_bandera_el_de_siempre() -> None:
+    base = _texto_pdf(render_reparto_pdf(_req()))
+    for valor in (None, False):
+        assert _texto_pdf(render_reparto_pdf(_req(comision_vendedor_solo_gasto_real=valor))) == base
+    assert "su provisión resta en Comisiones" in base
+    assert "que le paga al vendedor (otros movimientos)" in base
+
+
+def test_xlsx_con_la_bandera_dice_pago_real() -> None:
+    req = _req(comision_vendedor_solo_gasto_real=True)
+    ws = load_workbook(BytesIO(render_reparto_xlsx(req))).active
+    assert ws["E4"].value == ETIQUETA_COLUMNA
+    assert f". {ETIQUETA_COLUMNA}: {frase_regla(req, 'con')}; restan antes del saldo" in (
+        ws["A8"].value
+    )
+    frase = "con la regla de septiembre 2026 (por fecha del vuelo), el avión absorbe el pago real"
+    assert frase in ws["A8"].value
+    assert ws["A10"].value == NOTA_POR_AVION_GASTO_REAL
+    assert not any("provisi" in t.lower() for t in _textos_xlsx(ws))
+
+
+def test_xlsx_sin_la_bandera_miembros_identicos() -> None:
+    """Sin la bandera (ausente/None/False) el .xlsx es el de siempre, miembro
+    a miembro (salvo `docProps/core.xml`, que lleva la hora)."""
+    import zipfile
+
+    def miembros(data: bytes) -> dict[str, bytes]:
+        z = zipfile.ZipFile(BytesIO(data))
+        return {n: z.read(n) for n in sorted(z.namelist()) if n != "docProps/core.xml"}
+
+    base = miembros(render_reparto_xlsx(_req()))
+    for valor in (None, False):
+        assert miembros(render_reparto_xlsx(_req(comision_vendedor_solo_gasto_real=valor))) == base
+
+
+def test_con_la_bandera_y_la_regla_del_api_nadie_dice_septiembre() -> None:
+    req = _req(comision_vendedor_solo_gasto_real=True, regla_comisiones="regla desde 15-oct-2026")
+    texto = _texto_pdf(render_reparto_pdf(req))
+    frase = "Con la regla desde 15-oct-2026 (por fecha del vuelo), el avión absorbe el pago real"
+    assert frase in texto
+    assert "septiembre" not in texto
+    textos = _textos_xlsx(load_workbook(BytesIO(render_reparto_xlsx(req))).active)
+    assert not any("septiembre" in t for t in textos)
+    assert any("su pago real (gasto capturado) lo absorbe el avión" in t for t in textos)
+
+
+def test_rutas_aceptan_el_payload_del_api_0074(monkeypatch, request) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    request.addfinalizer(get_settings.cache_clear)
+    headers = {"X-Internal-Token": TOKEN}
+    payload = _payload(comision_vendedor_solo_gasto_real=True)
+    res = client.post("/pdf/reparto-xlsx", json=payload, headers=headers)
+    assert res.status_code == 200, res.text
+    assert load_workbook(BytesIO(res.content)).active["A10"].value == NOTA_POR_AVION_GASTO_REAL
+    res = client.post("/pdf/reparto", json=payload, headers=headers)
+    assert res.status_code == 200, res.text
+    assert LINEA_GASTO_REAL.strip() in _texto_pdf(res.content)

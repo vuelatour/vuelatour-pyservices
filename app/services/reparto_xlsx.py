@@ -22,6 +22,7 @@ from app.services.reparto_comisiones import (
     comisiones_al_avion,
     frase_regla,
     regla,
+    solo_gasto_real,
 )
 
 BRAND = "0F4C81"
@@ -153,9 +154,16 @@ def _nota_tabla(req: RepartoPdfRequest) -> str:
 
 
 def _nota_comision_por_avion(req: RepartoPdfRequest, por_avion: list[str]) -> str:
-    """«Comisión del vendedor cotizada por avión (…): XB-TST $80.00.»"""
+    """«Comisión del vendedor cotizada por avión (…): XB-TST $80.00.» Con la
+    bandera del API 0.0.74 (`solo_gasto_real`) dice que el avión absorbe su
+    pago REAL (el gasto capturado); sin ella, el texto de siempre."""
     if not comisiones_al_avion(req):
         aclaracion = "ingreso de VuelaTour, su pago no es costo del avión"
+    elif solo_gasto_real(req):
+        aclaracion = (
+            f"ingreso de VuelaTour; con la {regla(req)}, por fecha del vuelo, "
+            "su pago real (gasto capturado) lo absorbe el avión en Comisiones"
+        )
     else:
         aclaracion = (
             f"ingreso de VuelaTour; con la {regla(req)}, por fecha del vuelo, "
@@ -203,8 +211,9 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         "Deuda total del cliente (informativo)",
     ]
     # Columna E con las comisiones que absorbe el avión (regla de septiembre
-    # 2026: banco + provisión del vendedor): se nombra así cuando alguno las
-    # trae; si no, el encabezado de siempre (la columna va oculta).
+    # 2026: banco + lo del vendedor —su provisión hasta el API 0.0.73, su
+    # pago real desde el 0.0.74—): se nombra así cuando alguno las trae; si
+    # no, el encabezado de siempre (la columna va oculta).
     if comisiones_al_avion(req):
         headers[4] = ETIQUETA_COLUMNA
     hrow = 4
@@ -273,8 +282,9 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     r += 1
     # Columna E (comisiones que restan al avión): con la regla A del
     # 28-ago-2026 el API mandó 0 y desde la regla de septiembre 2026 trae lo
-    # que absorbe cada avión (banco + provisión del vendedor). Se conserva
-    # por índice (money_cols, widths) y se OCULTA cuando nadie trae monto.
+    # que absorbe cada avión (banco + lo del vendedor: provisión hasta el API
+    # 0.0.73, pago real desde el 0.0.74). Se conserva por índice
+    # (money_cols, widths) y se OCULTA cuando nadie trae monto.
     if not any(a.comisiones_venta_usd for a in req.aviones):
         ws.column_dimensions[get_column_letter(5)].hidden = True
     nota = ws.cell(row=r, column=1, value=_nota_tabla(req))

@@ -20,7 +20,9 @@
                       vs egreso; el pago de la comisión al vendedor apareado:
                       el gasto real «Comisión del vendedor» ligado al vuelo
                       o, mientras no se capture, la PROVISIÓN a la fecha del
-                      vuelo — 28-sep-2026, invariante 31 del API).
+                      vuelo — 28-sep-2026, invariante 31 del API; con el API
+                      0.0.74 —bandera `comision_vendedor_solo_gasto_real`,
+                      invariante 61— sin gasto real la fila no lleva egreso).
   3. otros gastos   — gastos del mes sin vuelo, con acumulado.
   4. utilidades     — resumen del periodo (lo computable hoy).
 
@@ -339,6 +341,35 @@ _LEYENDA_PAGO_VENDEDOR_REAL = (
     "capture, una PROVISIÓN por el mismo monto a la fecha del vuelo (regla "
     "28-ago-2026). "
 )
+# API 0.0.74 (13-oct-2026, invariante 61 del API; decisión 3 del lote del
+# cliente: «comisión del vendedor SOLO como gasto real»): ya no hay provisión;
+# sin gasto real la fila de comisión no lleva egreso. Con la bandera
+# `comision_vendedor_solo_gasto_real` esta leyenda MANDA sobre las dos de
+# arriba; sin ella, las de siempre (libro byte a byte).
+_LEYENDA_PAGO_VENDEDOR_GASTO_REAL = (
+    "El pago de la comisión al vendedor va apareado en su fila SOLO cuando se "
+    "captura en Gastos el gasto real «Comisión del vendedor» ligado al vuelo "
+    "(con «faltan $…» o «excede $…» si no cuadra con lo cobrado); mientras no "
+    "se capture, la fila no lleva egreso (regla del 13-oct-2026: sin gasto "
+    "real no se resta nada). "
+)
+# Fila 9 de 'utilidades' con la bandera (le sigue, solo con monto > 0, «
+# Pagado al vendedor con gasto real en este periodo: $X MXN.»).
+_UTILIDADES_OTROS_INGRESOS_GASTO_REAL = (
+    "OTROS INGRESOS = ingreso de VuelaTour (TUAs/extras/pernocta/comisión del "
+    "vendedor + su IVA), no del avión (regla 28-ago-2026), NETO del pago REAL "
+    "al vendedor (el gasto «Comisión del vendedor» ligado al vuelo; sin gasto "
+    "capturado no se resta nada; este libro lo resta entero aunque en el "
+    "Balance general, en los vuelos completados de la regla de comisiones, lo "
+    "cargue el avión en su columna COMISIONES), más los ingresos sin vuelo "
+    "registrados en Ingresos (ING-n), netos de su comisión bancaria: ver hoja "
+    "'Otros ingresos'."
+)
+
+
+def _solo_gasto_real(req: DineroXlsxRequest) -> bool:
+    """True solo con la bandera del API 0.0.74 (`is True`)."""
+    return req.comision_vendedor_solo_gasto_real is True
 
 
 def _hay_pago_vendedor_real(req: DineroXlsxRequest) -> bool:
@@ -357,7 +388,9 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
         value="Ingreso de VuelaTour (no del avión): TUAs, extras, pernocta y "
         "comisión del vendedor cobrados (con su IVA) vs lo pagado. "
         + (
-            _LEYENDA_PAGO_VENDEDOR_REAL
+            _LEYENDA_PAGO_VENDEDOR_GASTO_REAL
+            if _solo_gasto_real(req)
+            else _LEYENDA_PAGO_VENDEDOR_REAL
             if _hay_pago_vendedor_real(req)
             else _LEYENDA_PAGO_VENDEDOR_PROVISION
         )
@@ -391,10 +424,10 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
             cell.border = _border
             if isinstance(v, (int, float)):
                 cell.number_format = MONEY
-        # El detalle del egreso (p. ej. la provisión del pago al vendedor =
-        # comisión + IVA, o la nota del gasto real «Comisión del vendedor»
-        # que la reemplaza) va como COMENTARIO de su celda, igual que en el
-        # Balance general. El texto llega hecho del API.
+        # El detalle del egreso (la nota del gasto real «Comisión del
+        # vendedor»; con un API ≤ 0.0.73, también la de su provisión = comisión
+        # + IVA) va como COMENTARIO de su celda, igual que en el Balance
+        # general. El texto llega hecho del API.
         if f.nota_egreso:
             lineas = f.nota_egreso.count("\n") + 1
             com = Comment(f.nota_egreso, "VuelaTour")
@@ -592,16 +625,21 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
         if pagada is not None and pagada > 0
         else ""
     )
-    ws.cell(
-        row=9,
-        column=1,
-        value="OTROS INGRESOS = ingreso de VuelaTour (TUAs/extras/pernocta/"
+    # Con la bandera del API 0.0.74 (invariante 61): sin provisión que nombrar
+    # (viaja en 0) y lo pagado de verdad, igual; sin ella, el texto de siempre.
+    fila9 = (
+        _UTILIDADES_OTROS_INGRESOS_GASTO_REAL + nota_pagada
+        if _solo_gasto_real(req)
+        else "OTROS INGRESOS = ingreso de VuelaTour (TUAs/extras/pernocta/"
         "comisión del vendedor + su IVA), no del avión (regla 28-ago-2026), "
         "NETO de la provisión del pago al vendedor (comisión + su IVA), más "
         "los ingresos sin vuelo registrados en Ingresos (ING-n), netos de su "
         "comisión bancaria: ver hoja 'Otros ingresos'." + nota_provision
-        + nota_pagada,
-    ).font = Font(italic=True, size=9, color="5B6470")
+        + nota_pagada
+    )
+    ws.cell(row=9, column=1, value=fila9).font = Font(
+        italic=True, size=9, color="5B6470"
+    )
 
 
 def render_dinero_xlsx(req: DineroXlsxRequest) -> bytes:

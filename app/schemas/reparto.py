@@ -25,9 +25,10 @@ class RepartoOtrosIngresosDesglose(BaseModel):
     # Comisión del vendedor COTIZADA (pre-IVA): lo cobrado al cliente por
     # ella es ingreso de VuelaTour, que le paga al vendedor ('otros
     # movimientos'). Desde la regla de septiembre 2026 (API 0.0.65, por fecha
-    # del vuelo) el avión absorbe su PROVISIÓN, que viaja dentro de
-    # `RepartoAvion.comisiones_venta_usd` — este monto sigue siendo solo
-    # informativo.
+    # del vuelo) el avión absorbe lo que se le paga al vendedor dentro de
+    # `RepartoAvion.comisiones_venta_usd`: hasta el API 0.0.73 su PROVISIÓN;
+    # con el 0.0.74 (bandera `comision_vendedor_solo_gasto_real`) su pago
+    # REAL (el gasto capturado). Este monto sigue siendo solo informativo.
     comision_usd: float | None = None
     iva_usd: float | None = None
 
@@ -110,8 +111,10 @@ class RepartoAvion(BaseModel):
     # ingreso de VuelaTour y su pago sale de VuelaTour). Desde la regla de
     # septiembre 2026 (API 0.0.65, vuelos con fecha desde
     # `comisiones_al_avion_desde`) trae la parte del avión de la comisión
-    # BANCARIA de sus cobros + la PROVISIÓN de la comisión del vendedor
-    # (fuente única `comisionesDelVuelo` del API). ≠ 0 ⇒ el PDF y el Excel la
+    # BANCARIA de sus cobros + lo del vendedor (fuente única
+    # `comisionesDelVuelo` del API): hasta el 0.0.73 su PROVISIÓN; con la
+    # bandera `comision_vendedor_solo_gasto_real` (API 0.0.74) su pago REAL,
+    # el gasto «Comisión del vendedor» capturado. ≠ 0 ⇒ el PDF y el Excel la
     # pintan como «Comisiones (banco + vendedor)» con los textos de esa regla
     # (`reparto_comisiones.comisiones_al_avion`); 0 ⇒ los textos de siempre.
     comisiones_venta_usd: float = 0.0
@@ -163,6 +166,12 @@ class RepartoPdfRequest(BaseModel):
     # («regla sep-2026», `etiquetaReglaComisiones`). Solo cambia el texto; sin
     # ella, «regla de septiembre 2026». Liberal: blanco o no-texto ⇒ None.
     regla_comisiones: str | None = None
+    # ADITIVO (13-oct-2026, API 0.0.74, invariante 61 del API): la comisión
+    # del vendedor resta SOLO como gasto real (`comisiones_venta_usd` = parte
+    # del avión de la bancaria + el pago REAL capturado). Con `true` cambian
+    # SOLO textos («provisión» ⇒ «pago real»: `reparto_comisiones`); None/
+    # False (API ≤ 0.0.73) ⇒ los documentos de siempre.
+    comision_vendedor_solo_gasto_real: bool | None = None
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod

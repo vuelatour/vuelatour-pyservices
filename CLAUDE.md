@@ -272,7 +272,9 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   bandera, textos nuevos con ella, individual, concepto y nota tal cual,
   rutas con el payload nuevo). Desde el 12-oct-2026 (API 0.0.73) la bandera
   `sin_provision_vendedor` MANDA sobre esta: ver «SIN PROVISIÓN del pago al
-  vendedor en 'otros movimientos'» más abajo.
+  vendedor en 'otros movimientos'» más abajo. **SUPERSEDIDO el 13-oct-2026
+  (API 0.0.74)**: ya no hay provisión que reemplazar en ningún libro (ver
+  «COMISIÓN DEL VENDEDOR SOLO COMO GASTO REAL»).
 - **FACTURA VUELATOUR en la hoja maestra de los balances** (30-sep-2026, API
   0.0.45). Pedido de Marie para Ale, con la foto del «reporte horas XA-VGV»:
   «se ocupa que diga el num de factura que nosotros emitimos del servicio …
@@ -679,7 +681,11 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   Tests: `tests/test_reparto_comisiones.py` y, en
   `tests/test_balance_comisiones.py`, #403 con la forma real, #504 EXTERNOS
   (mensual y general), la etiqueta del API y las aclaraciones de 'otros
-  movimientos' y del bloque empresa.
+  movimientos' y del bloque empresa. **SUPERSEDIDO el 13-oct-2026 (API
+  0.0.74) en lo que toca al vendedor**: lo que absorbe el avión ya no es su
+  PROVISIÓN sino su pago REAL; con la bandera `comision_vendedor_solo_gasto_real`
+  los textos de arriba que dicen «provisión» tienen su versión
+  `*_GASTO_REAL` (ver «COMISIÓN DEL VENDEDOR SOLO COMO GASTO REAL»).
 - **COMISIONES solo en el libro INDIVIDUAL; el Balance general, antes de
   comisiones** (7-oct-2026, API 0.0.66; pedido: «estas comisiones se están
   duplicando en la general, ya que las tenemos en el apartado de "Otros
@@ -770,7 +776,11 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   Tests: `tests/test_balance_comisiones_general.py` (+ los casos del general en
   `test_balance_comisiones`, `test_balance_general_costo_hora`,
   `test_balance_factura_vuelatour`, `test_balance_cobrado_con`,
-  `test_comision_vendedor_notas`).
+  `test_comision_vendedor_notas`). **SUPERSEDIDO el 13-oct-2026 (API
+  0.0.74)** en lo que toca a la provisión: el pago al vendedor ya no lo
+  «cubre el avión con su provisión»; el avión carga el pago REAL y la
+  pestaña lo trae «a cargo del avión» con $0.00 (textos `*_GASTO_REAL` con
+  la bandera `comision_vendedor_solo_gasto_real`).
 - **SIN PROVISIÓN del pago al vendedor en 'otros movimientos'** (12-oct-2026,
   API 0.0.73, invariante 58 del API; pedido del cliente —punto 17 del lote
   del 12-oct— precisado con la captura de la hoja en pantalla: «provisión:
@@ -855,7 +865,11 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   remanente = ingreso y fórmula viva, las tres filas con gasto real
   iguales que hoy, TOTALES = Σ filas; tolerancia: la marca pinta aunque
   viaje la bandera; la bandera de la hoja no toca el individual; rutas
-  xlsx y libro JSON).
+  xlsx y libro JSON). **SUPERSEDIDO el 13-oct-2026 (API 0.0.74)** el «Lo que
+  NO cambia» de arriba: el Libro Dinero ya no provisiona y la columna
+  COMISIONES del individual y el reparto cargan el pago REAL, no la
+  provisión (ver «COMISIÓN DEL VENDEDOR SOLO COMO GASTO REAL»; la bandera
+  `comision_vendedor_solo_gasto_real` manda sobre `sin_provision_vendedor`).
 - **FACTURA VUELATOUR según los cobros** (13-oct-2026, API 0.0.74,
   invariante 60 del API; decisión 4 del lote del cliente: un cobro que cae
   en HSBC Dólares / HSBC Pesos / Scotiabank Dólares / Scotiabank Pesos
@@ -904,6 +918,85 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   'otros movimientos' y en el Libro Dinero (hoja 1 y 'Otros ingresos');
   rutas con el JSON del 0.0.74 —raíz, `aviones[]` y `consolidado`— y del
   0.0.73).
+- **COMISIÓN DEL VENDEDOR SOLO COMO GASTO REAL** (13-oct-2026, API 0.0.74,
+  invariante 61 del API; decisión 3 del lote del cliente: «comisión del
+  vendedor SOLO como gasto real en todos lados»). **El cambio es del API**:
+  ya no hay PROVISIÓN en ningún libro. Lo que el avión absorbe del vendedor
+  (columna COMISIONES del individual, cascada del general, reparto a socios)
+  es su PAGO REAL —Σ de los gastos «Comisión del vendedor» ligados al vuelo,
+  × la parte del avión—, solo en vuelos COMPLETADOS de la regla con comisión
+  cotizada; sin gasto capturado no se resta nada. En esos vuelos 'otros
+  movimientos' trae el pago apareado con egreso $0.00 «· a cargo del avión
+  XB-… ($… en su columna COMISIONES)» (fila que se pinta TAL CUAL: sin
+  marca, sin amarillo; remanente = ingreso con la fórmula viva
+  `ROUND(G−D,2)`); fuera de ese universo VuelaTour lo paga con las ramas de
+  siempre. El Libro Dinero resta el gasto real entero (sin provisión: sin
+  gasto la fila no lleva egreso). **Aquí no se calcula nada: cambian SOLO
+  textos, y SOLO con la bandera ADITIVA `comision_vendedor_solo_gasto_real:
+  bool | None = None` (`is True`)**, que el API manda SIEMPRE desde el 0.0.74
+  en: (a) la raíz de cada `BalanceAvionRequest` —libro individual, cada
+  `aviones[]` del general Y el `consolidado` FLOTA (a diferencia de
+  `sin_provision_vendedor`, igual que `factura_vuelatour_segun_cobros`)—,
+  (b) `BalanceHojaOtrosMovimientos`, (c) `DineroXlsxRequest` y (d)
+  `RepartoPdfRequest`. Con ella MANDA sobre `sin_provision_vendedor` y
+  `hay_pago_vendedor_real`. Helpers: `_solo_gasto_real(req)` (raíz: notas de
+  la hoja de vuelos con el `req` que recibe `_hoja_maestra` —el consolidado
+  en el general— y la cascada de cada avión en `_bloque_balance`) y
+  `_solo_gasto_real_om(om)` (fila 2, RESUMEN, bloque VUELATOUR); NUNCA
+  `_sin_provision_vendedor` como señal del general (el consolidado no la
+  trae). Textos EXACTOS del contrato (constantes `*_GASTO_REAL`; ninguno
+  dice «provisi…»; todos con «regla de septiembre 2026» para `_con_regla`,
+  en `_TEXTOS_CON_MES` y en el parametrize de
+  `test_textos_nuevos_con_la_regla_del_api`):
+  `_NOTA_ENCABEZADO_COMISIONES_GASTO_REAL` (AC2 del individual),
+  `_NOTA_COMISIONES_GASTO_REAL` + `_MAESTRA_PAGO_VENDEDOR_GASTO_REAL` +
+  `_NOTA_GANANCIA` (pie del individual), `_COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL`
+  ⇒ `_NOTA_ENCABEZADO_GANANCIA_FLOTA_GASTO_REAL` /
+  `_NOTA_ENCABEZADO_REMANENTE_GASTO_REAL` (encabezados de la hoja de vuelos
+  del general: el dict pasó a `_notas_encabezado_sin_comisiones(solo_gasto_real)`),
+  `_NOTA_COMISIONES_FLOTA_GASTO_REAL` (pie de las dos variantes del general),
+  `_RESUMEN_COMISIONES_GASTO_REAL` + `_RESUMEN_PAGO_VENDEDOR_SIN_PROVISION`
+  (existente) + `_RESUMEN_REGLA_GASTO_REAL` (con vuelos de la regla),
+  `_NOTA_CASCADA_COMISIONES_GASTO_REAL` (celda «(−) COMISIONES (banco +
+  vendedor) USD»), `_OM_REGLA_COMISIONES_GASTO_REAL` (fila 2: texto fijo +
+  `_OM_PAGO_VENDEDOR_SIN_PROVISION` + esta regla, «a cargo del avión»),
+  `_EMPRESA_REGLA_COMISIONES_GASTO_REAL` (`_bloque_empresa(...,
+  solo_gasto_real=)`, base `_NOTA_EMPRESA_BASE_SIN_PROVISION`); Libro Dinero
+  `_LEYENDA_PAGO_VENDEDOR_GASTO_REAL` (fila 2 de 'Otros ingresos') y
+  `_UTILIDADES_OTROS_INGRESOS_GASTO_REAL` (fila 9 de 'utilidades', sin
+  «Provisión restada…» —viaja 0— y con «Pagado al vendedor con gasto real…»
+  solo con monto > 0); reparto: `frase_regla(req)` («… el avión absorbe el
+  pago real de la comisión del vendedor (el gasto «Comisión del vendedor»
+  ligado al vuelo) y su parte de la comisión bancaria de sus cobros»),
+  `LINEA_COMISION_VENDEDOR_GASTO_REAL` vía `linea_comision_vendedor(req)`
+  (cabe en los 120 mm a 7.5 pt: test), `_nota_comision_por_avion` y
+  `_nota_otros_ingresos` («… el pago real al vendedor lo carga el avión
+  ('otros movimientos' del Balance general lo muestra con egreso $0.00)»).
+  Llaves ADITIVAS que NO se pintan en celda: `BalanceAvionVuelo.
+  comision_vendedor_real_mxn` / `comision_vendedor_real_pagos` (solo el
+  respaldo sin detalle de `_nota_comisiones`: «Comisión del vendedor (gasto
+  real) · $3,000.00»; la línea «(provisión)» se conserva para APIs previos y
+  un 0 no se pinta) y `BalanceAvionTotales.comision_vendedor_real_mxn` /
+  `comision_vendedor_prov_mxn`. **Sin la bandera (ausente/None/False) TODO
+  byte a byte**: huellas `_FIRMAS_HOY`/`_MIEMBROS_HOY`/`_FIRMAS_ANTES`,
+  `_FILA_CUBIERTA`/`_FILA_EXCEDE`/`_CASCADA_0065` y los payloads del reparto
+  intactos; sin columnas, fórmulas ni merges nuevos (`ENCABEZADOS_SIN_ROUND`
+  no cambia). El amarillo (`_MARCA_PROVISION`/`_LEYENDA_PROVISION`/
+  `_es_provision`) se queda para APIs previos. **Skew**: API 0.0.74 +
+  pyservices previo ⇒ números correctos y leyendas con «PROVISIÓN» un rato
+  (`extra="ignore"`, cero 422); pyservices nuevo + API ≤ 0.0.73 ⇒ sin
+  bandera, libros de siempre. Orden de deploy: pyservices → API. Tests:
+  `tests/test_comision_vendedor_notas.py` (sección 13-oct-2026: literales,
+  esquemas de los 5 modelos, individual con la raíz —manda sobre
+  `sin_provision_vendedor`—, general sin vuelos de la regla, independencia
+  hoja/raíz, Libro Dinero con y sin `pagada`, rutas xlsx y libro JSON),
+  `tests/test_balance_comisiones.py` (`_forma_0074`: libro con prov 0 + real
+  + «gasto real» que cuadra sin degradar, respaldo de la nota, nulls sin
+  cambiar un byte), `tests/test_balance_comisiones_general.py` (general
+  0.0.74 con la fila «a cargo del avión» en las dos variantes, leyendas,
+  cascada, bloque VUELATOUR con y sin `nota`, banderas independientes, ruta)
+  y `tests/test_reparto_comisiones.py` (PDF y XLSX con «pago real», sin
+  bandera byte a byte, regla del API sin «septiembre», rutas).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.

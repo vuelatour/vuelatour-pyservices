@@ -43,6 +43,15 @@ provisionado» (`_NOTA_EMPRESA_BASE_SIN_PROVISION`); sin ella, los de hoy
 byte a byte (un API previo sigue provisionando). El amarillo
 (`_MARCA_PROVISION`) no se toca: con el API nuevo ya no llega la marca y no
 se pinta nada.
+
+13-oct-2026 (API 0.0.74, invariante 61 del API; decisión 3 del lote del
+cliente: «comisión del vendedor SOLO como gasto real»): ya no hay provisión en
+NINGÚN libro (tampoco en COMISIONES del avión, el reparto ni el Libro Dinero).
+Con la bandera ADITIVA `comision_vendedor_solo_gasto_real` (hoja 'otros
+movimientos', raíz de cada libro —individual, `aviones[]` Y consolidado
+FLOTA—, Libro Dinero y reparto) cambian SOLO textos (`*_GASTO_REAL`, ninguno
+dice «provisi…»); manda sobre `sin_provision_vendedor` y
+`hay_pago_vendedor_real`. Sin ella, los de hoy byte a byte.
 """
 
 import json
@@ -54,9 +63,12 @@ from openpyxl import load_workbook
 
 from app.config import get_settings
 from app.main import app
+from app.schemas.reparto import RepartoPdfRequest
 from app.schemas.reportes import (
     REGLA_COMISIONES_RESPALDO,
     BalanceAvionRequest,
+    BalanceAvionTotales,
+    BalanceAvionVuelo,
     BalanceGeneralRequest,
     BalanceHojaOtrosMovimientos,
     DineroXlsxRequest,
@@ -66,13 +78,17 @@ from app.services.balance_avion_xlsx import (
     _EMPRESA_REGLA_COMISIONES_CUBRE_AVION,
     _EMPRESA_REGLA_COMISIONES_CUBRE_AVION_SIN_PROVISION,
     _LEYENDA_PROVISION,
+    _MAESTRA_PAGO_VENDEDOR_GASTO_REAL,
     _MAESTRA_PAGO_VENDEDOR_SIN_PROVISION,
     _NOTA_BLOQUE_EMPRESA,
+    _NOTA_COMISIONES_GASTO_REAL,
     _NOTA_EMPRESA_BASE,
     _NOTA_EMPRESA_BASE_SIN_PROVISION,
+    _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL,
     _OM_PAGO_VENDEDOR_SIN_PROVISION,
     _OM_REGLA_COMISIONES_CUBRE_AVION,
     _OM_REGLA_COMISIONES_CUBRE_AVION_SIN_PROVISION,
+    _RESUMEN_COMISIONES_GASTO_REAL,
     _RESUMEN_PAGO_VENDEDOR_SIN_PROVISION,
     _RESUMEN_REGLA_CUBRE_AVION,
     _RESUMEN_REGLA_CUBRE_AVION_SIN_PROVISION,
@@ -80,7 +96,11 @@ from app.services.balance_avion_xlsx import (
     render_balance_avion_xlsx,
     render_balance_general_xlsx,
 )
-from app.services.dinero_xlsx import render_dinero_xlsx
+from app.services.dinero_xlsx import (
+    _LEYENDA_PAGO_VENDEDOR_GASTO_REAL,
+    _UTILIDADES_OTROS_INGRESOS_GASTO_REAL,
+    render_dinero_xlsx,
+)
 from tests._evaluador_formulas import verificar_libro
 
 # ---------------------------------------------------------------------------
@@ -994,3 +1014,282 @@ def test_rutas_aceptan_el_payload_0073(monkeypatch) -> None:
     assert res.status_code == 200, res.text
     maestra = _celda_que_empieza(_libro(res.content)["reporte horas N4142R"], MAESTRA_PREFIJO)
     assert maestra == _cambia(MAESTRA_NOTA_VIEJA, MAESTRA_FRAG_VIEJO, MAESTRA_FRAG_SIN_PROVISION)
+
+
+
+# ===========================================================================
+# 13-oct-2026 (API 0.0.74, invariante 61): «comisión del vendedor SOLO como
+# gasto real». Bandera `comision_vendedor_solo_gasto_real`.
+# ===========================================================================
+
+# Textos del CONTRATO, literales.
+ENCABEZADO_GASTO_REAL = (
+    "COMISIONES (regla de septiembre 2026, por fecha del vuelo) = lo que absorbe el "
+    "avión: su parte de la comisión bancaria de los cobros del vuelo (en la misma "
+    "proporción con que el cobro se prorratea al avión) + el pago REAL de la comisión "
+    "del vendedor (el gasto «Comisión del vendedor» capturado en Gastos y ligado al "
+    "vuelo, solo en vuelos COMPLETADOS con comisión cotizada; sin gasto capturado no "
+    "se resta nada). La nota de cada celda dice cuáles son. Vuelos anteriores: vacía "
+    "(la comisión era de VuelaTour)."
+)
+MAESTRA_GASTO_REAL = (
+    "COMISIONES MXN (regla de septiembre 2026, por fecha del vuelo) = lo que absorbe el "
+    "avión: su parte de la comisión bancaria de los cobros y el pago REAL de la "
+    "comisión del vendedor (el gasto «Comisión del vendedor» capturado en Gastos y "
+    "ligado al vuelo, solo en vuelos COMPLETADOS con comisión cotizada; sin gasto "
+    "capturado no se resta nada); la nota de cada celda dice cuáles son y en los "
+    "vuelos anteriores va vacía. Lo cobrado al cliente por la comisión del vendedor "
+    "sigue siendo ingreso de VuelaTour y vive en 'otros movimientos' del Balance "
+    "general (ahí el pago real se aparea con lo cobrado y, en los vuelos completados "
+    "de esta regla, sale con egreso $0.00 «a cargo del avión» porque ya resta en esta "
+    "columna). GANANCIA de la fila = REMANENTE (VENTA − COSTO TOTAL) − COMISIONES."
+)
+RESUMEN_GASTO_REAL = (
+    "COMISIONES = las de la columna COMISIONES del libro individual de cada avión "
+    "(regla de septiembre 2026, por fecha del vuelo: su parte de la comisión bancaria "
+    "de los cobros y el pago real de la comisión del vendedor —el gasto «Comisión del "
+    "vendedor» ligado al vuelo; sin gasto capturado no se resta nada—; en vuelos "
+    "anteriores no hay); en este libro no van en la hoja de vuelos (ahí la GANANCIA va "
+    "antes de comisiones): restan aquí y en la cascada de cada avión de la hoja "
+    "'balance'. Lo cobrado al cliente por la comisión del vendedor sigue siendo "
+    "INGRESO de VuelaTour; ese ingreso y el pago al vendedor viven en 'otros "
+    "movimientos' "
+)
+DINERO_LEYENDA_GASTO_REAL = (
+    "El pago de la comisión al vendedor va apareado en su fila SOLO cuando se captura "
+    "en Gastos el gasto real «Comisión del vendedor» ligado al vuelo (con «faltan $…» o "
+    "«excede $…» si no cuadra con lo cobrado); mientras no se capture, la fila no lleva "
+    "egreso (regla del 13-oct-2026: sin gasto real no se resta nada). "
+)
+DINERO_FILA9_GASTO_REAL = (
+    "OTROS INGRESOS = ingreso de VuelaTour (TUAs/extras/pernocta/comisión del vendedor "
+    "+ su IVA), no del avión (regla 28-ago-2026), NETO del pago REAL al vendedor (el "
+    "gasto «Comisión del vendedor» ligado al vuelo; sin gasto capturado no se resta "
+    "nada; este libro lo resta entero aunque en el Balance general, en los vuelos "
+    "completados de la regla de comisiones, lo cargue el avión en su columna "
+    "COMISIONES), más los ingresos sin vuelo registrados en Ingresos (ING-n), netos de "
+    "su comisión bancaria: ver hoja 'Otros ingresos'."
+)
+
+
+def test_textos_gasto_real_son_los_del_contrato() -> None:
+    assert _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL == ENCABEZADO_GASTO_REAL
+    assert (
+        _NOTA_COMISIONES_GASTO_REAL
+        + _MAESTRA_PAGO_VENDEDOR_GASTO_REAL
+        + " GANANCIA de la fila = REMANENTE (VENTA − COSTO TOTAL) − COMISIONES."
+    ) == MAESTRA_GASTO_REAL
+    assert _RESUMEN_COMISIONES_GASTO_REAL == RESUMEN_GASTO_REAL
+    assert _LEYENDA_PAGO_VENDEDOR_GASTO_REAL == DINERO_LEYENDA_GASTO_REAL
+    assert _UTILIDADES_OTROS_INGRESOS_GASTO_REAL == DINERO_FILA9_GASTO_REAL
+    for t in (
+        ENCABEZADO_GASTO_REAL,
+        MAESTRA_GASTO_REAL,
+        RESUMEN_GASTO_REAL,
+        DINERO_LEYENDA_GASTO_REAL,
+        DINERO_FILA9_GASTO_REAL,
+    ):
+        assert "provisi" not in t.lower(), t
+
+
+def test_esquemas_aceptan_la_bandera_y_las_llaves_nuevas_con_default_none() -> None:
+    """Cinco modelos con la bandera (hoja 'otros movimientos', raíz del libro
+    individual, consolidado del general, Libro Dinero y reparto) y las llaves
+    del pago real de la fila y de los totales: default None, sin 422."""
+    assert BalanceHojaOtrosMovimientos().comision_vendedor_solo_gasto_real is None
+    assert BalanceAvionRequest().comision_vendedor_solo_gasto_real is None
+    assert DineroXlsxRequest().comision_vendedor_solo_gasto_real is None
+    assert (
+        RepartoPdfRequest(periodo_desde="a", periodo_hasta="b", generado="c")
+        .comision_vendedor_solo_gasto_real
+        is None
+    )
+    assert BalanceAvionVuelo().comision_vendedor_real_mxn is None
+    assert BalanceAvionVuelo().comision_vendedor_real_pagos is None
+    assert BalanceAvionTotales().comision_vendedor_real_mxn is None
+    req = BalanceGeneralRequest.model_validate(
+        {
+            "consolidado": {
+                "comision_vendedor_solo_gasto_real": True,
+                "totales": {"comision_vendedor_real_mxn": 3000.0, "comision_vendedor_prov_mxn": 0},
+                "vuelos": [
+                    {"comision_vendedor_real_mxn": 3000.0, "comision_vendedor_real_pagos": 1}
+                ],
+                "otros_movimientos": {
+                    "filas": [],
+                    "sin_provision_vendedor": True,
+                    "comision_vendedor_solo_gasto_real": True,
+                },
+            },
+            "aviones": [{"matricula": "XA-TST", "comision_vendedor_solo_gasto_real": True}],
+        }
+    )
+    assert req.consolidado.comision_vendedor_solo_gasto_real is True
+    assert req.consolidado.otros_movimientos.comision_vendedor_solo_gasto_real is True
+    assert req.consolidado.vuelos[0].comision_vendedor_real_pagos == 1
+    assert req.consolidado.totales.comision_vendedor_real_mxn == 3000.0
+    assert req.aviones[0].comision_vendedor_solo_gasto_real is True
+    dinero = DineroXlsxRequest.model_validate({"comision_vendedor_solo_gasto_real": True})
+    assert dinero.comision_vendedor_solo_gasto_real is True
+
+
+# --- Libro INDIVIDUAL: la bandera raíz manda sobre `sin_provision_vendedor` --
+
+
+@pytest.mark.parametrize("sin_provision", [..., True], ids=["sin 0.0.73", "con 0.0.73"])
+def test_individual_con_la_bandera_raiz_0074_nota_del_pago_real(sin_provision) -> None:
+    extra = {"comision_vendedor_solo_gasto_real": True}
+    if sin_provision is not ...:
+        extra["sin_provision_vendedor"] = sin_provision
+    assert _maestra_individual(_individual(**extra)) == MAESTRA_GASTO_REAL
+
+
+@pytest.mark.parametrize("valor", [None, False], ids=["null", "false"])
+def test_individual_con_la_bandera_apagada_nota_de_hoy(valor) -> None:
+    assert _maestra_individual(_individual(comision_vendedor_solo_gasto_real=valor)) == (
+        MAESTRA_NOTA_VIEJA
+    )
+    assert _maestra_individual(
+        _individual(comision_vendedor_solo_gasto_real=valor, sin_provision_vendedor=True)
+    ) == _cambia(MAESTRA_NOTA_VIEJA, MAESTRA_FRAG_VIEJO, MAESTRA_FRAG_SIN_PROVISION)
+
+
+def test_individual_ignora_la_bandera_de_la_hoja_y_el_general_la_raiz_del_individual() -> None:
+    """La raíz del individual solo cambia SU libro; la de la hoja 'otros
+    movimientos' no toca el individual (no la pinta)."""
+    req = _individual(
+        otros_movimientos={
+            "filas": [_FILA_V73_VIGENCIA_SIN_GASTO],
+            "comision_vendedor_solo_gasto_real": True,
+        }
+    )
+    assert _maestra_individual(req) == MAESTRA_NOTA_VIEJA
+    # Un general SIN bandera en la hoja ni en el consolidado, con aviones que
+    # sí la traen en su raíz: fila 2 y RESUMEN de hoy.
+    p = _general(...).model_dump(mode="json")
+    p["aviones"] = [{"matricula": "N4142R", "comision_vendedor_solo_gasto_real": True}]
+    om, resumen, maestra = _leyendas_general(
+        render_balance_general_xlsx(BalanceGeneralRequest.model_validate(p))
+    )
+    assert om == OM_FILA2_VIEJA
+    assert resumen == RESUMEN_NOTA_VIEJA
+    assert maestra == MAESTRA_GENERAL_NOTA
+
+
+# --- General SIN vuelos de la regla: fila 2, RESUMEN y bloque sin la regla ----
+
+
+def test_general_con_la_bandera_sin_vuelos_de_la_regla() -> None:
+    """Con la bandera de la hoja y sin vuelos de la regla: fila 2 = el
+    fragmento sin provisión (sin frase de regla), RESUMEN = la nota del pago
+    real + el fragmento sin provisión, y la base del bloque VUELATOUR sin «o
+    provisionado»."""
+    req = _general(..., filas=[_FILA_V73_VIGENCIA_SIN_GASTO, _FILA_PAGO_REAL], sin_provision=True)
+    req.consolidado.otros_movimientos.comision_vendedor_solo_gasto_real = True
+    om, resumen, maestra = _leyendas_general(render_balance_general_xlsx(req))
+    assert om == _cambia(OM_FILA2_VIEJA, OM_FRAG_VIEJO, OM_FRAG_SIN_PROVISION)
+    assert resumen == RESUMEN_GASTO_REAL + RESUMEN_FRAG_SIN_PROVISION
+    assert maestra == MAESTRA_GENERAL_NOTA  # el consolidado no trae la raíz
+    for caso in ("sin_regla", "regla_sin_cubre"):
+        p = _payload_empresa(caso, True)
+        p["consolidado"]["otros_movimientos"]["comision_vendedor_solo_gasto_real"] = True
+        pie = _pie_balance(p)
+        assert any(x.startswith(EMPRESA_BASE_SIN_PROVISION) for x in pie), caso
+        assert not any("o provisionado" in x for x in pie), caso
+
+
+# --- Libro Dinero ---------------------------------------------------------------
+
+
+def _dinero_0074(pagada=..., filas=None, bandera=True) -> DineroXlsxRequest:
+    """El Libro Dinero del API 0.0.74: provisión SIEMPRE 0 y la bandera."""
+    req = _dinero(pagada=pagada, provision=0.0, filas=filas)
+    return req.model_copy(update={"comision_vendedor_solo_gasto_real": bandera})
+
+
+_FILA_V74_SIN_GASTO = {  # sin gasto real: la fila de comisión SIN egreso
+    "clave": "N4142R-317",
+    "fecha_vuelo": "2026-09-20",
+    "concepto_egreso": None,
+    "egreso_mxn": None,
+    "fecha_egreso": None,
+    "nota_egreso": None,
+    "concepto_ingreso": "comisión vendedor (Alex Saab)",
+    "ingreso_mxn": 2030.0,
+    "fecha_ingreso": "2026-09-20",
+    "remanente_mxn": 2030.0,
+}
+
+
+def test_dinero_con_la_bandera_leyendas_nuevas_sin_provision() -> None:
+    fila2, fila9 = _leyendas_dinero(render_dinero_xlsx(_dinero_0074(filas=[_FILA_V74_SIN_GASTO])))
+    assert fila2 == _cambia(DINERO_FILA2_VIEJA, DINERO_FRAG_VIEJO + " ", DINERO_LEYENDA_GASTO_REAL)
+    assert fila9 == DINERO_FILA9_GASTO_REAL
+    assert "provisi" not in (fila2 + fila9).lower()
+    # La fila sin gasto real: sin egreso, remanente = ingreso, sin nota.
+    ws = _libro(render_dinero_xlsx(_dinero_0074(filas=[_FILA_V74_SIN_GASTO])))["Otros ingresos"]
+    assert (ws["C4"].value, ws["D4"].value, ws["E4"].value) == (None, None, None)
+    assert ws["D4"].comment is None
+    assert (ws["G4"].value, ws["I4"].value) == (2030.0, 2030.0)
+
+
+@pytest.mark.parametrize("pagada", [0.0, 1600.0], ids=["pagada 0", "pagada 1600"])
+def test_dinero_con_la_bandera_y_pagos_reales(pagada) -> None:
+    """Con pagos reales: la leyenda de la bandera MANDA sobre la del 0.0.39 y la
+    fila 9 agrega lo pagado (solo con monto > 0); nunca «Provisión restada»."""
+    fila2, fila9 = _leyendas_dinero(
+        render_dinero_xlsx(
+            _dinero_0074(pagada=pagada, filas=[_FILA_V74_SIN_GASTO, _FILA_PAGO_REAL])
+        )
+    )
+    assert fila2 == _cambia(DINERO_FILA2_VIEJA, DINERO_FRAG_VIEJO + " ", DINERO_LEYENDA_GASTO_REAL)
+    cola = (
+        f" Pagado al vendedor con gasto real en este periodo: ${pagada:,.2f} MXN."
+        if pagada
+        else ""
+    )
+    assert fila9 == DINERO_FILA9_GASTO_REAL + cola
+    assert "Provisión restada" not in fila9
+
+
+@pytest.mark.parametrize("bandera", [None, False], ids=["null", "false"])
+def test_dinero_con_la_bandera_apagada_leyendas_de_hoy(bandera) -> None:
+    fila2, fila9 = _leyendas_dinero(
+        render_dinero_xlsx(_dinero(provision=2030.0).model_copy(
+            update={"comision_vendedor_solo_gasto_real": bandera}
+        ))
+    )
+    assert fila2 == DINERO_FILA2_VIEJA
+    assert fila9 == UTILIDADES_FILA9_BASE + " Provisión restada en este periodo: $2,030.00 MXN."
+
+
+# --- Rutas: el payload del API 0.0.74 entra sin 422 ---------------------------
+
+
+def test_rutas_aceptan_el_payload_0074(monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    headers = {"X-Internal-Token": TOKEN}
+    res = client.post(
+        "/pdf/balance-avion-xlsx",
+        json=_individual(comision_vendedor_solo_gasto_real=True).model_dump(mode="json"),
+        headers=headers,
+    )
+    assert res.status_code == 200, res.text
+    maestra = _celda_que_empieza(_libro(res.content)["reporte horas N4142R"], MAESTRA_PREFIJO)
+    assert maestra == MAESTRA_GASTO_REAL
+    res = client.post(
+        "/pdf/balance-avion-libro",
+        json=_individual(comision_vendedor_solo_gasto_real=True).model_dump(mode="json"),
+        headers=headers,
+    )
+    assert res.status_code == 200, res.text
+    assert "el pago real se aparea con lo cobrado" in json.dumps(res.json(), ensure_ascii=False)
+    res = client.post(
+        "/pdf/dinero-xlsx",
+        json=_dinero_0074(filas=[_FILA_V74_SIN_GASTO]).model_dump(mode="json"),
+        headers=headers,
+    )
+    assert res.status_code == 200, res.text
+    fila2, fila9 = _leyendas_dinero(res.content)
+    assert DINERO_LEYENDA_GASTO_REAL in fila2 and fila9 == DINERO_FILA9_GASTO_REAL

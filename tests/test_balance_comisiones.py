@@ -47,6 +47,14 @@ REMANENTE VENTA MENOS COMPRA = VENTA − PROVEEDOR; el RESUMEN conserva su
 columna. Los casos del general de este archivo lo congelan; la cascada con
 las dos líneas de comisiones y las leyendas del API 0.0.66, en
 `tests/test_balance_comisiones_general.py`.
+
+13-oct-2026 (API 0.0.74, invariante 61 del API: «comisión del vendedor SOLO
+como gasto real»): la parte del vendedor de COMISIONES es su pago REAL
+(`comision_vendedor_real_mxn`, nota «… · gasto real») y la provisión viaja en
+0; con la bandera raíz `comision_vendedor_solo_gasto_real` cambian SOLO los
+textos (encabezado y pie de COMISIONES). El libro con esa forma cuadra igual
+(GANANCIA = ROUND(REMANENTE − COMISIONES, 2) sin degradar) y sin la bandera,
+o con las llaves nuevas en null, no cambia ni un byte.
 """
 
 from __future__ import annotations
@@ -83,6 +91,7 @@ from app.services.balance_avion_xlsx import (
     _DISP_MENSUAL,
     _EMPRESA_REGLA_COMISIONES,
     _GRUPO_COSTO_HORA,
+    _MAESTRA_PAGO_VENDEDOR_GASTO_REAL,
     _NOTA_BLOQUE_EMPRESA,
     _NOTA_COBRADO_REAL,
     _NOTA_COBRADO_REAL_FLOTA,
@@ -90,14 +99,17 @@ from app.services.balance_avion_xlsx import (
     _NOTA_COBRANZA_NETO_FLOTA,
     _NOTA_COMISIONES,
     _NOTA_COMISIONES_FLOTA,
+    _NOTA_COMISIONES_GASTO_REAL,
     _NOTA_EMPRESA_BASE,
     _NOTA_ENCABEZADO_COMISIONES,
+    _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL,
     _NOTA_ENCABEZADO_GANANCIA_FLOTA,
     _NOTA_ENCABEZADO_REMANENTE,
     _NOTA_GANANCIA,
     _NOTA_GANANCIA_FLOTA,
     _OM_REGLA_COMISIONES,
     _RESUMEN_COMISIONES,
+    _RESUMEN_COMISIONES_GASTO_REAL,
     _bruto_neto,
     _cobros_a_4,
     _comisiones,
@@ -458,6 +470,37 @@ def test_nota_de_la_celda_comisiones() -> None:
         _nota_comisiones(BalanceAvionVuelo(comisiones_mxn=0.0, comision_banco_avion_mxn=0)) is None
     )
     assert _nota_comisiones(BalanceAvionVuelo()) is None
+
+
+def test_nota_de_respaldo_con_el_pago_real_del_api_0074() -> None:
+    """API 0.0.74 (invariante 61): sin detalle, la parte del vendedor sale de
+    `comision_vendedor_real_mxn` («(gasto real)») y la provisión, que viaja
+    en 0, NO se pinta (`_monto_no_cero`)."""
+    real = BalanceAvionVuelo(comision_vendedor_real_mxn=3000.0, comision_vendedor_prov_mxn=0.0)
+    assert _nota_comisiones(real) == "Comisión del vendedor (gasto real) · $3,000.00"
+    mezcla = BalanceAvionVuelo(
+        comision_banco_avion_mxn=123.39,
+        comision_vendedor_prov_mxn=0.0,
+        comision_vendedor_real_mxn=3000.0,
+        comision_vendedor_real_pagos=1,
+    )
+    assert _nota_comisiones(mezcla) == (
+        "2 conceptos\nComisión bancaria (parte del avión) · $123.39\n"
+        "Comisión del vendedor (gasto real) · $3,000.00"
+    )
+    assert "(provisión)" not in _nota_comisiones(mezcla)
+    # El avión no absorbió (pagos 0, real 0): solo la bancaria.
+    sin = BalanceAvionVuelo(
+        comision_banco_avion_mxn=50.0,
+        comision_vendedor_prov_mxn=0.0,
+        comision_vendedor_real_mxn=0.0,
+        comision_vendedor_real_pagos=0,
+    )
+    assert _nota_comisiones(sin) == "Comisión bancaria (parte del avión) · $50.00"
+    # Con el detalle del API manda el detalle (como siempre).
+    detalle = ["Comisión vendedor (Pablo Canales) · $3,000.00 · gasto real"]
+    con_detalle = BalanceAvionVuelo(comisiones_detalle=detalle, comision_vendedor_real_mxn=3000.0)
+    assert _nota_comisiones(con_detalle) == detalle[0]
 
 
 def test_columna_comisiones_con_api_previo_y_nuevo() -> None:
@@ -880,6 +923,10 @@ _TEXTOS_CON_MES = (
     _RESUMEN_COMISIONES,
     _NOTA_COBRADO_REAL,
     _NOTA_COBRANZA_NETO,
+    # API 0.0.74 (13-oct-2026, invariante 61): las versiones «gasto real».
+    _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL,
+    _NOTA_COMISIONES_GASTO_REAL,
+    _RESUMEN_COMISIONES_GASTO_REAL,
 )
 
 
@@ -992,6 +1039,94 @@ def test_otros_movimientos_y_empresa_explican_la_regla() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 5b) API 0.0.74 (13-oct-2026, invariante 61): la parte del vendedor es su
+#     pago REAL y la provisión viaja en 0; la bandera raíz cambia SOLO textos.
+# ---------------------------------------------------------------------------
+
+
+def _forma_0074(libro: dict, *, bandera: bool | None = True) -> dict:
+    """El libro como lo manda el API 0.0.74: en cada fila de la regla la
+    parte del vendedor pasa de `comision_vendedor_prov_mxn` (ahora 0) a
+    `comision_vendedor_real_mxn` (el pago real; mismo monto ⇒ mismas
+    COMISIONES y ganancia) con `comision_vendedor_real_pagos`, el detalle
+    dice «gasto real», los totales suman la llave nueva y la raíz trae la
+    bandera (None ⇒ no viaja)."""
+    libro = copy.deepcopy(libro)
+    for fila in libro["vuelos"]:
+        if "comisiones_detalle" not in fila:
+            continue
+        real = fila.get("comision_vendedor_prov_mxn") or 0.0
+        fila["comision_vendedor_prov_mxn"] = 0.0
+        fila["comision_vendedor_real_mxn"] = real
+        fila["comision_vendedor_real_pagos"] = 1 if real else 0
+        fila["comisiones_detalle"] = [
+            x.split(" · provisión")[0] + " · gasto real" if "· provisión" in x else x
+            for x in fila["comisiones_detalle"]
+        ]
+    tot = libro["totales"]
+    if "comisiones_mxn" in tot:
+        tot["comision_vendedor_prov_mxn"] = 0.0
+        tot["comision_vendedor_real_mxn"] = r2(
+            tf._suma(f.get("comision_vendedor_real_mxn") for f in libro["vuelos"])
+        )
+    if bandera is not None:
+        libro["comision_vendedor_solo_gasto_real"] = bandera
+    return libro
+
+
+def test_individual_con_la_forma_0074_cuadra_y_cambia_solo_los_textos(registros) -> None:
+    """Mismos números ⇒ mismas fórmulas (GANANCIA = ROUND(REMANENTE −
+    COMISIONES, 2) sin degradar), la nota de la celda dice «gasto real» y,
+    con la bandera raíz, el encabezado y el pie hablan del pago REAL."""
+    libro = _forma_0074(_libro_tst())
+    req = BalanceAvionRequest.model_validate(libro)
+    assert req.comision_vendedor_solo_gasto_real is True
+    assert req.vuelos[0].comision_vendedor_real_mxn == 2360.0
+    assert req.vuelos[0].comision_vendedor_prov_mxn == 0.0
+    data = render_balance_avion_xlsx(req)
+    assert registros[-1].degradadas() == _DEGRADADAS_INDIVIDUAL
+    assert verificar_libro(data)
+    wb, wv = _libros(data)
+    ws, wsv = wb[MAESTRA_TST], wv[MAESTRA_TST]
+    assert ws["AC2"].comment.text == _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL
+    assert (
+        _NOTA_COMISIONES_GASTO_REAL + _MAESTRA_PAGO_VENDEDOR_GASTO_REAL + _NOTA_GANANCIA
+    ) in _pie(ws)
+    assert not any("PROVISIÓN" in x for x in _pie(ws) if x.startswith("COMISIONES MXN"))
+    assert ws["AC3"].comment.text == (
+        "2 conceptos\n"
+        + DETALLE_401[0]
+        + "\nComisión vendedor (Pablo Canales) · $2,360.00 · gasto real"
+    )
+    for k, v in enumerate(req.vuelos):
+        f = 3 + k
+        if v.comisiones_mxn is not None:
+            assert ws[f"AD{f}"].value == f"=ROUND({_ref(ws, f, REMANENTE)}-AC{f},2)", v.clave
+        assert _celda(wsv, f, GANANCIA).value == v.ganancia_mxn, v.clave
+    tot = _tot(ws)
+    assert wsv[f"AC{tot}"].value == req.totales.comisiones_mxn == 4484.89
+    # Sin la bandera (mismas filas 0.0.74): los textos de siempre.
+    sin = render_balance_avion_xlsx(
+        BalanceAvionRequest.model_validate(_forma_0074(_libro_tst(), bandera=None))
+    )
+    ws_sin = load_workbook(BytesIO(sin))[MAESTRA_TST]
+    assert ws_sin["AC2"].comment.text == _NOTA_ENCABEZADO_COMISIONES
+    assert _NOTA_COMISIONES + "(el pago apareado como PROVISIÓN a la fecha del vuelo)." + (
+        _NOTA_GANANCIA
+    ) in _pie(ws_sin)
+
+
+def test_individual_bandera_apagada_byte_a_byte() -> None:
+    """La bandera en None/False (o ausente) no mueve un byte del libro."""
+    base = render_balance_avion_xlsx(BalanceAvionRequest.model_validate(_libro_tst()))
+    for valor in (None, False):
+        libro = _libro_tst()
+        libro["comision_vendedor_solo_gasto_real"] = valor
+        otro = render_balance_avion_xlsx(BalanceAvionRequest.model_validate(libro))
+        assert _miembros(otro) == _miembros(base)
+
+
+# ---------------------------------------------------------------------------
 # 6) API previo (sin los campos): el libro de siempre salvo los encabezados.
 # ---------------------------------------------------------------------------
 
@@ -1034,10 +1169,16 @@ def test_campos_nuevos_en_null_no_cambian_ni_un_byte() -> None:
             comisiones_detalle=None,
             comision_banco_avion_mxn=None,
             comision_vendedor_prov_mxn=None,
+            # API 0.0.74 (invariante 61): las llaves del pago real en null.
+            comision_vendedor_real_mxn=None,
+            comision_vendedor_real_pagos=None,
         )
         for c in fila["cobros"]:
             c["neto_mxn"] = None
     con_null["totales"]["comisiones_mxn"] = 0.0
+    con_null["totales"]["comision_vendedor_prov_mxn"] = None
+    con_null["totales"]["comision_vendedor_real_mxn"] = None
+    con_null["comision_vendedor_solo_gasto_real"] = None
     a = render_balance_avion_xlsx(BalanceAvionRequest.model_validate(base))
     b = render_balance_avion_xlsx(BalanceAvionRequest.model_validate(con_null))
     assert _miembros(a) == _miembros(b)
