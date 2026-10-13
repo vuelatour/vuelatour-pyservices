@@ -1120,6 +1120,9 @@ def test_rutas_aceptan_el_payload_del_api_0036_con_nulls(monkeypatch, request):
     general = _general_0036(_TIENDA_SEP26_0036).model_dump(mode="json")
     general["inventario"]["tc_hoy"] = {"tc": None, "fecha_dato": None, "fuente": None}
     general["inventario"]["filas"][1]["vendido_usd_original"] = None
+    # COSTO UNITARIO (0.0.74) en null, como lo serializa NestJS sin compra.
+    general["inventario"]["filas"][0]["costo_unitario_mxn"] = None
+    general["inventario"]["filas"][0]["costo_unitario_usd"] = None
     res = client.post("/pdf/balance-general-xlsx", json=general, headers=headers)
     assert res.status_code == 200, res.text
     ws = load_workbook(BytesIO(res.content), data_only=True)["inventario"]
@@ -1140,3 +1143,209 @@ def test_rutas_aceptan_el_payload_del_api_0036_con_nulls(monkeypatch, request):
         "Montos en MXN · Compras al T.C. oficial del día de la compra; ventas "
         "al del día de la venta. Costo = último precio de compra vigente ese "
         "día · Generado 2026-09-25")
+
+
+# ---------------------------------------------------------------------------
+# COSTO UNITARIO (13-oct-2026, API 0.0.74; decisión 6 del lote del cliente):
+# el último precio de compra de cada producto, por fila y en UNA sola moneda
+# (`costo_unitario_mxn` en pesos al T.C. de hoy; `costo_unitario_usd` solo
+# cuando es USD sin T.C.). Entra entre EXISTENCIA ACTUAL y VALOR A COSTO MXN;
+# TOTALES no lo suma (es un precio, no un importe); tercer desplazamiento
+# `oc`, independiente de `off` y `off_venta`. Payload viejo o campos en null
+# ⇒ hoja idéntica (huellas intactas).
+# ---------------------------------------------------------------------------
+
+
+def _con_costo(inv, costos: dict[str, dict]):
+    """Copia del inventario con los campos de costo unitario en las filas
+    nombradas (las demás no los traen, como un ítem sin compra con costo)."""
+    return {**inv, "filas": [{**f, **costos.get(f["nombre"], {})} for f in inv["filas"]]}
+
+
+# Septiembre 2026 al último precio: aceite 21.25 USD × 17.6729 = 375.55 (y
+# 84 × 375.55 = 31,546.20 ≠ VALOR A COSTO 31,546.13: el API valúa con el
+# precio y el T.C. completos) y el filtro CH48108 con su último precio en
+# pesos; el resto sin el campo.
+_TIENDA_SEP26_0074 = _con_costo(_TIENDA_SEP26_0036, {
+    "Aceite multigrado semisintético 15W-50": {"costo_unitario_mxn": 375.55},
+    "Filtro CH48108": {"costo_unitario_mxn": 1017.80},
+})
+
+# Sin T.C. de hoy: los dos productos con último precio en dólares lo traen
+# EN DÓLARES (`costo_unitario_usd`), el filtro en pesos; jamás los dos.
+_INVENTARIO_USD_0074 = {
+    **_con_costo(_INVENTARIO_USD, {
+        "Aceite 15w 50": {"costo_unitario_usd": 110},
+        "Bujía fina": {"costo_unitario_usd": 40},
+        "Filtro 108-1 · 108-1": {"costo_unitario_mxn": 500},
+    }),
+    "regla_costo": "ULTIMO_PRECIO",
+    "tc_hoy": None,
+}
+
+# Los TRES desplazamientos a la vez (valor USD + ventas USD + costo unitario
+# USD): 14 columnas.
+_TIENDA_SEP26_0074_TRES = _con_costo(_TIENDA_SEP26, {
+    "Aceite multigrado semisintético 15W-50": {"costo_unitario_usd": 21.25},
+})
+
+_ENCABEZADOS_COSTO_UNITARIO = [
+    "ÍTEM", "EXISTENCIA\nACTUAL", "COSTO UNITARIO\nMXN", "VALOR A\nCOSTO MXN",
+    "COMPRADAS\nCANT", "COMPRAS\nMXN", "SALIDAS\nCANT", "VENDIDO\nMXN",
+    "UTILIDAD\nMXN", "MATRÍCULAS",
+]
+
+_ENCABEZADOS_COSTO_UNITARIO_USD = [
+    "ÍTEM", "EXISTENCIA\nACTUAL", "COSTO UNITARIO\nMXN",
+    "COSTO UNITARIO\nUSD (sin T.C.)", "VALOR A\nCOSTO MXN",
+    "VALOR A COSTO\nUSD (sin T.C.)", "COMPRADAS\nCANT", "COMPRAS\nMXN",
+    "SALIDAS\nCANT", "VENDIDO\nMXN", "UTILIDAD\nMXN",
+]
+
+
+def _hoja_con_y_sin_formulas(data: bytes, nombre: str = "inventario"):
+    """(hoja CON fórmulas, hoja con la caché = lo que ve el cliente)."""
+    return (load_workbook(BytesIO(data))[nombre],
+            load_workbook(BytesIO(data), data_only=True)[nombre])
+
+
+def test_costo_unitario_mxn_entre_existencia_y_valor_y_sin_total():
+    """La columna en pesos entre EXISTENCIA y VALOR A COSTO; TOTALES la deja
+    en blanco; las demás Σ corren una letra y siguen con ROUND exterior."""
+    wf, ws = _hoja_con_y_sin_formulas(
+        render_balance_general_xlsx(_general_0036(_TIENDA_SEP26_0074)))
+    assert [ws.cell(row=4, column=c).value for c in range(1, 11)] == \
+        _ENCABEZADOS_COSTO_UNITARIO
+    assert ws.cell(row=4, column=11).value is None
+    # Aceite: el unitario en pesos (MONEY, sin símbolo) entre la existencia y
+    # el valor; el valor sigue siendo el del API (31,546.13, no 84 × 375.55).
+    assert [ws.cell(row=5, column=c).value for c in (1, 2, 3, 4, 10)] == [
+        "Aceite multigrado semisintético 15W-50", 84, 375.55, 31546.13,
+        "XA-VGV + N4142R"]
+    assert ws.cell(row=5, column=3).number_format == "#,##0.00"
+    assert ws.cell(row=6, column=1).value == "Filtro CH48108"
+    assert ws.cell(row=6, column=3).value == 1017.80
+    # Fila sin el campo ⇒ celda vacía (nunca un 0 falso).
+    assert ws.cell(row=7, column=1).value == "Filtro CH48110"
+    assert ws.cell(row=7, column=3).value is None
+    # TOTALES: COSTO UNITARIO en blanco (es un precio) con el relleno y el
+    # borde de la fila; los demás totales en su columna corrida.
+    fila_tot = _fila_de(ws, "TOTALES")
+    assert fila_tot == 13
+    assert [ws.cell(row=fila_tot, column=c).value for c in (1, 2, 3, 4, 8, 9)] == [
+        "TOTALES", 84, None, 31546.13, 45524.17, 9105.07]
+    assert ws.cell(row=fila_tot, column=3).fill.fgColor.rgb.endswith("EEF2F7")
+    assert (ws.cell(row=fila_tot, column=3).border.left.style
+            == ws.cell(row=fila_tot, column=4).border.left.style is not None)
+    # En el libro CON fórmulas: la Σ del valor corrió a D; C sin fórmula ni valor.
+    assert wf.cell(row=fila_tot, column=4).value == "=ROUND(SUM(D5:D12),2)"
+    assert wf.cell(row=fila_tot, column=8).value == "=ROUND(SUM(H5:H12),2)"
+    assert wf.cell(row=fila_tot, column=3).value is None
+    # Nota al pie: explica la columna, antes de la frase del margen.
+    nota = _nota_pie(ws)
+    assert "COSTO UNITARIO MXN = último precio de compra" in nota
+    assert "la fila TOTALES no lo suma" in nota
+    assert "COSTO UNITARIO USD" not in nota
+    assert nota.endswith(
+        "Desde el 25-sep-2026 toda salida sin precio se cobra al avión al "
+        "último precio de compra + 25 % (utilidad de la tienda).")
+    rangos = {str(r) for r in ws.merged_cells.ranges}
+    assert "A1:J1" in rangos
+    fila_nota = _fila_de(ws, nota)
+    assert f"A{fila_nota}:J{fila_nota}" in rangos
+    assert {k: ws.column_dimensions[k].width for k in "CDJ"} == {"C": 14, "D": 16, "J": 24}
+
+
+def test_costo_unitario_usd_sin_tc_en_su_columna_y_nunca_los_dos():
+    """Sin T.C. de hoy: el último precio en dólares va EN DÓLARES en su
+    propia columna (MONEY_USD), el de pesos en la de pesos; ninguna fila
+    trae los dos; TOTALES deja las dos en blanco y las Σ corren dos letras."""
+    wf, ws = _hoja_con_y_sin_formulas(
+        render_balance_general_xlsx(_general_0036(_INVENTARIO_USD_0074)))
+    assert [ws.cell(row=4, column=c).value for c in range(1, 13)] == [
+        *_ENCABEZADOS_COSTO_UNITARIO_USD, "MATRÍCULAS"]
+    assert ws.cell(row=4, column=13).value is None
+    # Aceite: 110 USD sin T.C. (con «$»); valor 0.00 MXN y 3,300 USD.
+    assert [ws.cell(row=5, column=c).value for c in (3, 4, 5, 6)] == [None, 110, 0.0, 3300]
+    assert ws.cell(row=5, column=4).number_format == MONEY_USD
+    assert [ws.cell(row=6, column=c).value for c in (3, 4, 5, 6)] == [None, 40, 800, 220]
+    assert [ws.cell(row=7, column=c).value for c in (3, 4, 5, 6)] == [500, None, 4000, None]
+    assert ws.cell(row=7, column=3).number_format == "#,##0.00"
+    for fila in (5, 6, 7):
+        assert not (ws.cell(row=fila, column=3).value is not None
+                    and ws.cell(row=fila, column=4).value is not None)
+    fila_tot = _fila_de(ws, "TOTALES")
+    assert fila_tot == 8
+    assert [ws.cell(row=fila_tot, column=c).value for c in (3, 4, 5, 6, 8, 10, 11)] == [
+        None, None, 4800, 3520, 5000, 1600, 600]
+    assert ws.cell(row=fila_tot, column=12).fill.fgColor.rgb.endswith("EEF2F7")
+    assert wf.cell(row=fila_tot, column=5).value == "=ROUND(SUM(E5:E7),2)"
+    assert wf.cell(row=fila_tot, column=6).value == "=ROUND(SUM(F5:F7),2)"
+    assert wf.cell(row=fila_tot, column=11).value == "=ROUND(SUM(K5:K7),2)"
+    assert wf.cell(row=fila_tot, column=3).value is None
+    assert wf.cell(row=fila_tot, column=4).value is None
+    # La nota roja de siempre sigue; la nota al pie explica las dos columnas.
+    assert any(t.startswith("2 productos tienen costo en USD sin tipo de cambio")
+               for t in _textos(ws))
+    nota = _nota_pie(ws)
+    assert "COSTO UNITARIO MXN = último precio de compra" in nota
+    assert ("COSTO UNITARIO USD (sin T.C.): productos cuyo último precio de "
+            "compra es en dólares") in nota
+    assert {k: ws.column_dimensions[k].width for k in "CDEF"} == {
+        "C": 14, "D": 16, "E": 16, "F": 18}
+
+
+def test_costo_unitario_null_o_ausente_deja_la_hoja_identica():
+    """Skew: API viejo (sin los campos) o API nuevo mandando null en todas
+    las filas ⇒ la hoja de siempre, byte a byte (huellas intactas), sin 422."""
+    def con_nulls(inv):
+        return {**inv, "filas": [
+            {**f, "costo_unitario_mxn": None, "costo_unitario_usd": None}
+            for f in inv["filas"]]}
+
+    modelo = BalanceHojaInventario.model_validate(con_nulls(_INVENTARIO_USD))
+    assert all(f.costo_unitario_mxn is None and f.costo_unitario_usd is None
+               for f in modelo.filas)
+    viejo = render_balance_general_xlsx(_general(inventario=con_nulls(_INVENTARIO)))
+    assert _firma_hoja(viejo) == _FIRMA_PAYLOAD_VIEJO
+    usd = render_balance_general_xlsx(_general(inventario=con_nulls(_INVENTARIO_USD)))
+    assert _firma_hoja(usd) == _FIRMA_USD_SIN_TC_22SEP
+    # Con la regla nueva (0.0.36) también: misma huella con y sin los campos.
+    sin_campos = render_balance_general_xlsx(_general_0036(_TIENDA_SEP26_0036))
+    con_null = render_balance_general_xlsx(_general_0036(con_nulls(_TIENDA_SEP26_0036)))
+    assert _firma_hoja(con_null) == _firma_hoja(sin_campos)
+    ws = _sheet(con_null, "inventario")
+    assert [ws.cell(row=4, column=c).value for c in range(1, 10)] == _ENCABEZADOS_HOY
+    assert "COSTO UNITARIO" not in _nota_pie(ws)
+
+
+def test_costo_unitario_con_las_tres_columnas_en_dolares_catorce_columnas():
+    """Valor USD + ventas USD + costo unitario USD: los tres desplazamientos
+    conviven (14 columnas) y el bloque 2 no se mueve."""
+    ws = _sheet(render_balance_general_xlsx(_general(inventario=_TIENDA_SEP26_0074_TRES)),
+                "inventario")
+    assert [ws.cell(row=4, column=c).value for c in range(1, 15)] == [
+        *_ENCABEZADOS_COSTO_UNITARIO_USD, "VENDIDO\nUSD", "UTILIDAD\nUSD", "MATRÍCULAS"]
+    assert ws.cell(row=4, column=15).value is None
+    assert ws.cell(row=5, column=3).value is None
+    assert ws.cell(row=5, column=4).value == 21.25
+    assert ws.cell(row=5, column=4).number_format == MONEY_USD
+    assert ws.cell(row=5, column=6).value == 1785.0
+    assert ws.cell(row=5, column=12).value == 956.25
+    assert ws.cell(row=5, column=14).value == "XA-VGV + N4142R"
+    fila_tot = _fila_de(ws, "TOTALES")
+    assert fila_tot == 13
+    assert [ws.cell(row=fila_tot, column=c).value for c in (3, 4, 6, 12, 13)] == [
+        None, None, 1785.0, 2676.68, 535.35]
+    assert ws.cell(row=fila_tot, column=14).fill.fgColor.rgb.endswith("EEF2F7")
+    assert [ws.column_dimensions[k].width for k in "ABCDEFGHIJKLMN"] == [
+        34, 42, 14, 16, 16, 18, 12, 14, 12, 14, 14, 14, 14, 24]
+    rangos = {str(r) for r in ws.merged_cells.ranges}
+    assert "A1:N1" in rangos
+    fila_det = _fila_de(ws, "DETALLE DE SALIDAS DEL PERIODO (cargos a aviones)")
+    assert f"A{fila_det}:N{fila_det}" in rangos
+    assert [ws.cell(row=fila_det + 1, column=c).value for c in range(1, 8)] == [
+        "FECHA", "ÍTEM", "AVIÓN", "COSTO VUELATOUR\nMXN",
+        "VENTA AL AVIÓN\nMXN", "GANANCIA\nMXN", None,
+    ]
+    assert ws.cell(row=fila_det + 2, column=6).value == 600.0

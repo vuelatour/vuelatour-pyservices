@@ -628,6 +628,14 @@ _LIBROS = {
     "inventario general": lambda: render_balance_general_xlsx(
         t_inventario._general(inventario=t_inventario._TIENDA_SEP26)
     ),
+    # COSTO UNITARIO (13-oct-2026, API 0.0.74): las Σ de TOTALES corren una o
+    # dos columnas (`oc`) y deben seguir reproduciendo el número del API.
+    "inventario general · costo unitario": lambda: render_balance_general_xlsx(
+        t_inventario._general_0036(t_inventario._TIENDA_SEP26_0074)
+    ),
+    "inventario general · costo unitario USD": lambda: render_balance_general_xlsx(
+        t_inventario._general_0036(t_inventario._INVENTARIO_USD_0074)
+    ),
     # API sin `inventario`: hoja 'refacciones' con GANANCIA = venta − costo.
     "refacciones general (sin inventario)": lambda: render_balance_general_xlsx(
         t_inventario._general()

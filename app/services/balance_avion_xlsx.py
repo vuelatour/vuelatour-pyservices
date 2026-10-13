@@ -3740,6 +3740,27 @@ _NOTA_INVENTARIO_VENTA_USD_ULTIMO_PRECIO = (
     "tipo de cambio; se muestran en su moneda y no se suman con las columnas "
     "en pesos (las que sí lo tienen ya cuentan en pesos)."
 )
+# COSTO UNITARIO (13-oct-2026, API 0.0.74; decisión 6 del lote del cliente):
+# el último precio de compra de cada producto, por fila. Es un PRECIO, no un
+# importe: TOTALES no lo suma, y existencia × unitario redondeado puede
+# diferir unos centavos del VALOR A COSTO porque el API calcula el valor con
+# el precio y el T.C. completos (aceite: 84 × 375.55 = 31,546.20 vs
+# 31,546.13). Se dice en la hoja; no se «arregla» ni aquí ni en el API.
+_NOTA_INVENTARIO_COSTO_UNITARIO = (
+    " COSTO UNITARIO MXN = último precio de compra de cada producto, en pesos "
+    "y redondeado a centavos (la compra en pesos tal cual; la compra en dólares "
+    "al T.C. oficial de hoy, el mismo del VALOR A COSTO). Es un precio, no un "
+    "importe: la fila TOTALES no lo suma, y existencia × COSTO UNITARIO puede "
+    "diferir unos centavos del VALOR A COSTO, que se calcula con el precio y "
+    "el T.C. completos."
+)
+# Solo si algún producto tiene su último precio en dólares SIN T.C.: va en
+# su propia columna, en dólares (invariante: jamás un USD rotulado MXN).
+_NOTA_INVENTARIO_COSTO_UNITARIO_USD = (
+    " COSTO UNITARIO USD (sin T.C.): productos cuyo último precio de compra es "
+    "en dólares y no se pudo pasar a pesos por falta de tipo de cambio; se "
+    "muestra EN DÓLARES y nunca se mezcla con la columna en pesos."
+)
 # Nota bajo el BLOQUE 2 (solo con la regla nueva y si hay salidas): el
 # detalle de salidas sale de los GASTOS del balance (T.C. de cada gasto o el
 # promedio del libro, igual que la hoja 'balance') y la utilidad por ítem
@@ -3865,6 +3886,21 @@ def _hay_usd_sin_tc(inv: BalanceHojaInventario) -> bool:
     return any(f.valor_costo_usd or f.sin_tc for f in inv.filas)
 
 
+def _hay_costo_unitario(inv: BalanceHojaInventario) -> bool:
+    """¿La hoja lleva COSTO UNITARIO? (13-oct-2026, API 0.0.74) Solo si
+    alguna fila trae el último precio de compra: un API viejo no manda los
+    campos y la hoja sigue siendo la de siempre."""
+    return any(
+        f.costo_unitario_mxn is not None or f.costo_unitario_usd is not None for f in inv.filas
+    )
+
+
+def _hay_costo_unitario_usd(inv: BalanceHojaInventario) -> bool:
+    """¿Y la columna en DÓLARES? Solo si algún producto tiene su último
+    precio en USD sin T.C. (nunca una columna de nada)."""
+    return any(f.costo_unitario_usd is not None for f in inv.filas)
+
+
 def _cuenta_sin_tc(inv: BalanceHojaInventario) -> int:
     """Cuántos productos traen costo en USD sin T.C. Manda el número del API
     (`filas_sin_tc`); si no viene se cuentan las filas (solo para el texto de
@@ -3984,12 +4020,28 @@ def _hoja_inventario(
     de la venta) y las dos notas ENVUELTAS con su alto de fila. Las columnas
     en dólares siguen la misma regla de siempre: tras la migración de T.C.
     no llega ningún USD sin T.C. y se apagan solas. Sin `regla_costo` la
-    hoja es byte a byte la de antes."""
+    hoja es byte a byte la de antes.
+
+    13-oct-2026, API 0.0.74 (COSTO UNITARIO): cuando alguna fila trae el
+    último precio de compra entran «COSTO UNITARIO MXN» y, solo si alguna
+    lo trae en dólares sin T.C., «COSTO UNITARIO USD (sin T.C.)», entre
+    EXISTENCIA ACTUAL y VALOR A COSTO MXN. Es un TERCER desplazamiento
+    (`oc` = 1 o 2) independiente de `off` (valor USD) y `off_venta`
+    (ventas USD): los tres conviven (hasta 14 columnas). Es un precio, no
+    un importe: TOTALES deja esas celdas en blanco y la nota al pie lo
+    explica. Sin los campos (o en null) la hoja es la de siempre."""
     usd = _hay_usd_sin_tc(inv)
     venta_usd = _hay_venta_usd(inv)
     ultimo_precio = _es_ultimo_precio(inv)
-    # Desplazamiento de las columnas del periodo cuando entra la de dólares.
-    off = 1 if usd else 0
+    # COSTO UNITARIO (13-oct-2026, API 0.0.74): tercer desplazamiento `oc`
+    # (1 con la columna en pesos; 2 si además entra la de dólares sin T.C.),
+    # independiente de `off` (VALOR A COSTO USD) y de `off_venta`.
+    cu = _hay_costo_unitario(inv)
+    cu_usd = cu and _hay_costo_unitario_usd(inv)
+    oc = (2 if cu_usd else 1) if cu else 0
+    # Desplazamiento de las columnas del periodo: el costo unitario y, cuando
+    # entra, la columna en dólares del valorizado.
+    off = oc + (1 if usd else 0)
     # VENDIDO USD + UTILIDAD USD (25-sep) van justo antes de MATRÍCULAS: solo
     # esa columna corre (dos lugares) — las del periodo no se mueven.
     off_venta = 2 if venta_usd else 0
@@ -4003,11 +4055,15 @@ def _hoja_inventario(
     # números del bloque 1 y detalle del bloque 2 — por eso va ancha). Con
     # la columna en dólares (22-sep) se inserta su ancho en la posición 4 y
     # las del periodo corren un lugar; con VENDIDO/UTILIDAD USD (25-sep) se
-    # insertan dos anchos antes del de MATRÍCULAS. Se calculan aquí (se
-    # aplican al final) porque las notas envueltas estiman su alto con ellos.
+    # insertan dos anchos antes del de MATRÍCULAS; con COSTO UNITARIO
+    # (13-oct) uno o dos anchos más justo después del de EXISTENCIA. Se
+    # calculan aquí (se aplican al final) porque las notas envueltas estiman
+    # su alto con ellos.
     anchos = [
         ancho_item,
         ancho_detalle,
+        *([14] if cu else []),
+        *([16] if cu_usd else []),
         16,
         *([18] if usd else []),
         12,
@@ -4029,6 +4085,8 @@ def _hoja_inventario(
         [
             "ÍTEM",
             "EXISTENCIA\nACTUAL",
+            *(["COSTO UNITARIO\nMXN"] if cu else []),
+            *(["COSTO UNITARIO\nUSD (sin T.C.)"] if cu_usd else []),
             "VALOR A\nCOSTO MXN",
             *(["VALOR A COSTO\nUSD (sin T.C.)"] if usd else []),
             "COMPRADAS\nCANT",
@@ -4047,9 +4105,15 @@ def _hoja_inventario(
             ic.border = _border
             ic.alignment = Alignment(wrap_text=True, vertical="top")
             _num(ws, row, 2, f.existencia, "General").border = _border
-            _num(ws, row, 3, f.valor_costo_mxn).border = _border
+            if cu:
+                # Último precio de compra en PESOS; None = sin compra con
+                # costo, o en dólares sin T.C. (va en la de al lado).
+                _num(ws, row, 3, f.costo_unitario_mxn).border = _border
+            if cu_usd:
+                _num(ws, row, 4, f.costo_unitario_usd, MONEY_USD).border = _border
+            _num(ws, row, 3 + oc, f.valor_costo_mxn).border = _border
             if usd:
-                _num(ws, row, 4, f.valor_costo_usd, MONEY_USD).border = _border
+                _num(ws, row, 4 + oc, f.valor_costo_usd, MONEY_USD).border = _border
             _num(ws, row, 4 + off, f.compradas_cant, "General").border = _border
             _num(ws, row, 5 + off, f.compradas_costo_mxn).border = _border
             _num(ws, row, 6 + off, f.salidas_cant, "General").border = _border
@@ -4082,7 +4146,10 @@ def _hoja_inventario(
             return f"ROUND(SUM({letra}5:{letra}{row - 1}),{dec})"
 
         _formula(ws, row, 2, _suma_col(2, 3), inv.total_piezas, "General", bold=True)
-        _formula(ws, row, 3, _suma_col(3), inv.total_valor_mxn, MONEY, bold=True)
+        # COSTO UNITARIO (cols 3 y 4 cuando `oc` > 0) es un precio, no un
+        # importe: TOTALES lo deja EN BLANCO (sin valor ni fórmula; relleno y
+        # borde los pone el bucle de abajo).
+        _formula(ws, row, 3 + oc, _suma_col(3 + oc), inv.total_valor_mxn, MONEY, bold=True)
         if usd:
             # Total en dólares APARTE. Lo manda el API; si faltara (solo
             # llegaron las filas) se re-suma la columna para mostrarla — es
@@ -4090,7 +4157,7 @@ def _hoja_inventario(
             total_usd = _total_usd_de_columna(
                 inv.total_valor_usd, [f.valor_costo_usd for f in inv.filas]
             )
-            _formula(ws, row, 4, _suma_col(4), total_usd, MONEY_USD, bold=True)
+            _formula(ws, row, 4 + oc, _suma_col(4 + oc), total_usd, MONEY_USD, bold=True)
         _formula(ws, row, 5 + off, _suma_col(5 + off), inv.total_compras_mxn, MONEY, bold=True)
         _formula(ws, row, 7 + off, _suma_col(7 + off), inv.total_vendido_mxn, MONEY, bold=True)
         _formula(ws, row, 8 + off, _suma_col(8 + off), inv.total_utilidad_mxn, MONEY, bold=True)
@@ -4242,6 +4309,8 @@ def _hoja_inventario(
             _NOTA_INVENTARIO_ULTIMO_PRECIO.format(valor=_frase_valor_a_costo(inv.tc_hoy))
             + (_NOTA_INVENTARIO_USD_ULTIMO_PRECIO if usd else "")
             + (_NOTA_INVENTARIO_VENTA_USD_ULTIMO_PRECIO if venta_usd else "")
+            + (_NOTA_INVENTARIO_COSTO_UNITARIO if cu else "")
+            + (_NOTA_INVENTARIO_COSTO_UNITARIO_USD if cu_usd else "")
             + (
                 _nota_margen(inv.margen_venta_pct, ultimo_precio=True)
                 if inv.margen_venta_pct is not None

@@ -150,6 +150,36 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   («Último precio de compra» número + «Moneda» + Valor/Vendido/Utilidad en
   MXN). Tests: `tests/test_balance_inventario_xlsx.py` (sección «ÚLTIMO
   PRECIO»), `tests/test_cardex_libro_xlsx.py`.
+- **Hoja 'inventario': COSTO UNITARIO** (13-oct-2026, API 0.0.74; decisión
+  6 del lote del cliente: ver el último precio de compra de cada producto
+  en el Balance general). Campos ADITIVOS de fila `costo_unitario_mxn`
+  (pesos: compra en MXN tal cual o USD × T.C. oficial de hoy, el mismo
+  `tc_hoy` del valorizado) y `costo_unitario_usd` (SOLO si el último
+  precio es USD sin T.C., el caso `sin_tc`; en dólares, jamás convertido
+  aquí); nunca los dos en una fila. Sin bandera raíz: `_hay_costo_unitario`
+  (alguna fila trae cualquiera de los dos) y `_hay_costo_unitario_usd`
+  (alguna trae el USD) deciden, como `_hay_usd_sin_tc`. Columnas «COSTO
+  UNITARIO MXN» (`MONEY`, ancho 14) y «COSTO UNITARIO USD (sin T.C.)»
+  (`MONEY_USD`, 16) entre EXISTENCIA ACTUAL y VALOR A COSTO MXN: tercer
+  desplazamiento `oc` (1 o 2) que se SUMA a `off` (así las columnas del
+  periodo, `N + off`, no se tocan) e independiente de `off_venta`; con los
+  tres a la vez son 14 columnas y `anchos = [34, 42, 14, 16, 16, 18, 12,
+  14, 12, 14, 14, 14, 14, 24]`. Es un precio, no un importe: la fila
+  TOTALES deja esas celdas EN BLANCO (sin valor ni fórmula; relleno y
+  borde del bucle de siempre) y las `ROUND(SUM(...),2)` de los demás
+  totales solo cambian de letra (nada nuevo en `ENCABEZADOS_SIN_ROUND`).
+  Nota al pie `_NOTA_INVENTARIO_COSTO_UNITARIO` (+ `_USD`) SOLO en la rama
+  `regla_costo='ULTIMO_PRECIO'`, tras las notas USD y ANTES de
+  `_nota_margen` (los tests hacen `endswith` con la frase del margen):
+  dice que existencia × COSTO UNITARIO puede diferir unos centavos del
+  VALOR A COSTO (el API lo calcula con el precio y el T.C. completos:
+  aceite 84 × 375.55 = 31,546.20 vs 31,546.13) — no se «arregla» aquí ni
+  en el API. Payload viejo o campos en null ⇒ hoja byte a byte idéntica
+  (huellas `_FIRMA_PAYLOAD_VIEJO` / `_FIRMA_USD_SIN_TC_22SEP` intactas);
+  la vista en pantalla (`libro_json`) hereda la columna sola. Tests:
+  `tests/test_balance_inventario_xlsx.py` (sección «COSTO UNITARIO»),
+  `tests/test_balance_formulas.py` (libros «inventario general · costo
+  unitario» y «… USD»).
 - **Excel de la REPOSICIÓN de caja chica** (24-sep-2026,
   `POST /reportes/caja-chica-reposicion.xlsx`, `CajaChicaReposicionRequest`
   todo con default y `extra="ignore"`, servicio `caja_chica_xlsx.py`).

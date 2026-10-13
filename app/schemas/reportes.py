@@ -1333,6 +1333,15 @@ class BalanceInventarioItemFila(BaseModel):
     valor_costo_usd: float | None = None
     # true cuando alguna capa viva del ítem está en USD sin T.C.
     sin_tc: bool = False
+    # ADITIVOS (13-oct-2026, API 0.0.74): COSTO UNITARIO = último precio de
+    # compra del ítem. `costo_unitario_mxn` en PESOS (compra en pesos tal
+    # cual; compra en dólares al T.C. oficial de hoy, el mismo `tc_hoy` del
+    # valorizado); `costo_unitario_usd` SOLO cuando el último precio es en
+    # dólares y no hay T.C. (el mismo caso de `valor_costo_usd`/`sin_tc`).
+    # Jamás los dos a la vez; aquí jamás se convierte. None/ausente en todas
+    # las filas (API viejo) ⇒ la hoja no gana columna.
+    costo_unitario_mxn: float | None = None
+    costo_unitario_usd: float | None = None
     # ENTRADAs del periodo (compras reales; DEVOLUCION/AJUSTE no son compra).
     compradas_cant: float | None = None
     compradas_costo_mxn: float | None = None
