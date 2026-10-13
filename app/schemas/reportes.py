@@ -1028,6 +1028,13 @@ class BalanceAvionGastoFila(BaseModel):
     monto_mxn: float | None = None
     moneda_original: str | None = None  # solo si ≠ MXN
     monto_original: float | None = None
+    # T.C. con el que el API convirtió ESTA fila a pesos (su `tc_gasto` o,
+    # sin él, el T.C. promedio de las hojas), EXACTAMENTE el número que
+    # multiplicó (13-oct-2026, API 0.0.74). Solo lo manda la hoja 'permisos'
+    # junto con `tc_por_fila`; aquí se pinta en la columna T.C. y MONTO MXN
+    # = ROUND(MONTO ORIGINAL × T.C., 2). None = gasto en MXN, sin ningún
+    # T.C. (`monto_mxn` None) o API previo.
+    tc_aplicado: float | None = None
     # Litros de la carga (solo hoja "combustible").
     litros: float | None = None
     # Medio de pago YA legible que arma el API ("Efectivo", "Tarjeta BBVA
@@ -1059,6 +1066,10 @@ class BalanceAvionHojaGastos(BaseModel):
     total_mxn: float | None = None
     usd: float | None = None
     usd_hr: float | None = None
+    # True = cada fila trae `tc_aplicado` y la pestaña 'permisos' se pinta
+    # con la columna T.C. y MONTO MXN como fórmula (13-oct-2026, API 0.0.74).
+    # None/ausente = API ≤ 0.0.73 ⇒ la hoja de siempre, byte a byte.
+    tc_por_fila: bool | None = None
 
 
 class BalanceAvionHojaCombustible(BalanceAvionHojaGastos):

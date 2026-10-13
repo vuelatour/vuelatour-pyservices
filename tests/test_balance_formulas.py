@@ -15,6 +15,7 @@ que la fórmula NO puede reproducir (la celda se queda como valor).
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -34,6 +35,10 @@ from app.services import xlsx_formulas
 from app.services.balance_avion_xlsx import (
     _COLS_FLOTA,
     _COLS_FLOTA_AFAC,
+    _NOTA_PERMISOS,
+    _NOTA_PERMISOS_TC,
+    TC,
+    construir_balance_avion,
     render_balance_avion_xlsx,
     render_balance_general_xlsx,
 )
@@ -914,6 +919,195 @@ def test_gastos_indirectos_fusionados_no_se_inventan_centavos() -> None:
     assert wb["Gastos Indirectos"]["A5"].value == "=ROUND(SUM(D8:D10),2)"
     assert wb["balance"]["B6"].value == "='Gastos Indirectos'!$C$5"
     assert wv["balance"]["B6"].value == 525.23
+
+
+# ---------------------------------------------------------------------------
+# 3b) Hoja 'permisos' con T.C. por fila y MONTO MXN como fórmula
+#     (13-oct-2026, API 0.0.74, decisión 1 del lote del cliente): el API
+#     manda `tc_por_fila: true` y, por fila, `tc_aplicado` = EXACTAMENTE el
+#     número con que `buildHoja` multiplicó (tc_gasto o el promedio CRUDO).
+#     Los fixtures compartidos (`_HOJAS_TST`, `_hoja_api`) NO llevan la
+#     bandera: las huellas de siempre siguen valiendo.
+# ---------------------------------------------------------------------------
+
+
+def _tc_prom_tst() -> float:
+    """El T.C. promedio CRUDO del libro XA-TST (`tcHojas` del API: promedio
+    de los T.C. de costos de las filas, sin redondear)."""
+    zs = [s["z"] for s in _SPECS_TST if s["z"] is not None]
+    return _suma(zs) / len(zs)
+
+
+def _permisos_con_tc(tc_prom: float, *, con_usd_sin_tc: bool = False) -> dict:
+    """La hoja `permisos` como la manda `buildHoja(..., { tcPorFila: true })`
+    del API 0.0.74: MXN 2,500 (sin original), USD 150 con `tc_gasto`
+    17.123456, USD 80 al promedio crudo y, opcional, USD 99.99 sin ningún
+    T.C. (`monto_mxn` null ⇒ `usd` de la hoja null, como `buildHoja`)."""
+    filas = [
+        {"fecha": "2026-09-05", "categoria": "Permiso", "detalle": "AFAC anual",
+         "monto_mxn": 2500.0, "moneda_original": None, "monto_original": None,
+         "tc_aplicado": None},
+        {"fecha": "2026-09-12", "categoria": "Permiso",
+         "detalle": "Permiso USD con T.C. propio", "monto_mxn": r2(150 * 17.123456),
+         "moneda_original": "USD", "monto_original": 150.0, "tc_aplicado": 17.123456},
+        {"fecha": "2026-09-20", "categoria": "Permiso",
+         "detalle": "Permiso USD al promedio", "monto_mxn": r2(80 * tc_prom),
+         "moneda_original": "USD", "monto_original": 80.0, "tc_aplicado": tc_prom},
+    ]  # fmt: skip
+    if con_usd_sin_tc:
+        filas.append({
+            "fecha": "2026-09-28", "categoria": "Permiso",
+            "detalle": "Permiso USD sin ningún T.C.", "monto_mxn": None,
+            "moneda_original": "USD", "monto_original": 99.99, "tc_aplicado": None,
+        })  # fmt: skip
+    total = r2(_suma(f["monto_mxn"] for f in filas))
+    sin_mxn = any(f["monto_mxn"] is None for f in filas)
+    usd = None if sin_mxn else (0 if total == 0 else r2(total / tc_prom))
+    return {"filas": filas, "total_mxn": total, "usd": usd, "usd_hr": None, "tc_por_fila": True}
+
+
+def _con_permisos(payload: dict, permisos: dict) -> dict:
+    """`payload` con OTRA hoja `permisos` y la cascada de 'balance' re-armada
+    como en `_libro_api` (utilidad después, cobrada y socios)."""
+    p = copy.deepcopy(payload)
+    horas = p["totales"]["tiempo_vuelo"]
+    usd = permisos["usd"]
+    permisos["usd_hr"] = r2(usd / horas) if usd is not None and horas > 0 else None
+    p["permisos"] = permisos
+    restas = [
+        p["combustible"]["usd"],
+        *(p[n]["usd"] for n in ("gastos_indirectos", "otros_gastos", "refacciones", "permisos")),
+    ]
+    antes = p["totales"]["ganancia_usd"]
+    despues = r2(antes - _suma(restas)) if all(x is not None for x in restas) else None
+    cobrada = r2(despues - p["totales"]["por_cobrar_usd"]) if despues is not None else None
+    b = p["balance"]
+    b["permisos_usd"] = usd
+    b["utilidad_despues_usd"] = despues
+    b["utilidad_cobrada_usd"] = cobrada
+    for s in b["socios"]:
+        s["monto_usd"] = r2((s["porcentaje"] / 100) * cobrada) if cobrada is not None else None
+    return p
+
+
+def _payload_tst_permisos_tc(*, con_usd_sin_tc: bool = False) -> dict:
+    """XA-TST con la hoja 'permisos' del API 0.0.74 (lo usa también
+    `tests/test_libro_json.py`)."""
+    return _con_permisos(
+        _payload_tst(), _permisos_con_tc(_tc_prom_tst(), con_usd_sin_tc=con_usd_sin_tc)
+    )
+
+
+def _nota_pie(ws, texto: str) -> bool:
+    return any(c.value == texto for c in ws["A"])
+
+
+def test_permisos_con_tc_por_fila_columna_y_formulas() -> None:
+    tc_prom = _tc_prom_tst()
+    payload = _payload_tst_permisos_tc()
+    req = BalanceAvionRequest.model_validate(payload)
+    data = render_balance_avion_xlsx(req)
+    wb, wv = _libros(data)
+    ws, wsv = wb["permisos"], wv["permisos"]
+    # Columna T.C. AL FINAL (G: no hay COSTO/VENTA), con su nota.
+    assert ws["G7"].value == "T.C."
+    assert "ROUND(MONTO ORIGINAL × T.C., 2)" in ws["G7"].comment.text
+    assert ws["H7"].value is None
+    # Fila en PESOS: «MXN» + importe (COPIA del monto_mxn) y D = ROUND(F,2).
+    assert ws["D8"].value == "=ROUND(F8,2)"
+    assert ws["E8"].value == "MXN"
+    assert ws["F8"].value == 2500.0
+    assert ws["G8"].value is None
+    assert wsv["D8"].value == 2500.0
+    # USD con T.C. propio: D = ROUND(F × G, 2) y el T.C. como VALOR.
+    assert ws["D9"].value == "=ROUND(F9*G9,2)"
+    assert ws["E9"].value == "USD"
+    assert ws["F9"].value == 150.0
+    assert ws["G9"].value == 17.123456
+    assert ws["G9"].number_format == TC
+    assert wsv["D9"].value == 2568.52
+    # USD al promedio CRUDO del periodo: el mismo número que multiplicó el
+    # API (openpyxl lo escribe con «%.16g»; se compara con esa precisión).
+    assert ws["D10"].value == "=ROUND(F10*G10,2)"
+    assert ws["G10"].value == pytest.approx(tc_prom, abs=1e-12)
+    assert ws["G10"].number_format == TC
+    assert wsv["D10"].value == r2(80 * tc_prom)
+    # Resumen y layout de siempre.
+    assert ws["A5"].value == "=ROUND(SUM(D8:D10),2)"
+    assert wsv["A5"].value == payload["permisos"]["total_mxn"]
+    assert wsv["C5"].value == payload["permisos"]["usd"]
+    assert ws.column_dimensions["G"].width == 12
+    assert ws.freeze_panes == "A8"
+    assert _nota_pie(ws, _NOTA_PERMISOS_TC)
+    assert not _nota_pie(ws, _NOTA_PERMISOS)
+    # La cascada sigue citando el TOTAL USD de la hoja y cuadra con el API.
+    assert wb["balance"]["B8"].value == "='permisos'!$C$5"
+    assert wv["balance"]["B9"].value == payload["balance"]["utilidad_despues_usd"]
+    # Toda fórmula de la hoja lleva ROUND exterior y reproduce al API…
+    verificadas = {(h, c) for h, c, *_ in verificar_libro(data)}
+    assert {("permisos", c) for c in ("D8", "D9", "D10", "A5")} <= verificadas
+    # …y ninguna se degradó a valor (las fórmulas reproducen el centavo).
+    wb2 = construir_balance_avion(req)
+    xlsx_formulas.finalizar(wb2)
+    assert [c for h, c in xlsx_formulas.registro(wb2).degradadas() if h == "permisos"] == []
+
+
+def test_permisos_usd_sin_tc_queda_vacia_sin_formula() -> None:
+    payload = _payload_tst_permisos_tc(con_usd_sin_tc=True)
+    req = BalanceAvionRequest.model_validate(payload)
+    data = render_balance_avion_xlsx(req)
+    wb, wv = _libros(data)
+    ws, wsv = wb["permisos"], wv["permisos"]
+    # USD sin ningún T.C.: ni fórmula ni 0 en MONTO MXN; T.C. vacío.
+    assert ws["D11"].value is None
+    assert ws["E11"].value == "USD"
+    assert ws["F11"].value == 99.99
+    assert ws["G11"].value is None
+    assert ws["A5"].value == "=ROUND(SUM(D8:D11),2)"
+    assert wsv["A5"].value == payload["permisos"]["total_mxn"]
+    # TOTAL USD de la hoja y la cascada vacíos (null del API), como hoy.
+    assert payload["permisos"]["usd"] is None
+    assert ws["C5"].value is None
+    assert wb["balance"]["B8"].value is None
+    assert _nota_pie(ws, _NOTA_PERMISOS_TC)
+    verificar_libro(data)
+
+
+def test_permisos_sin_bandera_hoja_identica() -> None:
+    """Un API que manda `tc_aplicado` por fila pero NO la bandera (o la manda
+    en null) ⇒ la hoja 'permisos' de siempre, byte a byte (huella de layout),
+    y el libro entero con los números del generador anterior."""
+    referencia = t_extension._firma_hoja(render_balance_avion_xlsx(_individual_tst()), "permisos")
+    for bandera in ("ausente", None):
+        payload = _payload_tst()
+        for f in payload["permisos"]["filas"]:
+            f["tc_aplicado"] = 17.5
+        if bandera is None:
+            payload["permisos"]["tc_por_fila"] = None
+        data = render_balance_avion_xlsx(BalanceAvionRequest.model_validate(payload))
+        assert t_extension._firma_hoja(data, "permisos") == referencia
+        ws = load_workbook(BytesIO(data))["permisos"]
+        assert ws["G7"].value is None
+        assert ws["D8"].data_type != "f"
+        assert ws["D8"].value == 2500.0
+        assert ws["E8"].value is None
+        assert ws["F8"].value is None
+        assert _nota_pie(ws, _NOTA_PERMISOS)
+        assert _firma_valores(data) == _FIRMAS_ANTES["tst"]
+
+
+def test_permisos_con_bandera_no_mueve_las_demas_hojas() -> None:
+    """La bandera solo cambia la pestaña 'permisos': las demás hojas de
+    gastos, la maestra y 'cobranza' salen idénticas (huella de layout)."""
+    sin = render_balance_avion_xlsx(_individual_tst())
+    con = render_balance_avion_xlsx(BalanceAvionRequest.model_validate(_payload_tst_permisos_tc()))
+    assert load_workbook(BytesIO(con)).sheetnames == load_workbook(BytesIO(sin)).sheetnames
+    intactas = (
+        "reporte horas XA-TST", "cobranza", "combustible", "Gastos Indirectos", "refacciones",
+    )  # fmt: skip
+    for hoja in intactas:
+        assert t_extension._firma_hoja(con, hoja) == t_extension._firma_hoja(sin, hoja), hoja
+    assert t_extension._firma_hoja(con, "permisos") != t_extension._firma_hoja(sin, "permisos")
 
 
 # ---------------------------------------------------------------------------

@@ -265,3 +265,23 @@ def test_balance_avion_json_es_el_mismo_libro_que_el_xlsx():
     assert libro["titulo"].startswith("Balance ")
     # Una nota de celda del libro real viaja al JSON (las notas de cobros).
     assert any("n" in x for h in libro["hojas"] for x in h["celdas"])
+
+
+def test_balance_avion_json_con_tc_por_fila_en_permisos():
+    """Hoja 'permisos' con T.C. por fila (13-oct-2026, API 0.0.74): la vista
+    en pantalla muestra la columna T.C. y las fórmulas de MONTO MXN con los
+    MISMOS números que el .xlsx (invariante 52 del API)."""
+    req = BalanceAvionRequest.model_validate(t_formulas._payload_tst_permisos_tc())
+    libro = libro_balance_avion(req)
+    xlsx = render_balance_avion_xlsx(req)
+    assert _comparar_con_xlsx(libro, xlsx) > 0
+    permisos = next(h for h in libro["hojas"] if h["nombre"] == "permisos")
+    celdas = {(c["r"], c["c"]): c for c in permisos["celdas"]}
+    assert celdas[(7, 7)]["v"] == "T.C."
+    assert "ROUND(MONTO ORIGINAL × T.C., 2)" in celdas[(7, 7)]["n"]
+    assert celdas[(8, 4)]["f"] == "=ROUND(F8,2)"
+    assert celdas[(8, 5)]["v"] == "MXN"
+    assert celdas[(9, 4)]["f"] == "=ROUND(F9*G9,2)"
+    assert celdas[(9, 4)]["v"] == 2568.52
+    assert celdas[(9, 7)]["v"] == 17.123456
+    assert celdas[(9, 7)]["t"] == "17.123456"

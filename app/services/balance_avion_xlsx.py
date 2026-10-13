@@ -102,6 +102,7 @@ from app.schemas.reportes import (
     BalanceAfacOtrosMovimientos,
     BalanceAvionBalanceBloque,
     BalanceAvionCobro,
+    BalanceAvionGastoFila,
     BalanceAvionHojaCombustible,
     BalanceAvionHojaGastos,
     BalanceAvionRequest,
@@ -2471,6 +2472,37 @@ def _usd_de_mxn(modo: str | None, mxn: str, tc: str, maestra: _Maestra | None) -
     return None
 
 
+def _fila_monto_con_tc(
+    ws: Worksheet, row: int, f: BalanceAvionGastoFila, col_tc: int, letra_tc: str
+) -> None:
+    """Columnas MONTO MXN (D) · MONEDA ORIGINAL (E) · MONTO ORIGINAL (F) · T.C.
+    de una fila de la hoja 'permisos' con `tc_por_fila` (13-oct-2026, API
+    0.0.74). Aquí NO se convierte nada: la fórmula cita las celdas y
+    `xlsx_formulas` la degrada a valor si no reproduce el `monto_mxn` del API.
+    - Gasto capturado en PESOS (contrato: moneda y monto original null): E =
+      «MXN», F = `monto_mxn` (COPIA del API, no una conversión), T.C. vacío y
+      D = ROUND(F, 2). Sin `monto_mxn` (no pasa en MXN): E/F/D vacías.
+    - Otra moneda con T.C.: E/F como siempre, T.C. = `tc_aplicado` (VALOR con
+      formato TC) y D = ROUND(F × T.C., 2) con el `monto_mxn` del API en caché.
+    - Otra moneda SIN T.C. (`monto_mxn` null): D vacía sin fórmula (como
+      siempre) y T.C. vacío.
+    - `monto_mxn` sin `tc_aplicado` (payload inconsistente): D = el valor del
+      API tal cual, T.C. vacío."""
+    en_pesos = f.moneda_original is None and f.monto_original is None
+    if en_pesos:
+        hay = f.monto_mxn is not None
+        ws.cell(row=row, column=5, value="MXN" if hay else None).border = _border
+        _num(ws, row, 6, f.monto_mxn if hay else None).border = _border
+        _num(ws, row, col_tc, None, TC).border = _border
+        _formula(ws, row, 4, f"ROUND(F{row},2)", f.monto_mxn).border = _border
+        return
+    ws.cell(row=row, column=5, value=f.moneda_original).border = _border
+    _num(ws, row, 6, f.monto_original).border = _border
+    _num(ws, row, col_tc, f.tc_aplicado, TC).border = _border
+    formula = f"ROUND(F{row}*{letra_tc}{row},2)" if f.tc_aplicado is not None else None
+    _formula(ws, row, 4, formula, f.monto_mxn).border = _border
+
+
 def _hoja_gastos(
     ws: Worksheet,
     titulo: str,
@@ -2482,7 +2514,16 @@ def _hoja_gastos(
     resaltar_parciales: bool = False,
     maestra: _Maestra | None = None,
     usd: str | None = None,
+    con_tc: bool = False,
 ) -> None:
+    # `con_tc` (13-oct-2026, API 0.0.74; SOLO la pestaña 'permisos' del libro
+    # individual y solo con la bandera `tc_por_fila` del API): columna «T.C.»
+    # AL FINAL (después de COSTO/VENTA/GANANCIA si existieran; letra calculada,
+    # nunca «G» a mano) con el tipo de cambio con que el API convirtió CADA
+    # gasto (`tc_aplicado`, valor con formato TC y nota en el encabezado) y
+    # MONTO MXN como FÓRMULA (`_fila_monto_con_tc`). Sin `con_tc` el cuerpo
+    # de siempre, línea por línea: las demás hojas de gastos y un API ≤ 0.0.73
+    # salen byte a byte iguales.
     # `maestra` + `usd` (5-oct-2026): el resumen de arriba va con FÓRMULAS —
     # TOTAL MXN = Σ de la columna MONTO MXN, TC PROMEDIO y HRS VOLADAS citan
     # la fila TOTALES de la hoja maestra, TOTAL USD según `usd` (ver
@@ -2503,6 +2544,11 @@ def _hoja_gastos(
     # VENTA AL AVIÓN / GANANCIA solo cuando el payload las trae.
     con_costo_venta = any(f.costo_mxn is not None or f.venta_mxn is not None for f in hoja.filas)
     n_cols = 9 if con_costo_venta else 6
+    if con_tc:
+        n_cols += 1
+    # Letra de la columna T.C.: la ÚLTIMA (solo se usa con `con_tc`).
+    col_tc = n_cols
+    letra_tc = get_column_letter(col_tc)
     _title(
         ws,
         titulo if titulo_exacto else f"{titulo} — {req.matricula}".strip(" —"),
@@ -2533,7 +2579,11 @@ def _hoja_gastos(
     headers = ["FECHA", "CATEGORÍA", "DETALLE", "MONTO MXN", "MONEDA ORIGINAL", "MONTO ORIGINAL"]
     if con_costo_venta:
         headers += ["COSTO VUELATOUR\nMXN", "VENTA AL AVIÓN\nMXN", "GANANCIA\nMXN"]
+    if con_tc:
+        headers += ["T.C."]
     _header_row(ws, 7, headers)
+    if con_tc:
+        ws.cell(row=7, column=col_tc).comment = _nota_celda(_NOTA_ENCABEZADO_TC_PERMISOS)
     row = 8
     if hoja.filas:
         for f in hoja.filas:
@@ -2551,10 +2601,16 @@ def _hoja_gastos(
             # siguen por índice); el color del avión, si viene, gana abajo.
             if resaltar_parciales and _es_parcial_reparto(f.detalle):
                 dc.fill = PatternFill("solid", fgColor=LIGHT)
-            _num(ws, row, 4, f.monto_mxn).border = _border
-            # Moneda/monto original solo cuando el gasto NO se capturó en MXN.
-            ws.cell(row=row, column=5, value=f.moneda_original).border = _border
-            _num(ws, row, 6, f.monto_original).border = _border
+            if con_tc:
+                # Hoja 'permisos' con `tc_por_fila` (13-oct-2026): MONTO MXN
+                # como fórmula, la fila en pesos con «MXN» y su importe, y
+                # la columna T.C. al final.
+                _fila_monto_con_tc(ws, row, f, col_tc, letra_tc)
+            else:
+                _num(ws, row, 4, f.monto_mxn).border = _border
+                # Moneda/monto original solo cuando el gasto NO se capturó en MXN.
+                ws.cell(row=row, column=5, value=f.moneda_original).border = _border
+                _num(ws, row, 6, f.monto_original).border = _border
             if con_costo_venta:
                 _num(ws, row, 7, f.costo_mxn).border = _border
                 _num(ws, row, 8, f.venta_mxn).border = _border
@@ -2604,6 +2660,8 @@ def _hoja_gastos(
     anchos = [14, 16, ancho_detalle, 15, 16, 15]
     if con_costo_venta:
         anchos += [16, 16, 14]
+    if con_tc:
+        anchos += [12]
     for i, w in enumerate(anchos, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A8"
@@ -3639,6 +3697,21 @@ _NOTA_INDIRECTOS = (
     "gastos' de este libro."
 )
 _NOTA_PERMISOS = "PERMISOS = todo lo de AFAC (permisos y provisiones del avión)."
+# Hoja 'permisos' con T.C. por fila y MONTO MXN como fórmula (13-oct-2026,
+# API 0.0.74, bandera `tc_por_fila`): pie ampliado y comentario del
+# encabezado de la columna T.C. La explicación larga va en el comentario (el
+# pie es una celda combinada sin wrap: ~158 de ancho).
+_NOTA_PERMISOS_TC = (
+    "PERMISOS = todo lo de AFAC (permisos y provisiones del avión). MONTO MXN "
+    "= ROUND(MONTO ORIGINAL × T.C., 2); en gastos capturados en pesos, MONTO "
+    "MXN = MONTO ORIGINAL y el T.C. va vacío."
+)
+_NOTA_ENCABEZADO_TC_PERMISOS = (
+    "Tipo de cambio con el que este gasto se convirtió a pesos: el capturado "
+    "en el gasto o, si no lo tiene, el TC promedio del periodo (el de la "
+    "celda TC PROMEDIO, sin redondear). Vacío en gastos capturados en pesos. "
+    "MONTO MXN = ROUND(MONTO ORIGINAL × T.C., 2)."
+)
 _NOTA_REFACCIONES = (
     "REFACCIONES = salidas de INVENTARIO (bodega) cargadas al avión: gasto "
     "REFACCION medio BODEGA ligado al cardex. Antes vivían dentro de 'gastos "
@@ -4371,14 +4444,19 @@ def construir_balance_avion(req: BalanceAvionRequest) -> Workbook:
             maestra=maestra,
             usd=_USD_TC_LIBRO,
         )
+    # Hoja 'permisos' con T.C. por fila y MONTO MXN como fórmula SOLO cuando
+    # el API manda la bandera (13-oct-2026, API 0.0.74, invariante 59 del
+    # API); sin ella (API ≤ 0.0.73) la hoja de siempre, byte a byte.
+    con_tc_permisos = bool(req.permisos.tc_por_fila)
     _hoja_gastos(
         wb.create_sheet("permisos"),
         "Permisos",
         req.permisos,
         req,
-        nota=_NOTA_PERMISOS,
+        nota=_NOTA_PERMISOS_TC if con_tc_permisos else _NOTA_PERMISOS,
         maestra=maestra,
         usd=_USD_TC_LIBRO,
+        con_tc=con_tc_permisos,
     )
     _hoja_balance(
         wb.create_sheet("balance"),

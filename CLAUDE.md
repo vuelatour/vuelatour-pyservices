@@ -180,6 +180,39 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `tests/test_balance_inventario_xlsx.py` (sección «COSTO UNITARIO»),
   `tests/test_balance_formulas.py` (libros «inventario general · costo
   unitario» y «… USD»).
+- **Hoja 'permisos' con T.C. por fila y MONTO MXN como fórmula**
+  (13-oct-2026, API 0.0.74; decisión 1 del lote del cliente: ver con qué
+  tipo de cambio se convirtió cada gasto a pesos y que MONTO MXN sea una
+  fórmula visible, no un número suelto). Campos ADITIVOS:
+  `BalanceAvionGastoFila.tc_aplicado: float | None` (el T.C. con el que el
+  API convirtió ESA fila —su `tc_gasto` o el promedio CRUDO del periodo—,
+  el número exacto que multiplicó; None en MXN, sin T.C. o API previo) y la
+  bandera `BalanceAvionHojaGastos.tc_por_fila: bool | None` (true SOLO en
+  `permisos`). `_hoja_gastos` gana el kwarg `con_tc` y SOLO la llamada de la
+  pestaña 'permisos' de `construir_balance_avion` lo pasa
+  (`bool(req.permisos.tc_por_fila)`) junto con la nota `_NOTA_PERMISOS_TC`.
+  Con él: columna «T.C.» AL FINAL (`col_tc = n_cols`, letra con
+  `get_column_letter`, nunca «G» a mano; ancho 12; VALOR con formato `TC`;
+  comentario `_NOTA_ENCABEZADO_TC_PERMISOS` en el encabezado) y, por fila
+  (`_fila_monto_con_tc`): gasto en PESOS (moneda y monto original null, el
+  contrato de siempre) ⇒ E = «MXN», F = `monto_mxn` (COPIA del API, jamás
+  una conversión), T.C. vacío y D = `=ROUND(F{r},2)`; otra moneda con T.C.
+  ⇒ E/F como siempre, G = `tc_aplicado` y D = `=ROUND(F{r}*G{r},2)` con el
+  `monto_mxn` del API en caché; otra moneda sin T.C. (`monto_mxn` None) ⇒ D
+  vacía sin fórmula y G vacía, como hoy; `monto_mxn` sin `tc_aplicado` ⇒
+  valor del API. Todas con ROUND exterior (nada nuevo en
+  `ENCABEZADOS_SIN_ROUND`) y verificadas por `xlsx_formulas` (una que no
+  reproduzca el centavo vuelve a valor: los números no cambian). A5 sigue
+  `ROUND(SUM(D8:Dn),2)`; B5..E5, la cascada `'permisos'!$C$5` y el bloque
+  AFAC de 'otros movimientos' no cambian. **Sin bandera ⇒ hoja idéntica**
+  (API ≤ 0.0.73, o `tc_aplicado` sin la bandera: huella `_firma_hoja` de
+  'permisos' y `_FIRMAS_ANTES["tst"]` intactas) y las demás hojas de gastos
+  (indirectos, refacciones, otros gastos, repartidos a aviones, fallback
+  del general) nunca reciben `con_tc`: byte a byte. La vista en pantalla
+  (`libro_json`) hereda la columna sola. Tests:
+  `tests/test_balance_formulas.py` (sección 3b: columna y fórmulas sin
+  degradar, USD sin T.C., sin bandera idéntica, las demás hojas intactas) y
+  `tests/test_libro_json.py`.
 - **Excel de la REPOSICIÓN de caja chica** (24-sep-2026,
   `POST /reportes/caja-chica-reposicion.xlsx`, `CajaChicaReposicionRequest`
   todo con default y `extra="ignore"`, servicio `caja_chica_xlsx.py`).
