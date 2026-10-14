@@ -1674,6 +1674,33 @@ Reglas de este microservicio (FastAPI, Python 3.12).
 
 ## IA
 
+- **Comisariato (13-oct-2026, API 0.0.75, migración `20261013000001`).**
+  Pedido del cliente: los snacks/bebidas de los PASAJEROS tienen categoría
+  propia `COMISARIATO` («Comisariato»: gasto DIRECTO del vuelo, columna
+  OTROS del balance del avión; antes se capturaba como OTRO y nunca llegaba
+  al avión). Aquí: el `CategoriaGasto` del esquema de visión y `valid_cats`
+  de `leer_ticket_gasto` ganan `COMISARIATO` — van JUNTOS: con el valor en
+  `valid_cats` y sin él en el Literal, pydantic tumba la lectura entera. El
+  prompt `_TICKET_SYSTEM` lo pide para snacks, botanas, bebidas, agua, hielo
+  y comisariato de los PASAJEROS (súper/OXXO/comedor cuando el ticket o la
+  nota dicen «comisariato», «pax», «pasajeros» o «para el vuelo»); OTRO
+  queda para lo que no es ni de la tripulación ni de los pasajeros
+  (mensajería, papelería, oficina, varios) y el desempate se conserva: sin
+  señas ⇒ TRIPULACIÓN (COMIDA/TAXI/HOTEL); señales de pasajeros ⇒
+  COMISARIATO. Los demás esquemas leen `categoria` como `str` (sin cambio) y
+  las etiquetas de los libros llegan hechas del API. **NO se tocó** la cola
+  «Los servicios FBO sí son costo (columna OTROS)» de los pies del balance
+  (`_NOTA_TRASLADOS_*`, `_CPH_TRASLADOS_*`): el diseño la marcaba opcional y
+  cambiarla rompe 34 huellas congeladas de libros (cobrado_con, empresa,
+  extensión, factura, fórmulas, costo/hora, AFAC); queda incompleta, no
+  incorrecta. Orden de deploy: DESPUÉS de la migración `20261013000001` y
+  del API 0.0.75 (una sugerencia COMISARIATO que la app 1.1.3+81 aplique
+  contra un API previo rebota 400 IsEnum en el outbox). Tests:
+  `test_ticket_comisariato_se_entrega` y
+  `test_ticket_prompt_pide_comisariato_para_pasajeros` en
+  `tests/test_vision_validaciones.py` (el texto vive en el SYSTEM: se lee
+  con `cliente.texto_system()`).
+
 - **Folio anti-duplicados de tickets de ESTANCIA del aeropuerto (2-oct-2026).**
   ASUR imprime «COBRO ESTANCIA · Boleto FBOE7»: el «Boleto» es la TARJETA de
   acceso y se repite en cada visita; la IA lo tomaba como `folio` y el candado

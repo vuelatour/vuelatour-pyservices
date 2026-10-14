@@ -98,6 +98,46 @@ def test_ticket_nunca_sugiere_una_comision_del_vendedor(claude_fake) -> None:
         assert res.monto == 939.60 and res.folio == "FEDCUN 193422"
 
 
+def test_ticket_comisariato_se_entrega(claude_fake) -> None:
+    """Comisariato (13-oct-2026, pedido del cliente): los snacks/bebidas de
+    los PASAJEROS tienen categoría propia COMISARIATO (gasto directo del
+    vuelo, columna OTROS del balance del avión). `valid_cats` y el Literal
+    del esquema la dejan pasar; antes de este cambio la sugerencia salía
+    None. Una categoría inventada sigue descartándose."""
+    payload = {
+        **TICKET_OK,
+        "concepto": "Botanas y agua para pasajeros",
+        "categoria_sugerida": "COMISARIATO",
+        "conceptos": [],
+        "monto": 176.5,
+        "proveedor": "OXXO",
+    }
+    claude_fake(anthropic_vision, payload)
+    res = leer_ticket_gasto(_ticket())
+    assert res.categoria_sugerida == "COMISARIATO"
+    assert res.monto == 176.5 and res.proveedor == "OXXO"
+    # Control: una categoría que no existe en el catálogo ⇒ None.
+    claude_fake(anthropic_vision, {**payload, "categoria_sugerida": "PISTA_VIP"})
+    assert leer_ticket_gasto(_ticket()).categoria_sugerida is None
+
+
+def test_ticket_prompt_pide_comisariato_para_pasajeros(claude_fake) -> None:
+    """El prompt del ticket (system) lista COMISARIATO, lo define para los
+    PASAJEROS y el desempate manda las señales de pasajeros a COMISARIATO
+    (ya no a OTRO). La frase vieja que mandaba el comisariato a OTRO no
+    vuelve. El desempate «sin señas ⇒ tripulación» se conserva."""
+    cliente = claude_fake(anthropic_vision, TICKET_OK)
+    leer_ticket_gasto(_ticket())
+    texto = cliente.texto_system()
+    assert "COMIDA, COMISARIATO, HOTEL" in texto
+    assert "comisariato para los PASAJEROS" in texto
+    assert "es gasto directo del vuelo, NO es OTRO" in texto
+    assert "señales de PASAJEROS mandan a COMISARIATO" in texto
+    assert "asume TRIPULACIÓN (COMIDA/TAXI/HOTEL)" in texto
+    assert "comisariato (snacks/bebidas para los PASAJEROS), mensajería" not in texto
+    assert "señales de PASAJEROS mandan a OTRO" not in texto
+
+
 def test_ticket_matricula_y_tarjeta_fuera_de_catalogo_avisan(claude_fake) -> None:
     payload = {**TICKET_OK, "matricula": "XA-ZZZ", "tarjeta_terminacion": "1111"}
     claude_fake(anthropic_vision, payload)

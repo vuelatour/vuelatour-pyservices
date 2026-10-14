@@ -296,8 +296,8 @@ _TICKET_SYSTEM = (
     '1-094" → "1-094"), o null.\n'
     '  "concepto": descripción breve de lo comprado, o null.\n'
     '  "categoria_sugerida": una de GAS, GASOLINA, OPERACIONES, ATERRIZAJE, '
-    "TUAS, FBO, COMIDA, HOTEL, TAXI, REFACCION, SERVICIOS, PERMISO, FIJO, "
-    "OTRO (la más probable), o "
+    "TUAS, FBO, COMIDA, COMISARIATO, HOTEL, TAXI, REFACCION, SERVICIOS, "
+    "PERMISO, FIJO, OTRO (la más probable), o "
     "null. Guía: SERVICIOS = servicio/mano de obra contratada al AVIÓN "
     "(taller, mantenimiento, lavado, inspección — factura de servicio, no de "
     "piezas; si el ticket es de PIEZAS/refacciones usa REFACCION). "
@@ -312,14 +312,18 @@ _TICKET_SYSTEM = (
     "taxi, Uber/DiDi, mototaxi, autobús, ferry, estacionamiento de autos y "
     "cualquier transporte terrestre/marítimo de la tripulación; HOTEL = "
     "hospedaje de la "
-    "tripulación (incluye impuestos del hotel como saneamiento). OTRO es solo "
-    "para lo que no es de la tripulación: comisariato (snacks/bebidas para "
-    "los PASAJEROS), mensajería/paquetería, papelería, compras de oficina y "
-    "varios sin categoría clara. Desempate: si el ticket no deja ver para "
-    "quién es (súper/OXXO, ferry, restaurante sin más señas), asume "
-    "TRIPULACIÓN (COMIDA/TAXI/HOTEL); señales de PASAJEROS mandan a OTRO "
-    "(varios boletos en el mismo ticket, consumo a nombre del cliente, "
-    "leyendas que mencionen pasajeros). OJO: gasolina/diésel de un VEHÍCULO "
+    "tripulación (incluye impuestos del hotel como saneamiento). COMISARIATO "
+    "= snacks, botanas, bebidas, agua, hielo y comisariato para los "
+    "PASAJEROS (súper, OXXO, minisúper, comedor o tienda del aeropuerto "
+    "cuando el ticket o la nota dicen «comisariato», «pax», «pasajeros» o "
+    "«para el vuelo»); es gasto directo del vuelo, NO es OTRO. OTRO es solo "
+    "para lo que no es de la tripulación ni de los pasajeros: "
+    "mensajería/paquetería, papelería, compras de oficina y varios sin "
+    "categoría clara. Desempate: si el ticket no deja ver para quién es "
+    "(súper/OXXO, ferry, restaurante sin más señas), asume TRIPULACIÓN "
+    "(COMIDA/TAXI/HOTEL); señales de PASAJEROS mandan a COMISARIATO (varios "
+    "boletos en el mismo ticket, consumo a nombre del cliente, leyendas que "
+    "mencionen pasajeros o comisariato). OJO: gasolina/diésel de un VEHÍCULO "
     "TERRESTRE (gasolinera Pemex, Gulf, OXXO GAS — que NO es la tienda OXXO; "
     "Magna/Premium/Regular/diésel) NUNCA es GAS ni COMIDA: es GASOLINA "
     "(combustible de coche/camioneta). GAS es SOLO combustible de AVIACIÓN "
@@ -484,6 +488,9 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         # SERVICIOS (29-ago): servicio contratado al avión — SÍ está en el
         # prompt (mano de obra/taller, a diferencia de REFACCION = piezas).
         "SERVICIOS",
+        # COMISARIATO (13-oct-2026): snacks/bebidas de los PASAJEROS — SÍ
+        # está en el prompt (antes caía en OTRO). Gasto directo del vuelo.
+        "COMISARIATO",
         # No están en el prompt (no se leen de un ticket) pero se toleran
         # si el modelo las eco-devuelve en un reanálisis: VISITA (gasto de
         # visitante, 27-ago), PERSONAL_DUENO y NOMINA (sueldos, 29-ago).

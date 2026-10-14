@@ -169,6 +169,10 @@ CategoriaGasto = Literal[
     "TUAS",
     "FBO",
     "COMIDA",
+    # Comisariato (13-oct-2026): snacks/bebidas de los PASAJEROS. La IA SÍ la
+    # sugiere (está en el prompt); antes caía en OTRO. Sin ella pydantic
+    # devolvería None/422 en el reanálisis de un gasto COMISARIATO.
+    "COMISARIATO",
     "HOTEL",
     "TAXI",
     "REFACCION",
