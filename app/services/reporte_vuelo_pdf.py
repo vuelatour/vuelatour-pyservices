@@ -10,6 +10,13 @@ from zoneinfo import ZoneInfo
 
 from app.schemas.reportes import ReporteVueloParticipacion, ReporteVueloRequest
 from app.services._formato import _tc_txt
+from app.services.reporte_vuelo_vendedor import (
+    etiqueta_pago_balance,
+    etiqueta_pago_cotizacion,
+    neto_cotizacion,
+    pago_balance,
+    pago_cotizacion,
+)
 
 _BRAND = "#dc2626"
 _NAVY = "#102a43"
@@ -82,22 +89,6 @@ def _sub(texto: str) -> str:
         "<tr><td colspan='2' class='muted' "
         f"style='font-size:10px;padding:0 4px 3px 14px'>{escape(texto)}</td></tr>"
     )
-
-
-def _pago_vendedor(r: ReporteVueloRequest) -> float:
-    """Pago al vendedor = comisión + su IVA cuando grava (`pagoVendedorUsd`,
-    fuente única del API). API viejo sin el campo: la comisión pre-IVA."""
-    return (
-        r.pago_vendedor_usd
-        if r.pago_vendedor_usd is not None
-        else r.comision_vendedor_usd
-    )
-
-
-def _etiqueta_pago_vendedor(r: ReporteVueloRequest) -> str:
-    quien = f" ({r.comision_vendedor_nombre})" if r.comision_vendedor_nombre else ""
-    con_iva = " (c/IVA)" if _pago_vendedor(r) > r.comision_vendedor_usd + 0.005 else ""
-    return f"(−) Pago comisión vendedor{quien}{con_iva}"
 
 
 def _build_html(r: ReporteVueloRequest) -> str:
@@ -174,26 +165,21 @@ def _build_html(r: ReporteVueloRequest) -> str:
     # ingreso de VuelaTour y su pago sale de VuelaTour (no del avión); este
     # reporte mira la economía COMPLETA del vuelo, por eso la resta UNA vez.
     if r.comision_vendedor_usd:
-        quien = f" ({r.comision_vendedor_nombre})" if r.comision_vendedor_nombre else ""
         # Se resta el PAGO al vendedor (comisión + su IVA cuando grava), no la
         # comisión pre-IVA: así total − esta línea = neto y la aritmética
         # visible cuadra (antes restaba 832.00 a la vista y 965.12 en el neto).
-        pago = _pago_vendedor(r)
-        con_iva = " (comisión + IVA)" if pago > r.comision_vendedor_usd + 0.005 else ""
+        # Con el API 0.0.75 (bandera `comision_vendedor_solo_gasto_real`)
+        # esta sección habla de la COTIZACIÓN: la cotizada con su IVA y su
+        # neto, como el panel (`reporte_vuelo_vendedor.py`); el pago REAL
+        # resta abajo, en el balance del vuelo.
+        pago = pago_cotizacion(r)
         # _row ya escapa la etiqueta: texto plano (una entidad o <b> aquí
         # saldrían literales en el PDF).
         cot += _row(
-            f"Pago comisión vendedor{quien}{con_iva}",
+            etiqueta_pago_cotizacion(r, pago),
             f"&minus;{_money(pago)}",
         )
-        # Neto = total − PAGO al vendedor (comisión + su IVA), misma regla
-        # que el balance de abajo.
-        neto = (
-            r.neto_vuelatour_usd
-            if r.neto_vuelatour_usd is not None
-            else r.total_usd - pago
-        )
-        cot += _row("Neto VuelaTour", f"<b>{_money(neto)}</b>")
+        cot += _row("Neto VuelaTour", f"<b>{_money(neto_cotizacion(r, pago))}</b>")
     if r.metodo_cobro:
         cot += _row("Método de cobro", escape(r.metodo_cobro))
     cot += "</table>"
@@ -380,10 +366,11 @@ def _build_html(r: ReporteVueloRequest) -> str:
             + _bal_row("(−) Gastos del vuelo", r.gastos_total_usd or 0, signo=-1)
             + _bal_row("REMANENTE (venta − costo)", r.remanente_usd, bold=True)
             + (
-                # Pago de VuelaTour al vendedor (regla A): se resta UNA vez,
-                # con su IVA cuando grava (pago_vendedor_usd del API).
-                _bal_row(_etiqueta_pago_vendedor(r), _pago_vendedor(r), signo=-1)
-                if _pago_vendedor(r)
+                # Pago al vendedor: se resta UNA vez, el MISMO que restó la
+                # ganancia del API (pago_vendedor_usd; desde el 0.0.75 el
+                # REAL, rotulado «(−) Pago real al vendedor»).
+                _bal_row(etiqueta_pago_balance(r), pago_balance(r), signo=-1)
+                if pago_balance(r)
                 else ""
             )
             + (

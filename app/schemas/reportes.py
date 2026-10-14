@@ -396,7 +396,18 @@ class ReporteVueloRequest(BaseModel):
     # PAGO al vendedor = comisión + su IVA cuando grava (`pagoVendedorUsd`,
     # fuente única del API): es lo que se resta en "(−) Pago comisión
     # vendedor" y en el neto. None = API viejo → se usa comision_vendedor_usd.
+    # Desde el API 0.0.75 (invariante 73, con la bandera de abajo) es el pago
+    # REAL al vendedor (gastos capturados; 0 si no hay) — lo que resta la
+    # ganancia — y `neto_vuelatour_usd` = total − ese pago real.
     pago_vendedor_usd: float | None = None
+    # ADITIVOS del API 0.0.75 (revisión del lote 2, 14-oct-2026): con la
+    # bandera, `pago_vendedor_usd` es el pago REAL y `pago_vendedor_cotizado_usd`
+    # la comisión COTIZADA con su IVA (dato de la cotización, jamás se resta).
+    # La sección «Cotización» pinta la cotizada y su neto; la cascada rotula
+    # «(−) Pago real al vendedor» (`reporte_vuelo_vendedor.py`). Sin la
+    # bandera (API ≤ 0.0.74), el reporte de siempre byte a byte.
+    comision_vendedor_solo_gasto_real: bool | None = None
+    pago_vendedor_cotizado_usd: float | None = None
     # Regla 28-ago-2026 (informativos): del total, cuánto es VENTA DEL AVIÓN
     # (tiempo + ajuste + IVA proporcional) y cuánto ingreso de VuelaTour
     # (TUAs/extras/pernocta/comisión del vendedor + su IVA). None = API

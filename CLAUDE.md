@@ -14,6 +14,24 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   sentidos).
 - Toda ruta funcional exige `X-Internal-Token` == `INTERNAL_SHARED_TOKEN`
   (mismo valor que en el API). Nada de este servicio se expone a clientes.
+- **Orden de despliegue del lote 0.0.75 (CONSOLIDADO en la revisión del
+  14-oct-2026; manda sobre lo que diga cada entrada del lote)**: hasta la
+  revisión este archivo pedía dos órdenes incompatibles para el MISMO push
+  (Comisariato «DESPUÉS del API 0.0.75»; ingreso por avión, ID por cliente y
+  TUA «ANTES»). El orden ÚNICO, igual al del CLAUDE.md del API («ORDEN DE
+  DESPLIEGUE DEL LOTE 0.0.75»): migraciones `20261013000001` y
+  `20261013000009` (dependencia dura del API) → **pyservices COMPLETO** →
+  API 0.0.75 → migraciones `20261013000005` y `20261013000002` → panel →
+  APK. pyservices ANTES del API es seguro: sin las llaves nuevas todo libro
+  sale byte a byte; la sugerencia COMISARIATO de la IA no la aplica nadie
+  (la app publicada +80 y el panel de prod solo aplican sugerencias de SU
+  catálogo y el API 0.0.74 nunca pisa la categoría) — el 400 IsEnum solo
+  lo daría el chip de una app +81 publicada antes de tiempo, con o sin
+  pyservices —; y un estado de cuenta leído con los renglones de
+  continuación entra igual. Al revés (API primero) el libro de N990GG de
+  septiembre saldría sin la pestaña «Otros ingresos» con una utilidad que
+  ya los suma, y la CLAVE con ID por cliente cortada. En la ventana entre
+  los dos pushes no re-subir estados de cuenta ni regenerar libros.
 
 ## Render
 
@@ -1080,6 +1098,31 @@ Reglas de este microservicio (FastAPI, Python 3.12).
 - El reporte por vuelo debe CUADRAR: el desglose (subtotal + TUAS + pernocta
   + extras + ajuste + IVA) suma el total exacto — no omitir líneas del
   desglose canónico v1.3.
+- **Reporte por vuelo: pago al vendedor del API 0.0.75** (revisión del lote
+  2, 14-oct-2026; invariante 73 del API). Desde el 0.0.75 el API manda en
+  `pago_vendedor_usd` el pago REAL al vendedor (los gastos «Comisión del
+  vendedor (VuelaTour)» / «(avión)» capturados; 0 si no hay) —lo que resta
+  la ganancia— y `neto_vuelatour_usd` = total − ese pago, más los ADITIVOS
+  `comision_vendedor_solo_gasto_real: bool | None` y
+  `pago_vendedor_cotizado_usd: float | None` (la cotizada con su IVA, dato;
+  declarados en `ReporteVueloRequest`: antes pydantic los descartaba). Sin
+  esto la sección «Cotización» pintaba «Pago comisión vendedor −$0.00 ·
+  Neto VuelaTour = total» (contra el panel, que dice −$580 / $4,060 de la
+  MISMA cotización) y la cascada rotulaba «(c/IVA)» un pago real que no es
+  IVA (un pago en pesos convertido). Fuente única
+  `app/services/reporte_vuelo_vendedor.py` (la usan el PDF y el Excel):
+  con la bandera `is True`, la sección «Cotización» pinta
+  `pago_cotizacion` (la cotizada) con `etiqueta_pago_cotizacion` («Pago
+  comisión vendedor (Juan) (comisión + IVA)» solo si la cotizada supera la
+  comisión pre-IVA) y `neto_cotizacion` = round(total − cotizada, 2); la
+  cascada resta `pago_balance` (= `pago_vendedor_usd`, el que restó la
+  ganancia del API; con 0 no se pinta) rotulado `etiqueta_pago_balance` =
+  «(−) Pago real al vendedor (Juan)», sin «(c/IVA)». Sin la bandera (API
+  ≤ 0.0.74, o en False) el reporte de siempre BYTE A BYTE (verificado con
+  huellas del HTML y de las celdas del Excel en 5 formas de payload).
+  Aquí no se calcula ningún pago. Tests: `tests/test_reporte_vuelo_etiquetas.py`
+  (esquema; sin pago real, pago real mayor que la comisión sin IVA, #332 sin
+  comisión cotizada, y sin bandera / en False igual que siempre).
 - **Tipo de cambio: hasta 6 DECIMALES, sin ceros de cola** (17-sep-2026,
   pedido sobre la cotización #314). Fuente única `app/services/_formato.py`
   → `_tc_txt` (16.991632 → «16.991632»; 16.9916 → «16.9916»; 18 → «18»;
@@ -1593,7 +1636,17 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   reparto) y de los flujos de contenido del PDF calculadas con el código de
   HEAD d58faa1 antes del cambio. Orden de deploy: pyservices ANTES del API
   0.0.75 (con el API primero el libro sale sin pestaña ni línea y la
-  utilidad después sube sin explicación). Tests:
+  utilidad después sube sin explicación; orden consolidado del lote en
+  «Principios»). **Nota de la pestaña corregida (revisión del lote 2,
+  14-oct-2026)**: `_NOTA_OTROS_INGRESOS_AVION` decía que el reparto «puede
+  diferir unos centavos» y era falso — el reparto convierte cada ingreso
+  por separado (USD = su neto; MXN ÷ su T.C. propio u oficial de su día) y
+  esta hoja divide el total entre el T.C. promedio del libro, así que la
+  diferencia crece con la distancia entre esos T.C. (ING-4: 2,710.47 USD
+  aquí vs 2,746.70 en el reparto). Hoy dice «… puede diferir del de esta
+  hoja según la distancia entre esos T.C. y el promedio del libro (no son
+  centavos), como pasa con los gastos.». Solo cambia ese texto (las huellas
+  sin las llaves siguen byte a byte). Tests:
   `tests/test_balance_otros_ingresos_avion.py`,
   `tests/test_dinero_otros_ingresos_avion.py`,
   `tests/test_reparto_otros_ingresos_avion.py` y
@@ -1861,9 +1914,12 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   (`_NOTA_TRASLADOS_*`, `_CPH_TRASLADOS_*`): el diseño la marcaba opcional y
   cambiarla rompe 34 huellas congeladas de libros (cobrado_con, empresa,
   extensión, factura, fórmulas, costo/hora, AFAC); queda incompleta, no
-  incorrecta. Orden de deploy: DESPUÉS de la migración `20261013000001` y
-  del API 0.0.75 (una sugerencia COMISARIATO que la app 1.1.3+81 aplique
-  contra un API previo rebota 400 IsEnum en el outbox). Tests:
+  incorrecta. Orden de deploy: el CONSOLIDADO del lote (ver «Principios»):
+  pyservices ANTES del API 0.0.75 (revisión del 14-oct-2026; aquí decía
+  «DESPUÉS», y era incompatible con el resto del lote). Es seguro: la app
+  publicada (+80) y el panel de prod ignoran una `categoria_sugerida` fuera
+  de su catálogo y el API 0.0.74 no pisa la categoría; el APK +81/+82 no
+  se publica hasta la migración `20261013000001` y el API 0.0.75. Tests:
   `test_ticket_comisariato_se_entrega` y
   `test_ticket_prompt_pide_comisariato_para_pasajeros` en
   `tests/test_vision_validaciones.py` (el texto vive en el SYSTEM: se lee
