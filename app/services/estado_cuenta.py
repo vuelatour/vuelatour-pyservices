@@ -574,8 +574,25 @@ _SYSTEM = (
     "el mismo PDF subido dos veces entra DUPLICADO y las cuentas del mes se "
     "rompen. Copia la descripción EXACTA que imprime el banco (mayúsculas, "
     "asteriscos, abreviaturas y números incluidos); no la acortes ni la "
-    "\"limpies\". Si es larguísima, córtala al final con los primeros 80 "
-    "caracteres, nunca la reescribas.\n\n"
+    "\"limpies\".\n\n"
+    "RENGLONES DE CONTINUACIÓN (transferencias SPEI, pagos de servicios, "
+    "domiciliaciones y pagos a proveedores): el concepto de una transferencia "
+    "NO cabe en el renglón del movimiento; debajo, SIN fecha ni monto propios, "
+    "vienen uno o más renglones con el banco destino u origen (BANORTE, HSBC, "
+    "/BANAMEX…), el beneficiario u ordenante si se imprime y el CONCEPTO que "
+    "tecleó quien pagó («fact vip 7360», «COT 337 AMB AER», «Pago REFERENCIADO "
+    "IMSS»). Esos renglones son parte del MISMO movimiento y NUNCA un "
+    "movimiento aparte (un renglón sin monto jamás va en \"movimientos\"): "
+    "\"descripcion\" = el renglón principal TAL CUAL, PRIMERO, y después, "
+    "separados por un espacio y en el orden en que se imprimen, esos "
+    "renglones, sin saltos de línea. Hazlo en TODAS las transferencias del "
+    "documento, no en unas sí y en otras no. Ejemplo: «SEL TRANSF. "
+    "INTERBANCARIA SPEI» con «BANORTE» y «fact vip 7360» debajo ⇒ \"SEL "
+    "TRANSF. INTERBANCARIA SPEI BANORTE fact vip 7360\". De esos renglones NO "
+    "copies la CLABE ni números de cuenta o tarjeta, la clave de rastreo, el "
+    "RFC ni la hora. Si todo junto rebasa 160 caracteres, córtalo al final "
+    "(los primeros 160); nunca lo reescribas ni cambies el orden. Las compras "
+    "con tarjeta se transcriben como siempre.\n\n"
     "SALIDA: SOLO un objeto JSON, sin texto adicional ni ```fences```, COMPACTO "
     "(sin espacios ni saltos de línea innecesarios), con estas claves:\n"
     '  "movimientos": arreglo, en el MISMO ORDEN del estado de cuenta, de objetos:\n'
@@ -608,7 +625,11 @@ _SYSTEM = (
     "general de arriba):\n"
     "  · SCOTIABANK: FECHA · CONCEPTO/DESCRIPCIÓN · REFERENCIA (o SUCURSAL) · "
     "RETIROS/CARGOS · DEPÓSITOS/ABONOS · SALDO. Las compras con tarjeta traen "
-    "la terminación dentro de la referencia numérica larga.\n"
+    "la terminación dentro de la referencia numérica larga. Las transferencias "
+    "(SEL TRANSF. INTERBANCARIA SPEI, TRANSF INTERBANCARIA SPEI, TRANSF ENVIO "
+    "SPEI) y los pagos (SEL PAGO DE SERVICIOS, POR COBRANZA DOMICILIADA, SCN "
+    "Pagos a Proveedores) traen debajo el banco, el beneficiario u ordenante y "
+    "el concepto: van en la MISMA descripción (ver RENGLONES DE CONTINUACIÓN).\n"
     "  · BBVA: OPER · LIQ · COD. DESCRIPCIÓN · CARGOS · ABONOS · SALDO. Usa la "
     "fecha de OPERACIÓN (la primera), no la de liquidación, y copia el código y "
     "la descripción juntos tal como se imprimen.\n"
@@ -673,8 +694,10 @@ def _prompt_pdf(req: ConciliacionParseRequest) -> str:
             "moneda, transcríbelo y anótalo en advertencias."
         )
     partes.append(
-        "Recuerda: descripción LITERAL, referencia íntegra, saldo copiado (no "
-        "calculado) y ninguna fila de más ni de menos."
+        "Recuerda: descripción LITERAL (renglón principal tal cual y, en "
+        "transferencias y pagos, sus renglones de continuación: banco, "
+        "beneficiario u ordenante y concepto), referencia íntegra, saldo "
+        "copiado (no calculado) y ninguna fila de más ni de menos."
     )
     return " ".join(partes)
 
@@ -819,11 +842,24 @@ def _texto_encabezado(lector) -> str:
     return "\n…\n".join([encabezado, *rescatados]) if rescatados else encabezado
 
 
+# Solo para un bloque que NO empieza en la página 1 (13-oct-2026, concepto
+# del SPEI): los renglones de continuación de un movimiento de la página
+# anterior no se transcriben ni se pegan a otro (ese movimiento lo lee el
+# bloque anterior y se queda sin concepto: lo dice `_advertencia_sin_concepto`).
+# Va AQUÍ y no en `_SYSTEM`: un PDF de ≤ N páginas no la necesita.
+_NOTA_CONTINUACION_HUERFANA = (
+    " Si la PRIMERA página de este bloque empieza con renglones sin fecha ni "
+    "monto (banco, beneficiario o concepto) que continúan un movimiento de la "
+    "página anterior, NO los transcribas ni los pegues a otro movimiento: ese "
+    "movimiento lo transcribe otro bloque."
+)
+
+
 def _nota_paginas(inicio: int, fin: int, total: int) -> str:
     rango = (
         f"la página {inicio + 1}" if fin - inicio == 1 else f"las páginas {inicio + 1}–{fin}"
     )
-    return (
+    nota = (
         f"Este bloque contiene {rango} de {total}; transcribe SOLO los movimientos "
         "impresos en estas páginas; las claves del resumen (saldo_inicial, "
         "saldo_final, total_cargos, total_abonos, periodo_inicio, periodo_fin) "
@@ -831,6 +867,7 @@ def _nota_paginas(inicio: int, fin: int, total: int) -> str:
         "adjunto trae SOLO esas páginas: que no veas las demás es normal (las "
         "leen otros bloques) y NO va en advertencias."
     )
+    return nota + _NOTA_CONTINUACION_HUERFANA if inicio > 0 else nota
 
 
 def _contexto_encabezado(encabezado: str) -> str:
@@ -1024,6 +1061,23 @@ def _sumar_usos(usos: list[UsoIA]) -> UsoIA | None:
     )
 
 
+# Tope de la descripción de un movimiento leído del PDF (13-oct-2026): el
+# prompt pide hasta 160 caracteres con los renglones de continuación; el
+# código recorta a 200 por si el modelo se pasa (el API guarda la misma
+# cifra, `DESCRIPCION_GUARDADA_MAX`).
+_DESCRIPCION_MAX = 200
+
+
+def _descripcion_limpia(v: object) -> str | None:
+    """Descripción en UNA línea: espacios/saltos colapsados a un espacio,
+    tope de `_DESCRIPCION_MAX`; vacía o solo espacios ⇒ None. Es la forma en
+    que llegan juntos el renglón principal y sus renglones de continuación
+    («SEL TRANSF. INTERBANCARIA SPEI\\nBANORTE\\n fact vip 7360»)."""
+    if not v:
+        return None
+    return " ".join(str(v).split())[:_DESCRIPCION_MAX].strip() or None
+
+
 def _movimientos_de(data: dict) -> list[MovimientoParseado]:
     movimientos: list[MovimientoParseado] = []
     for raw in data.get("movimientos", []):
@@ -1036,7 +1090,7 @@ def _movimientos_de(data: dict) -> list[MovimientoParseado]:
         movimientos.append(
             MovimientoParseado(
                 fecha=str(raw["fecha"]) if raw.get("fecha") else None,
-                descripcion=str(raw["descripcion"]) if raw.get("descripcion") else None,
+                descripcion=_descripcion_limpia(raw.get("descripcion")),
                 monto=abs(monto),
                 tipo="CARGO" if tipo == "CARGO" else "ABONO",
                 referencia=str(raw["referencia"])[:120] if raw.get("referencia") else None,
@@ -1076,13 +1130,66 @@ def _parse_pdf(req: ConciliacionParseRequest) -> ConciliacionParseResponse:
     )
 
 
+# Leyendas del banco que, SOLAS, son una transferencia o un pago leído SIN
+# su concepto (13-oct-2026). En forma `_plano`; las MISMAS 9 de
+# `LEYENDAS_SIN_CONCEPTO` del API (`conciliacion/enriquecer-descripcion.util`),
+# que completa la descripción de esas filas al re-subir el archivo.
+_LEYENDAS_SIN_CONCEPTO = frozenset(
+    {
+        "SEL TRANSF INTERBANCARIA SPEI",
+        "TRANSF INTERBANCARIA SPEI",
+        "TRANSF ENVIO SPEI BCA INTERNET",
+        "SEL PAGO DE SERVICIOS",
+        "03 POR COBRANZA DOMICILIADA",
+        "SCN PAGOS A PROVEEDORES",
+        "CGO SPEI",
+        "SPEI ENVIADO",
+        "SPEI RECIBIDO",
+    }
+)
+
+
+# Marcas combinantes U+0300–U+036F: el MISMO rango que quita `normalizarPlano`
+# del API (`/[\u0300-\u036f]/g`) después de NFD («Á» ⇒ «A» + marca).
+_MARCAS_NFD = re.compile("[" + chr(0x300) + "-" + chr(0x36F) + "]")
+
+
+def _plano(s: str | None) -> str:
+    """Mismo criterio que `normalizarPlano` del API: NFD sin marcas,
+    MAYÚSCULAS, todo lo que no es [A-Z0-9] → espacio, espacios simples."""
+    if not isinstance(s, str):
+        return ""
+    t = _MARCAS_NFD.sub("", unicodedata.normalize("NFD", s)).upper()
+    return " ".join(re.sub(r"[^A-Z0-9]+", " ", t).split())
+
+
+def _advertencia_sin_concepto(movimientos: list[MovimientoParseado]) -> list[str]:
+    """Aviso DETERMINISTA cuando hay transferencias o pagos con SOLO la
+    leyenda del banco: la IA no juntó los renglones de continuación (o el
+    concepto quedó al inicio del bloque siguiente de un PDF por bloques)."""
+    n = sum(1 for m in movimientos if _plano(m.descripcion) in _LEYENDAS_SIN_CONCEPTO)
+    if not n:
+        return []
+    return [
+        f"{n} transferencia(s) o pago(s) se leyeron SIN su concepto (solo la "
+        "leyenda del banco, p. ej. «SEL TRANSF. INTERBANCARIA SPEI»): la IA no "
+        "juntó los renglones de abajo (banco, beneficiario y concepto). Vuelve a "
+        "leer el archivo antes de importar si necesitas saber qué factura pagó "
+        "cada una."
+    ]
+
+
 def _advertencias_pdf(data: dict, movimientos: list[MovimientoParseado]) -> list[str]:
     """Comprobaciones DETERMINISTAS sobre lo que devolvió el modelo.
 
     Una extracción con IA puede saltarse renglones sin truncarse (el
     `stop_reason == max_tokens` no lo detecta). Tres redes: la cadena de
-    saldos, los totales impresos y el periodo del documento."""
-    avisos: list[str] = list(_advertencias_saldos(movimientos))
+    saldos, los totales impresos y el periodo del documento. Desde el
+    13-oct-2026 va PRIMERO el aviso de transferencias leídas sin concepto."""
+    avisos: list[str] = [
+        *_advertencia_sin_concepto(movimientos),
+        *_advertencias_saldos(movimientos),
+    ]
 
     # Totales del resumen contra lo transcrito.
     for clave, tipo, etiqueta in (

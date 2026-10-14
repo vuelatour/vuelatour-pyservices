@@ -273,6 +273,21 @@ def test_paginas_por_bloque_sale_del_setting(cliente_por_paginas, monkeypatch) -
     assert res.total == 7
 
 
+def test_continuacion_huerfana_solo_en_los_bloques_sin_la_pagina_1(cliente_por_paginas) -> None:
+    """Concepto del SPEI (13-oct-2026): la orden de ignorar los renglones de
+    continuación con que puede empezar un bloque va SOLO en los bloques que no
+    traen la página 1; el bloque 1 (y un PDF de ≤ N páginas) no la lleva."""
+    cliente = cliente_por_paginas(_responder(7))
+    parsear_estado_cuenta(_req(_pdf(7)))
+    orden = "NO los transcribas ni los pegues a otro movimiento"
+    assert orden not in cliente.texto_de([1, 2, 3])
+    assert orden in cliente.texto_de([4, 5, 6])
+    assert orden in cliente.texto_de([7])
+    # El system es el mismo en todos los bloques y no la trae.
+    for _, kwargs in cliente.llamadas:
+        assert orden not in kwargs["system"][1]["text"]
+
+
 # --- (b) ≤ N páginas ⇒ UNA llamada byte-idéntica ---------------------------
 
 

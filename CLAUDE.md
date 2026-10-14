@@ -1506,7 +1506,10 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   los totales impresos cruzan bloques); `uso_ia` = SUMA de todas las
   llamadas (`_sumar_usos`); `notas` dice «PDF de P páginas leído en K
   bloques.» cuando K > 1. Si un estado de cuenta futuro sigue truncando con
-  3 páginas, bajar N por env antes de tocar código.
+  3 páginas, bajar N por env antes de tocar código. Desde el 13-oct-2026 los
+  bloques con `inicio > 0` llevan además la orden de ignorar la continuación
+  huérfana de un SPEI de la página anterior (ver «Prompt del PDF de estado
+  de cuenta» en «IA»).
   Revisión adversaria (29-sep-2026), congelada en el mismo archivo: (a) el
   tope de (5) aplica también a un PDF de ≤ N páginas que pypdf sí abre (va
   por el mismo orquestador con un solo bloque); solo `_leer_completo` no lo
@@ -1877,6 +1880,40 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   29-sep-2026 un PDF de más de N páginas se lee por bloques (ver
   «Conciliación»): el `_SYSTEM` es el mismo; la nota de páginas y el
   contexto del encabezado viajan en el mensaje del usuario.
+  **Concepto del SPEI (13-oct-2026, API 0.0.75)**: caso EJE SCOTIA de
+  septiembre — 73 de 98 filas quedaron como «SEL TRANSF. INTERBANCARIA
+  SPEI» / «TRANSF INTERBANCARIA SPEI» SIN el concepto que el banco imprime
+  debajo («BANORTE» / «fact vip 7360») y la oficina no sabía qué factura
+  pagó cada una. El `_SYSTEM` exige los RENGLONES DE CONTINUACIÓN (banco
+  destino u origen, beneficiario u ordenante y el concepto tecleado) pegados
+  al renglón principal —TAL CUAL y PRIMERO, separados por un espacio, en
+  TODAS las transferencias y pagos—, sin CLABE, cuentas/tarjetas, clave de
+  rastreo, RFC ni hora, hasta 160 caracteres (se quitó el viejo «córtala a
+  80»); el formato de Scotiabank nombra sus leyendas con continuación y
+  `_prompt_pdf` lo recuerda. La orden de IGNORAR la continuación huérfana con
+  que puede empezar un bloque va SOLO en `_nota_paginas` con `inicio > 0`
+  (`_NOTA_CONTINUACION_HUERFANA`; un PDF de ≤ N páginas sigue siendo UNA
+  llamada sin ella): ese movimiento lo lee el bloque anterior y se queda sin
+  concepto (riesgo aceptado: lo delata el aviso de abajo). Código:
+  `_descripcion_limpia` deja la descripción en UNA línea con tope
+  `_DESCRIPCION_MAX` = 200 (vacía o solo espacios ⇒ None; CSV, Excel y
+  Paywise no cambian) y `_advertencia_sin_concepto` —PRIMERA de
+  `_advertencias_pdf`, dentro del tope de 10— cuenta las filas cuya
+  descripción en forma `_plano` (= `normalizarPlano` del API: NFD sin marcas
+  U+0300–U+036F, mayúsculas, `[^A-Z0-9]+` → espacio) es una de las 9
+  `_LEYENDAS_SIN_CONCEPTO` (las MISMAS de `LEYENDAS_SIN_CONCEPTO` del API):
+  «N transferencia(s) o pago(s) se leyeron SIN su concepto (solo la leyenda
+  del banco, p. ej. «SEL TRANSF. INTERBANCARIA SPEI») …». El esquema NO
+  cambia. El API completa la descripción de las filas YA importadas al
+  re-subir el archivo (vista previa, «Solo completar conceptos», reglas que
+  nunca adivinan y UPDATE con CAS; invariante «concepto del SPEI» del
+  CLAUDE.md del API) y su dedupe NO depende de la referencia (los SPEI traen
+  la de relleno «00000000000000000001»): una relectura con concepto no
+  duplica. Deploy en cualquier orden respecto al API (nada se rompe ni se
+  cuenta dos veces); debe estar arriba ANTES de re-subir septiembre. Tests:
+  `tests/test_estado_cuenta_concepto_spei.py` y
+  `test_continuacion_huerfana_solo_en_los_bloques_sin_la_pagina_1` en
+  `tests/test_estado_cuenta_pdf_bloques.py`.
 - **Sugerencias (conciliación y gasto→vuelo)**: la IA PROPONE, la persona
   confirma. El payload ya lleva el contexto que antes se tiraba (movimiento:
   `tipo`, `referencia`, `cuenta_moneda`, `terminacion_tarjeta_detectada`;
