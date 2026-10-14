@@ -689,7 +689,19 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   con la bandera `comision_vendedor_solo_gasto_real` los textos de arriba
   que dicen «provisión» tienen su versión `*_GASTO_REAL` /
   `*_DOS_CATEGORIAS` (ver «COMISIÓN DEL VENDEDOR SOLO COMO GASTO REAL, EN
-  DOS CATEGORÍAS»).
+  DOS CATEGORÍAS»). **Rótulo de la columna E (13-oct-2026, lote 2; pendiente
+  de las invariantes 50 y 61 del API)**: el encabezado de la columna E del
+  Excel del reparto es `ETIQUETA_COLUMNA` («Comisiones (banco + vendedor)»)
+  SIEMPRE, también OCULTA sin comisiones absorbidas — antes decía
+  «Comisiones venta», el rótulo de la comisión del vendedor de antes del
+  28-ago. Es lo ÚNICO que cambia sin comisiones (miembros del .xlsx
+  comparados contra el código previo: solo esa celda de `sheet1.xml`, con y
+  sin la bandera); con comisiones, byte a byte. La fila del PDF ya decía
+  «(-) Comisiones (banco + vendedor)» desde el 6-oct (con 0 no se imprime).
+  El nombre se queda «(banco + vendedor)» —el mismo del panel y de la
+  cascada del Balance general—: que lo del vendedor es solo el pago «(avión)»
+  lo dicen la línea gris y las notas con la bandera. Test:
+  `test_xlsx_sin_comisiones_igual_que_siempre`.
 - **COMISIONES solo en el libro INDIVIDUAL; el Balance general, antes de
   comisiones** (7-oct-2026, API 0.0.66; pedido: «estas comisiones se están
   duplicando en la general, ya que las tenemos en el apartado de "Otros

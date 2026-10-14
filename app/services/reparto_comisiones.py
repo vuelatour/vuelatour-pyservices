@@ -32,9 +32,15 @@ verdad (la regla gobierna solo la parte bancaria).
 from app.schemas.reparto import RepartoAvion, RepartoPdfRequest
 from app.schemas.reportes import REGLA_COMISIONES_RESPALDO
 
-# Fila de la cascada (PDF) y columna E (Excel) con `comisiones_venta_usd`
-# cuando aplica la regla; antes, «(-) Comisiones de venta» / «Comisiones
-# venta» (la comisión del vendedor de antes del 28-ago-2026).
+# Fila de la cascada (PDF) y columna E (Excel) con `comisiones_venta_usd`:
+# lo que absorbe el avión = su parte de la comisión bancaria + los pagos
+# «Comisión del vendedor (avión)» (API 0.0.74). Antes, «(-) Comisiones de
+# venta» / «Comisiones venta» (la comisión del vendedor de antes del
+# 28-ago-2026). La fila del PDF solo se imprime con monto ≠ 0; el
+# encabezado de la columna E es este SIEMPRE desde el 13-oct-2026 (también
+# oculta, sin comisiones absorbidas). Mismo nombre que el panel
+# («Comisiones (banco + vendedor)» en la cascada del reparto) y que la
+# cascada del Balance general.
 ETIQUETA_FILA = "(-) Comisiones (banco + vendedor)"
 ETIQUETA_COLUMNA = "Comisiones (banco + vendedor)"
 # Línea gris bajo «Otros ingresos VuelaTour» del PDF cuando el avión absorbe

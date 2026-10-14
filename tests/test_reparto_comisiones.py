@@ -22,6 +22,11 @@ categorías, misma bandera): lo del vendedor es el pago capturado como
 «Comisión del vendedor (avión)» —en cualquier fecha— y el de «Comisión del
 vendedor (VuelaTour)» lo paga VuelaTour: las frases nombran las dos y la
 línea gris dice «pago «(avión)» resta en Comisiones» (88 caracteres, cabe).
+
+13-oct-2026 (lote 2, rótulos desfasados): el encabezado de la columna E del
+Excel es «Comisiones (banco + vendedor)» SIEMPRE; sin comisiones absorbidas
+la columna sigue oculta y esa celda es lo ÚNICO que cambia (ya no dice
+«Comisiones venta»).
 """
 
 from __future__ import annotations
@@ -223,7 +228,11 @@ def test_xlsx_con_comisiones_columna_visible_y_notas_nuevas() -> None:
 
 def test_xlsx_sin_comisiones_igual_que_siempre() -> None:
     ws = load_workbook(BytesIO(render_reparto_xlsx(_req(0)))).active
-    assert ws["E4"].value == "Comisiones venta"
+    # 13-oct-2026 (rótulos desfasados): la columna E OCULTA ya no dice
+    # «Comisiones venta» (la comisión del vendedor de antes del 28-ago); se
+    # llama como cuando trae monto. Es lo ÚNICO que cambió sin comisiones.
+    assert ws["E4"].value == ETIQUETA_COLUMNA
+    assert not any(t == "Comisiones venta" for t in _textos_xlsx(ws))
     assert ws.column_dimensions["E"].hidden
     assert "; el pago de la comisión al vendedor sale de VuelaTour, no del avión" in ws["A8"].value
     assert ws["A10"].value == (

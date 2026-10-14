@@ -204,7 +204,7 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=n_cols)
 
     headers = [
-        "Matrícula", "Modelo", "Horas voladas", "Venta del avión cobrada", "Comisiones venta",
+        "Matrícula", "Modelo", "Horas voladas", "Venta del avión cobrada", ETIQUETA_COLUMNA,
         "Pendiente de cobro (parte avión)", "Gastos directos", "Gastos indirectos", "Permisos",
         "Fijos (prorrateo + reparto)", "Reserva overhaul", "Saldo disponible",
         # Informativas (regla 28-ago), FUERA de las columnas que suman el saldo:
@@ -215,11 +215,10 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     ]
     # Columna E con las comisiones que absorbe el avión (regla de septiembre
     # 2026: banco + lo del vendedor —su provisión hasta el API 0.0.73, el
-    # pago «Comisión del vendedor (avión)» desde el 0.0.74—): se nombra así
-    # cuando alguno las trae; si no, el encabezado de siempre (la columna va
-    # oculta).
-    if comisiones_al_avion(req):
-        headers[4] = ETIQUETA_COLUMNA
+    # pago «Comisión del vendedor (avión)» desde el 0.0.74—). Desde el
+    # 13-oct-2026 se llama así SIEMPRE: sin comisiones absorbidas la columna
+    # va oculta (abajo), pero quien la mostraba leía «Comisiones venta», el
+    # rótulo de la comisión del vendedor de antes del 28-ago-2026.
     hrow = 4
     _header_row(ws, hrow, headers)
 
