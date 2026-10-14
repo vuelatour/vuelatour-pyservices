@@ -138,6 +138,101 @@ def test_ticket_prompt_pide_comisariato_para_pasajeros(claude_fake) -> None:
     assert "señales de PASAJEROS mandan a OTRO" not in texto
 
 
+# --- TUA sistémica (13-oct-2026, API 0.0.75): `tua_monto` leído aparte ------
+
+
+def test_ticket_tua_monto_se_copia(claude_fake) -> None:
+    claude_fake(anthropic_vision, {**TICKET_OK, "tua_monto": 939.6})
+    res = leer_ticket_gasto(_ticket())
+    assert res.tua_monto == 939.6
+    assert res.advertencias == []
+    assert res.confianza == 0.93
+
+
+def test_ticket_tua_monto_mayor_que_el_total_se_descarta(claude_fake) -> None:
+    """Dato SECUNDARIO: se limpia con aviso; el total y su confianza intactos."""
+    claude_fake(anthropic_vision, {**TICKET_OK, "tua_monto": 1000})
+    res = leer_ticket_gasto(_ticket())
+    assert res.tua_monto is None
+    assert any("TUA leída" in a for a in res.advertencias)
+    assert res.advertencias == [
+        "La TUA leída (1,000.00) es mayor que el total del documento (939.60): se descartó."
+    ]
+    assert res.monto == 939.60
+    assert res.confianza == 0.93
+
+
+def test_ticket_sin_tua_monto_sigue_igual(claude_fake) -> None:
+    """Un modelo que no manda la llave (o la manda en 0/null) ⇒ None sin aviso;
+    el resto de la lectura es la de siempre."""
+    claude_fake(anthropic_vision, TICKET_OK)
+    base = leer_ticket_gasto(_ticket())
+    assert base.tua_monto is None
+    assert base.advertencias == []
+    for valor in (None, 0, -5, "abc"):
+        claude_fake(anthropic_vision, {**TICKET_OK, "tua_monto": valor})
+        res = leer_ticket_gasto(_ticket())
+        assert res.tua_monto is None, valor
+        assert res.model_dump(exclude={"uso_ia"}) == base.model_dump(exclude={"uso_ia"}), valor
+
+
+def test_ticket_caso_383_tabla_resumen_corrida(claude_fake) -> None:
+    """#383 (gasto 8c60e428): la IA llamó «Autobuses» a la Tarifa TUA de la
+    tabla resumen de ASUR. Los renglones cuadran y se entregan TAL CUAL (aquí
+    no se re-etiqueta nada) y `tua_monto` viaja para que el API separe."""
+    payload = {
+        **TICKET_OK,
+        "monto": 1925.27,
+        "categoria_sugerida": "OPERACIONES",
+        "conceptos": [
+            {"concepto": "Operaciones", "monto": 1365.64},
+            {"concepto": "Autobuses", "monto": 559.63},
+        ],
+        "iva_monto": None,
+        "tua_monto": 559.63,
+    }
+    claude_fake(anthropic_vision, payload)
+    res = leer_ticket_gasto(_ticket())
+    assert [(c.concepto, c.monto) for c in res.conceptos] == [
+        ("Operaciones", 1365.64),
+        ("Autobuses", 559.63),
+    ]
+    assert res.tua_monto == 559.63
+    assert res.advertencias == []
+
+
+def test_ticket_tua_monto_sobrevive_si_se_descartan_conceptos(claude_fake) -> None:
+    """Renglones que no suman el total ⇒ se vacían (regla del 26-ago), pero la
+    TUA leída aparte se conserva: el panel la enseña como sugerencia."""
+    payload = {
+        **TICKET_OK,
+        "monto": 1925.27,
+        "conceptos": [
+            {"concepto": "Operaciones", "monto": 1000.0},
+            {"concepto": "Tarifa TUA", "monto": 559.63},
+        ],
+        "iva_monto": None,
+        "tua_monto": 559.63,
+    }
+    claude_fake(anthropic_vision, payload)
+    res = leer_ticket_gasto(_ticket())
+    assert res.conceptos == []
+    assert any("desglose" in a for a in res.advertencias)
+    assert res.tua_monto == 559.63
+
+
+def test_prompt_tabla_resumen_y_tua_monto() -> None:
+    texto = anthropic_vision._TICKET_SYSTEM
+    assert "MISMA FILA" in texto
+    assert '"Tarifa TUA"' in texto
+    assert "Migración" in texto
+    assert "la etiqueta está corrida: corrígela" in texto
+    assert '"tua_monto"' in texto
+    assert "con duda, null" in texto
+    # La clave nueva va entre "conceptos" y "matricula".
+    assert texto.index('"conceptos"') < texto.index('"tua_monto"') < texto.index('"matricula"')
+
+
 def test_ticket_matricula_y_tarjeta_fuera_de_catalogo_avisan(claude_fake) -> None:
     payload = {**TICKET_OK, "matricula": "XA-ZZZ", "tarjeta_terminacion": "1111"}
     claude_fake(anthropic_vision, payload)

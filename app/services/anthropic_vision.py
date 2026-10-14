@@ -36,6 +36,7 @@ from app.services.validaciones_ia import (
     validar_identidad_combustible,
     validar_rfc,
     validar_suma_conceptos,
+    validar_tua_monto,
 )
 
 _SYSTEM = (
@@ -346,12 +347,22 @@ _TICKET_SYSTEM = (
     "de este dato: no lo inventes.\n"
     '  "conceptos": lista [{"concepto": string, "monto": número}] con el desglose '
     "de la factura. PRIORIDAD 1 — TABLA RESUMEN: muchas facturas de aeropuerto "
-    "(ASUR/ADO) traen al pie una tabla resumen por SECCIONES (Operaciones, Taxi, "
-    "Autobuses, Tarifa TUA, Combustible, FOB) con columnas SubTotal/IVA/Total; si "
-    "existe, usa ESA tabla: un concepto por sección con Total distinto de cero, "
-    'con "monto" = columna TOTAL (IVA YA INCLUIDO), eligiendo solo las secciones '
-    "cuya suma dé exactamente el TOTAL pagado de la factura, y NO agregues renglón "
-    "de IVA aparte. PRIORIDAD 2 — sin tabla resumen: usa los RENGLONES del "
+    "(ASUR/ADO) traen al pie una tabla resumen por SECCIONES con columnas "
+    "SubTotal/IVA/Total. Las secciones posibles son EXACTAMENTE: Operaciones, "
+    "Taxi, Autobuses, Tarifa TUA, Combustible, FOB y Migración — usa esos "
+    'nombres tal cual como "concepto". Lee la ETIQUETA y el Total de la MISMA '
+    "FILA: recorre la tabla fila por fila sin correrte un renglón (las "
+    "secciones en cero —Taxi, Autobuses— se intercalan y es fácil que el Total "
+    "de la Tarifa TUA quede con la etiqueta de la fila vecina). La sección de "
+    'la Tarifa de Uso de Aeropuerto se llama SIEMPRE "Tarifa TUA" (nunca '
+    "Autobuses, Taxi ni Operaciones). Antes de responder comprueba: si pusiste "
+    "un Total en Taxi o Autobuses pero la factura no detalla ningún servicio de "
+    "taxi o autobús y SÍ cobra TUA, la etiqueta está corrida: corrígela. Si "
+    "existe la tabla, usa ESA tabla: un concepto por sección con Total "
+    'distinto de cero, con "monto" = columna TOTAL (IVA YA INCLUIDO), '
+    "eligiendo solo las secciones cuya suma dé exactamente el TOTAL pagado de "
+    "la factura, y NO agregues renglón de IVA aparte. PRIORIDAD 2 — sin tabla "
+    "resumen: usa los RENGLONES del "
     "ticket/factura SOLO si desglosa claramente varios conceptos (ej. aterrizaje, "
     "plataforma de pernocta, embarque, servicio FBO, T.U.A.); máximo 8; [] si es "
     "un solo concepto o no se distinguen. EXCEPCIÓN al caso de un solo concepto: "
@@ -376,6 +387,16 @@ _TICKET_SYSTEM = (
     'agrega el IVA como un renglón más ({"concepto": "IVA 16%", "monto": X}) para '
     "que la SUMA de renglones (ya con descuentos aplicados) sea exactamente el "
     "TOTAL pagado; si aun así no cuadra, [].\n"
+    '  "tua_monto": número con el importe TOTAL (IVA INCLUIDO) de la Tarifa de '
+    "Uso de Aeropuerto (TUA / T.U.A.) que cobra ESTE documento, en su moneda, o "
+    "null si no cobra TUA. Con tabla resumen es el Total de la sección "
+    '"Tarifa TUA"; sin tabla, el renglón TUA neto (ya con su descuento) más su '
+    "IVA cuando la factura desglosa el IVA aparte (ej. neto 482.44 con IVA "
+    "16 % → 559.63), o el importe tal cual si ya lo incluye. Debe coincidir con "
+    'el concepto "Tarifa TUA" cuando lo listaste en "conceptos". Solo facturas '
+    "de aeropuerto, aeródromo o FBO; en cualquier otro ticket, null. Las claves "
+    "210100, 210200 y 210300 (aterrizaje y plataformas) NO son TUA; 130700 y "
+    "230700 (Cozumel) SÍ. NUNCA lo inventes ni lo estimes: con duda, null.\n"
     '  "matricula": matrícula de la aeronave si aparece en el documento '
     "(observaciones/referencias; formato XA-ABC, XB-ABC o N123XX), o null. "
     "Compárala con la flota del contexto de dominio: si no es ninguna de "
@@ -523,6 +544,12 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         conceptos = []
         avisos.append(aviso_conceptos)
 
+    # TUA leída aparte (13-oct-2026, TUA sistémica): dato SECUNDARIO. NO se
+    # vacía cuando se descartan los conceptos (el panel la enseña como
+    # sugerencia); si separa o no la decide el API (solo con tabla que cuadra).
+    tua_monto, aviso_tua = validar_tua_monto(num(data.get("tua_monto")), monto_f)
+    avisos.append(aviso_tua)
+
     matricula = _parse_matricula(data.get("matricula"))
     flota = [str(m) for m in (req.matriculas_flota or []) if str(m).strip()] or list(
         MATRICULAS_FLOTA
@@ -585,6 +612,7 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         matricula=matricula,
         rfc_emisor=rfc_emisor,
         iva_monto=iva_monto,
+        tua_monto=tua_monto,
         lugar=_str_or_none(data.get("lugar")),
         # El total es el dato principal: solo se castiga la confianza si no se
         # pudo leer (un desglose que no suma no vuelve dudoso al total).

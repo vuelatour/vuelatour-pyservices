@@ -248,6 +248,20 @@ class GastoTicketResponse(BaseModel):
     iva_monto: float | None = Field(
         default=None, description="IVA desglosado en el documento, si viene separado"
     )
+    # ADITIVO (13-oct-2026, TUA sistémica, API 0.0.75): la TUA que cobra el
+    # documento leída APARTE de los renglones. Caso #383: la IA corrió una
+    # fila de la tabla resumen de ASUR y llamó «Autobuses» a la Tarifa TUA;
+    # con esta señal el API separa la TUA aunque el renglón traiga otro
+    # nombre (solo si la tabla cuadra: la decisión vive en el API, aquí solo
+    # se valida que sea > 0 y ≤ total). Un API previo la ignora.
+    tua_monto: float | None = Field(
+        default=None,
+        description=(
+            "TUA (Tarifa de Uso de Aeropuerto) que cobra ESTE documento, IVA incluido, "
+            "en su moneda; null si no cobra TUA (13-oct-2026). Señal para separar la "
+            "TUA cuando el renglón quedó con otro nombre; la decide el API."
+        ),
+    )
     lugar: str | None = Field(
         default=None, description="Ciudad o aeropuerto del ticket (empata con el banco)"
     )

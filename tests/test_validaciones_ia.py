@@ -26,6 +26,7 @@ from app.services.validaciones_ia import (
     validar_identidad_combustible,
     validar_rfc,
     validar_suma_conceptos,
+    validar_tua_monto,
 )
 
 # --- Contexto de dominio ---------------------------------------------------
@@ -111,6 +112,23 @@ def test_validar_suma_conceptos() -> None:
     aviso = validar_suma_conceptos(conceptos, 1000.0)
     assert aviso is not None and "939.60" in aviso
     assert validar_suma_conceptos([], 939.60) is None
+
+
+def test_validar_tua_monto() -> None:
+    """TUA sistémica (13-oct-2026): ≤ 0/ausente ⇒ sin dato ni aviso; mayor que
+    el total (+0.02) ⇒ se descarta con aviso; si no, a centavos."""
+    assert validar_tua_monto(None, 100) == (None, None)
+    assert validar_tua_monto(0, 100) == (None, None)
+    assert validar_tua_monto(-5, 100) == (None, None)
+    assert validar_tua_monto(559.634, 1925.27) == (559.63, None)
+    assert validar_tua_monto(1925.27, 1925.27) == (1925.27, None)
+    assert validar_tua_monto(1925.29, 1925.27) == (1925.29, None)  # tolerancia 0.02
+    assert validar_tua_monto(2000, 1925.27) == (
+        None,
+        "La TUA leída (2,000.00) es mayor que el total del documento (1,925.27): se descartó.",
+    )
+    assert validar_tua_monto(1925.30, 1925.27)[0] is None
+    assert validar_tua_monto(50, None) == (50.0, None)
 
 
 def test_identidad_combustible() -> None:

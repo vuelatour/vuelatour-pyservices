@@ -1722,6 +1722,39 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   (`tests/test_sugerir_conciliacion.py`) y la versión del dominio en
   `tests/test_sugerir_abonos.py`.
 
+- **TUA sistémica (13-oct-2026, API 0.0.75; la columna `gasto.tua_incluida`
+  es la migración del API `20261013000008`, que el diseño numeraba 000003).**
+  Caso #383 (gasto 8c60e428): la IA leyó CORRIDA la tabla resumen de ASUR y
+  llamó «Autobuses» a la Tarifa TUA de $559.63; nada se separó y la TUA se
+  cargó al avión como operación. Aquí: (1) `GastoTicketResponse.tua_monto`
+  ADITIVO en `/vision/gasto` (`float | None`, default None: TUA que cobra el
+  documento, IVA incluido, en su moneda); `validaciones_ia.validar_tua_monto`
+  (PURA) la limpia: ≤ 0 o ausente ⇒ null sin aviso; > total + 0.02
+  (`TOL_SUMA`) ⇒ null + advertencia «La TUA leída (2,000.00) es mayor que el
+  total del documento (1,925.27): se descartó.»; si no, a centavos. Dato
+  SECUNDARIO (no castiga la confianza) y **NO se vacía cuando
+  `validar_suma_conceptos` descarta los renglones** (el panel la enseña como
+  sugerencia «La IA leyó una TUA de $X…»). (2) Prompt `_TICKET_SYSTEM`:
+  PRIORIDAD 1 de «conceptos» con las secciones canónicas EXACTAS
+  (Operaciones, Taxi, Autobuses, Tarifa TUA, Combustible, FOB y Migración),
+  etiqueta y Total de la MISMA FILA, la sección de la TUA SIEMPRE «Tarifa
+  TUA» y la autocomprobación «Total en Taxi/Autobuses sin servicio de taxi o
+  autobús y con TUA ⇒ etiqueta corrida»; clave nueva `"tua_monto"` entre
+  «conceptos» y «matricula» (210100/210200/210300 NO son TUA; 130700/230700
+  SÍ; «con duda, null»). PRIORIDAD 2, EXCEPCIÓN, claves y descuentos sin
+  cambio. **La separación la decide el API** (`common/desglose-gasto.util.ts`:
+  oficina `tua_incluida` > renglón TUA reconocido > `tua_monto` SOLO con una
+  tabla que cuadra): aquí no se cruzan renglones ni se copia `esTua`, y
+  reportes/payloads del balance no cambian. Un API previo ignora la llave
+  (viaja dentro de `valor_ia_extraido` y el 0.0.75 la aprovecha al
+  reanalizar). Deploy en cualquier orden (ADITIVO). Tests:
+  `test_validar_tua_monto` (`tests/test_validaciones_ia.py`) y, en
+  `tests/test_vision_validaciones.py`, `test_ticket_tua_monto_se_copia`,
+  `…_mayor_que_el_total_se_descarta`, `test_ticket_sin_tua_monto_sigue_igual`,
+  `test_ticket_caso_383_tabla_resumen_corrida`,
+  `test_ticket_tua_monto_sobrevive_si_se_descartan_conceptos` y
+  `test_prompt_tabla_resumen_y_tua_monto`.
+
 - **Folio anti-duplicados de tickets de ESTANCIA del aeropuerto (2-oct-2026).**
   ASUR imprime «COBRO ESTANCIA · Boleto FBOE7»: el «Boleto» es la TARJETA de
   acceso y se repite en cada visita; la IA lo tomaba como `folio` y el candado

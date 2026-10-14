@@ -138,6 +138,31 @@ def validar_suma_conceptos(
     )
 
 
+def validar_tua_monto(
+    tua: float | None, monto: float | None, tol: float = TOL_SUMA
+) -> tuple[float | None, str | None]:
+    """TUA (IVA incluido) leída APARTE por la IA (13-oct-2026, TUA sistémica).
+
+    Es un dato SECUNDARIO: si no pasa se limpia y se avisa, pero la
+    confianza del total NO se castiga. ≤ 0 o ausente ⇒ (None, None) sin
+    aviso; mayor que el total del documento (+ tolerancia) ⇒ (None, aviso);
+    si no, redondeada a centavos. NO se cruza contra los renglones ni se
+    copia aquí el `esTua` del API: la separación la decide el API
+    (`common/desglose-gasto.util.ts`, solo con una tabla que cuadra). Se
+    conserva aunque `validar_suma_conceptos` descarte el desglose: el panel
+    la enseña como sugerencia.
+    """
+    if tua is None or tua <= 0:
+        return None, None
+    # + 1e-9: que el ruido de punto flotante no tire una TUA justo en el tope.
+    if monto is not None and tua - monto > tol + 1e-9:
+        return None, (
+            f"La TUA leída ({tua:,.2f}) es mayor que el total del documento "
+            f"({monto:,.2f}): se descartó."
+        )
+    return round(tua, 2), None
+
+
 def validar_identidad_combustible(
     litros: float | None, precio_litro: float | None, total: float | None, iva_pct: float = 16.0
 ) -> tuple[str | None, bool]:
