@@ -131,6 +131,7 @@ from app.schemas.reportes import (
     BalanceHojaInventario,
     BalanceHojaOtrosMovimientos,
     BalanceOtroMovimientoFila,
+    BalanceVinculoGasto,
     TcHoy,
 )
 from app.services import libro_json, xlsx_formulas
@@ -438,6 +439,106 @@ _DETALLE_ATTR = {
     "piloto_mxn": "piloto_detalle",
     "otros_mxn": "otros_detalle",
 }
+# Vínculos gasto → celda (13-oct-2026, API 0.0.75, punto 5 del lote: «abrir el
+# balance en la celda del gasto» desde Conciliación). Las MISMAS columnas que
+# llevan la nota de desglose llevan, en el libro JSON de la vista en pantalla,
+# los ids de los gastos que las componen (`*_vinculos` del API). Metadato: el
+# .xlsx no cambia ni un byte (el registro vive fuera de openpyxl, en
+# `libro_json.vincular_lista`) y aquí no se decide a qué libro ni a qué mes va
+# un gasto: solo se transporta lo que el API ya acreditó.
+_VINCULOS_ATTR = {
+    "op_mxn": "op_vinculos",
+    "piloto_mxn": "piloto_vinculos",
+    "otros_mxn": "otros_vinculos",
+}
+
+
+def _vinculo_de_vuelo(x: BalanceVinculoGasto, *, fila: str | None, columna: str) -> dict:
+    """Vínculo de UNA celda de costos de la fila del vuelo (OPERACIONES,
+    PILOTO, OTROS o TOTAL PARA PROVEEDOR (PESOS)) hacia un gasto que la
+    compone: `{tipo, id, rol, monto_mxn}` + `gasto_mxn` (solo si el API lo
+    mandó: la celda lleva una PARTE del gasto o es una nota con monto) +
+    `fila` (la clave del vuelo, solo si viene) + `columna` (encabezado sin
+    saltos de línea). Función PURA: no suma nada, copia lo que mandó el API."""
+    d: dict = {"tipo": "gasto", "id": x.id, "rol": x.rol, "monto_mxn": x.monto_mxn}
+    if x.gasto_mxn is not None:
+        d["gasto_mxn"] = x.gasto_mxn
+    if fila:
+        d["fila"] = fila
+    d["columna"] = columna
+    return d
+
+
+def _vinculos_unidos(*listas: list[BalanceVinculoGasto]) -> list[BalanceVinculoGasto]:
+    """TOTAL PARA PROVEEDOR (PESOS) de la variante «general» suma operación +
+    piloto + otros: UN vínculo por id, en el orden de su primera aparición.
+    `rol` = 'suma' si alguna de sus partes suma (si no, el de la primera);
+    `monto_mxn` = Σ None-tolerante (`_suma_none`) de las partes con rol
+    'suma' (la operación y el FBO de UNA factura repartida ⇒ un solo vínculo
+    con las dos partes); `gasto_mxn` = el primero que no sea None. Función
+    PURA de presentación: el monto solo se MUESTRA en la franja del panel."""
+    orden: list[str] = []
+    partes: dict[str, list[BalanceVinculoGasto]] = {}
+    for lista in listas:
+        for x in lista or []:
+            if not x.id:
+                continue
+            if x.id not in partes:
+                orden.append(x.id)
+                partes[x.id] = []
+            partes[x.id].append(x)
+    unidos: list[BalanceVinculoGasto] = []
+    for ident in orden:
+        ps = partes[ident]
+        suman = [p for p in ps if p.rol == "suma"]
+        monto: float | None = None
+        for p in suman:
+            monto = _suma_none(monto, p.monto_mxn)
+        gasto = next((p.gasto_mxn for p in ps if p.gasto_mxn is not None), None)
+        unidos.append(
+            BalanceVinculoGasto(
+                id=ident,
+                rol="suma" if suman else ps[0].rol,
+                monto_mxn=monto,
+                gasto_mxn=gasto,
+            )
+        )
+    return unidos
+
+
+def _anotar_vinculos_vuelo(
+    cell, v: BalanceAvionVuelo, lista: list[BalanceVinculoGasto], columna: str
+) -> None:
+    """Anota en el libro JSON los gastos que componen la celda de costos `cell`
+    de la fila del vuelo `v`. Lista vacía (API ≤ 0.0.74 o sin gastos) ⇒ nada."""
+    if not lista:
+        return
+    libro_json.vincular_lista(
+        cell, [_vinculo_de_vuelo(x, fila=v.clave, columna=columna) for x in lista if x.id]
+    )
+
+
+def _anotar_vinculo_fila(
+    cell, f: BalanceAvionGastoFila, *, monto: float | None, columna: str
+) -> None:
+    """La celda es el MONTO de la fila del gasto `f` (rol 'fila'): MONTO MXN de
+    las hojas de gastos y de combustible, VENTA AL AVIÓN del bloque 2 de
+    inventario. Sin `gasto_id` (API ≤ 0.0.74) ⇒ nada. Un parcial de reparto
+    manual lleva el id del gasto PADRE y `parte` ('reparto' | 'remanente')."""
+    if not f.gasto_id:
+        return
+    vinculo: dict = {
+        "tipo": "gasto",
+        "id": f.gasto_id,
+        "rol": "fila",
+        "monto_mxn": monto,
+        "columna": columna,
+    }
+    if f.gasto_parte:
+        vinculo["parte"] = f.gasto_parte
+    libro_json.vincular_lista(cell, [vinculo])
+
+
 _GROUP_FILLS = {
     "VENTA": FILL_VENTA,
     "COSTOS DIRECTOS (MXN)": FILL_COSTOS,
@@ -2523,6 +2624,20 @@ def _hoja_maestra(
                     nota_costo = _nota_desglose_costo(v)
                     if nota_costo:
                         cell.comment = _comentario_desglose(nota_costo)
+                # Vínculos gasto → celda (13-oct-2026, punto 5): solo el libro
+                # JSON de la vista en pantalla; el .xlsx no cambia.
+                vin_attr = _VINCULOS_ATTR.get(attr)
+                if vin_attr:
+                    _anotar_vinculos_vuelo(
+                        cell, v, getattr(v, vin_attr, None) or [], _header.replace("\n", " ")
+                    )
+                if attr == "cph_proveedor_mxn":
+                    _anotar_vinculos_vuelo(
+                        cell,
+                        v,
+                        _vinculos_unidos(v.op_vinculos, v.piloto_vinculos, v.otros_vinculos),
+                        _header.replace("\n", " "),
+                    )
                 # COMISIONES (regla de septiembre 2026): qué comisiones son,
                 # una línea por concepto (las dos variantes).
                 if attr == "comisiones_mxn":
@@ -2928,6 +3043,11 @@ def _hoja_gastos(
                 # Moneda/monto original solo cuando el gasto NO se capturó en MXN.
                 ws.cell(row=row, column=5, value=f.moneda_original).border = _border
                 _num(ws, row, 6, f.monto_original).border = _border
+            # Vínculo gasto → celda MONTO MXN (13-oct-2026, punto 5; solo el
+            # libro JSON de la vista en pantalla).
+            _anotar_vinculo_fila(
+                ws.cell(row=row, column=4), f, monto=f.monto_mxn, columna="MONTO MXN"
+            )
             if con_costo_venta:
                 _num(ws, row, 7, f.costo_mxn).border = _border
                 _num(ws, row, 8, f.venta_mxn).border = _border
@@ -3568,6 +3688,10 @@ def _hoja_combustible(
                 dc.alignment = Alignment(wrap_text=True, vertical="top")
                 _num(ws, row, 3, f.litros, HORAS).border = _border
                 _num(ws, row, 4, f.monto_mxn).border = _border
+                # Vínculo gasto → celda MONTO MXN (13-oct-2026, punto 5).
+                _anotar_vinculo_fila(
+                    ws.cell(row=row, column=4), f, monto=f.monto_mxn, columna="MONTO MXN"
+                )
                 ws.cell(row=row, column=5, value=f.moneda_original).border = _border
                 _num(ws, row, 6, f.monto_original).border = _border
                 # PAGO (medio de pago ya legible del API): última columna,
@@ -4939,6 +5063,11 @@ def _hoja_inventario(
                 ac.fill = PatternFill("solid", fgColor=avion_fill)
             _num(ws, row, 4, f.costo_mxn).border = _border
             _num(ws, row, 5, f.venta_mxn).border = _border
+            # Vínculo gasto → celda VENTA AL AVIÓN (13-oct-2026, punto 5): el
+            # gasto BODEGA del avión es la venta de la salida.
+            _anotar_vinculo_fila(
+                ws.cell(row=row, column=5), f, monto=f.venta_mxn, columna="VENTA AL AVIÓN"
+            )
             # GANANCIA = venta − costo (solo para MOSTRAR; 0 mientras la
             # salida se cargue a costo). Falta un lado → celda vacía.
             ganancia = (
@@ -5121,6 +5250,7 @@ def libro_balance_avion(req: BalanceAvionRequest, *, archivo: str | None = None)
         titulo=_titulo_balance_avion(req),
         archivo=archivo,
         generado=req.generado,
+        vinculos_gasto=req.vinculos_gasto is True,
     )
 
 
@@ -5920,4 +6050,5 @@ def libro_balance_general(req: BalanceGeneralRequest, *, archivo: str | None = N
         titulo=_titulo_balance_general(req),
         archivo=archivo,
         generado=req.generado,
+        vinculos_gasto=req.vinculos_gasto is True,
     )

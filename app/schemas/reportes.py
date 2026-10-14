@@ -770,6 +770,72 @@ class BalanceAvionCobro(BaseModel):
         return None
 
 
+def _monto_vinculo_liberal(v: Any) -> float | None:
+    """Monto de un metadato de vínculo: número finito o texto numérico ⇒
+    float; bool, NaN/infinito, texto no numérico u otra cosa ⇒ None. Jamás
+    un 422 por un metadato (tumbaría el .xlsx y el libro)."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int | float):
+        return float(v) if math.isfinite(v) else None
+    if isinstance(v, str):
+        try:
+            x = float(v.strip())
+        except ValueError:
+            return None
+        return x if math.isfinite(x) else None
+    return None
+
+
+class BalanceVinculoGasto(BaseModel):
+    """Un gasto que COMPONE una celda de costos de la fila del vuelo
+    (OPERACIONES, PILOTO u OTROS) — 13-oct-2026, API 0.0.75, punto 5 del lote
+    («abrir el balance en la celda del gasto» desde Conciliación). Solo se
+    transporta a `libro_json.vincular_lista`; aquí no se decide nada.
+    `rol`: 'suma' (la celda lo suma), 'nota' (solo va en la nota: TUA,
+    extensión de horario) o 'sin_tc' (USD sin T.C. que todavía no suma);
+    `monto_mxn` = lo que aporta a la celda; `gasto_mxn` = el total del gasto
+    cuando la celda lleva solo una parte."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = ""
+    rol: str = "suma"
+    monto_mxn: float | None = None
+    gasto_mxn: float | None = None
+
+    @field_validator("monto_mxn", "gasto_mxn", mode="before")
+    @classmethod
+    def _monto_liberal(cls, v: Any) -> float | None:
+        return _monto_vinculo_liberal(v)
+
+    @field_validator("rol", mode="before")
+    @classmethod
+    def _rol_liberal(cls, v: Any) -> str:
+        """Texto ⇒ recortado y en minúsculas; vacío o no-texto ⇒ 'suma'."""
+        if isinstance(v, str) and v.strip():
+            return v.strip().lower()
+        return "suma"
+
+
+def _vinculos_liberales(v: Any) -> list:
+    """Lista de vínculos tolerante: lo que no es lista o tupla ⇒ []; se
+    quedan solo los dict (o `BalanceVinculoGasto`) con `id` de texto no
+    vacío (recortado). Jamás un 422 por un metadato."""
+    if not isinstance(v, list | tuple):
+        return []
+    out: list = []
+    for x in v:
+        if isinstance(x, BalanceVinculoGasto):
+            if x.id.strip():
+                out.append(x)
+        elif isinstance(x, dict):
+            ident = x.get("id")
+            if isinstance(ident, str) and ident.strip():
+                out.append({**x, "id": ident.strip()})
+    return out
+
+
 class BalanceAvionVuelo(BaseModel):
     """Una fila de la hoja maestra 'reporte horas <MATRÍCULA>' (1 vuelo)."""
 
@@ -843,6 +909,14 @@ class BalanceAvionVuelo(BaseModel):
     op_detalle: list[str] = Field(default_factory=list)
     piloto_detalle: list[str] = Field(default_factory=list)
     otros_detalle: list[str] = Field(default_factory=list)
+    # ADITIVOS (13-oct-2026, API 0.0.75, punto 5 del lote): los gastos que
+    # componen OPERACIONES / PILOTO / OTROS de esta fila, empujados por el API
+    # en las MISMAS ramas que su línea de `*_detalle`. Solo viajan al libro
+    # JSON de la vista en pantalla (`vinculos` de la celda); el .xlsx no
+    # cambia. Vacíos (API previo) ⇒ ninguna anotación.
+    op_vinculos: list[BalanceVinculoGasto] = Field(default_factory=list)
+    piloto_vinculos: list[BalanceVinculoGasto] = Field(default_factory=list)
+    otros_vinculos: list[BalanceVinculoGasto] = Field(default_factory=list)
     permiso_afac_mxn: float | None = None
     # ADITIVO (12-oct-2026, API 0.0.69): la «Aportación AFAC USD/hr» del
     # AVIÓN de la fila. En el Balance general (hoja de vuelos de la flota)
@@ -987,6 +1061,11 @@ class BalanceAvionVuelo(BaseModel):
             return []
         return [x.strip() for x in v if isinstance(x, str) and x.strip()]
 
+    @field_validator("op_vinculos", "piloto_vinculos", "otros_vinculos", mode="before")
+    @classmethod
+    def _vinculos_liberales(cls, v: Any) -> Any:
+        return _vinculos_liberales(v)
+
 
 class BalanceAvionTotales(BaseModel):
     """Fila TOTALES de la hoja maestra: sumas y promedios YA calculados."""
@@ -1080,6 +1159,30 @@ class BalanceAvionGastoFila(BaseModel):
     # cargue a costo). None = sin columnas extra.
     costo_mxn: float | None = None
     venta_mxn: float | None = None
+    # ADITIVOS (13-oct-2026, API 0.0.75, punto 5 del lote): el id del gasto de
+    # la fila (en un parcial de reparto manual, el del gasto PADRE) y, si la
+    # fila es una parte, cuál ('reparto' | 'remanente'). Solo viajan al libro
+    # JSON de la vista en pantalla (`vinculos` de la celda MONTO MXN / VENTA
+    # AL AVIÓN); el .xlsx no cambia. None = API previo.
+    gasto_id: str | None = None
+    gasto_parte: str | None = None
+
+    @field_validator("gasto_id", mode="before")
+    @classmethod
+    def _gasto_id_liberal(cls, v: Any) -> str | None:
+        """Texto no vacío ⇒ recortado; lo demás ⇒ None (jamás un 422)."""
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        return None
+
+    @field_validator("gasto_parte", mode="before")
+    @classmethod
+    def _gasto_parte_liberal(cls, v: Any) -> str | None:
+        """Solo 'reparto' o 'remanente' (sin distinguir mayúsculas ni
+        espacios); cualquier otra cosa ⇒ None."""
+        if isinstance(v, str) and v.strip().lower() in ("reparto", "remanente"):
+            return v.strip().lower()
+        return None
 
 
 class BalanceAvionHojaGastos(BaseModel):
@@ -1446,11 +1549,21 @@ class BalanceAvionRequest(BaseModel):
     # con filas (hoja «otros ingresos aviones»). None (API ≤ 0.0.74) ⇒ ni
     # pestaña ni línea: libro byte a byte.
     otros_ingresos_avion: BalanceAvionHojaOtrosIngresos | None = None
+    # ADITIVO (13-oct-2026, API 0.0.75, punto 5 del lote): `true` SOLO en la
+    # petición del libro de la vista en pantalla: el JSON lleva
+    # `vinculos_gasto: true` en la raíz (el libro marca las celdas de los
+    # gastos). Cualquier otro valor ⇒ None (la raíz de siempre).
+    vinculos_gasto: bool | None = None
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod
     def _regla_liberal(cls, v: Any) -> str | None:
         return regla_comisiones_liberal(v)
+
+    @field_validator("vinculos_gasto", mode="before")
+    @classmethod
+    def _vinculos_gasto_liberal(cls, v: Any) -> bool | None:
+        return True if v is True else None
 
 
 class BalanceGeneralResumenFila(BaseModel):
@@ -1752,11 +1865,19 @@ class BalanceGeneralRequest(BaseModel):
     # `BalanceAvionRequest.regla_comisiones`): nota del RESUMEN y, si el
     # `consolidado` no trae la suya, las hojas de la flota.
     regla_comisiones: str | None = None
+    # ADITIVO (13-oct-2026, API 0.0.75, punto 5 del lote): como en
+    # `BalanceAvionRequest`: solo el libro de la vista en pantalla.
+    vinculos_gasto: bool | None = None
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod
     def _regla_liberal(cls, v: Any) -> str | None:
         return regla_comisiones_liberal(v)
+
+    @field_validator("vinculos_gasto", mode="before")
+    @classmethod
+    def _vinculos_gasto_liberal(cls, v: Any) -> bool | None:
+        return True if v is True else None
 
     @field_validator("variante", mode="before")
     @classmethod

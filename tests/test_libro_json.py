@@ -203,6 +203,65 @@ def test_vinculo_de_fase_2_viaja_si_la_celda_lo_trae():
     }
 
 
+def test_vinculos_lista_viaja_y_convive_con_el_singular():
+    """Vínculos en LISTA (13-oct-2026, punto 5): una celda puede sumar varios
+    gastos. Conviven con el `vinculo` singular de la fase 2, una lista vacía
+    no anota nada, una celda sin valor ni estilo pero con vínculos SÍ se
+    exporta y una segunda llamada REEMPLAZA (guarda copias)."""
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = 10
+    ws["B1"] = 20
+    libro_json.vincular(ws["A1"], {"tipo": "gasto", "id": "abc", "campo": "monto"})
+    original = [{"tipo": "gasto", "id": "g1", "rol": "suma", "monto_mxn": 4.0}]
+    libro_json.vincular_lista(ws["A1"], original)
+    original[0]["id"] = "mutado"  # copia: mutar la lista del llamador no viaja
+    libro_json.vincular_lista(ws["B1"], [])
+    libro_json.vincular_lista(ws["C1"], [{"tipo": "gasto", "id": "g3", "rol": "fila"}])
+    libro = libro_json.exportar_libro(wb, titulo="x")
+    hoja = libro["hojas"][0]
+    a1 = _celda(hoja, 1, 1)
+    assert a1["vinculo"] == {"tipo": "gasto", "id": "abc", "campo": "monto"}
+    assert a1["vinculos"] == [{"tipo": "gasto", "id": "g1", "rol": "suma", "monto_mxn": 4.0}]
+    assert "vinculos" not in _celda(hoja, 1, 2)
+    c1 = _celda(hoja, 1, 3)
+    assert c1 is not None and c1["v"] is None
+    assert c1["vinculos"] == [{"tipo": "gasto", "id": "g3", "rol": "fila"}]
+    # Segunda llamada sobre A1: reemplaza la lista entera.
+    libro_json.vincular_lista(
+        ws["A1"],
+        [
+            {"tipo": "gasto", "id": "g7", "rol": "nota", "monto_mxn": None},
+            {"tipo": "gasto", "id": "g8", "rol": "suma", "monto_mxn": 1.5},
+        ],
+    )
+    libro2 = libro_json.exportar_libro(wb, titulo="x")
+    assert [x["id"] for x in _celda(libro2["hojas"][0], 1, 1)["vinculos"]] == ["g7", "g8"]
+    json.dumps(libro2)
+
+
+def test_exportar_libro_marca_vinculos_gasto_solo_con_la_bandera():
+    """La raíz de siempre (8 llaves, en su orden) sin la bandera; con
+    `vinculos_gasto=True`, la llave es la ÚLTIMA y vale True."""
+    sin = libro_json.exportar_libro(_libro_sintetico(), titulo="Prueba")
+    llaves = [
+        "version",
+        "titulo",
+        "archivo",
+        "generado",
+        "ancho_columna_default",
+        "alto_fila_default",
+        "estilos",
+        "hojas",
+    ]
+    assert list(sin) == llaves
+    con = libro_json.exportar_libro(_libro_sintetico(), titulo="Prueba", vinculos_gasto=True)
+    assert list(con) == [*llaves, "vinculos_gasto"]
+    assert con["vinculos_gasto"] is True
+    falso = libro_json.exportar_libro(_libro_sintetico(), titulo="Prueba", vinculos_gasto=False)
+    assert list(falso) == llaves
+
+
 # ---------------------------------------------------------------------------
 # Los balances reales: el JSON es el mismo libro que el .xlsx
 # ---------------------------------------------------------------------------

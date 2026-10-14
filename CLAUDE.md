@@ -1337,6 +1337,57 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   que se descargaría — `tests/test_libro_json.py` compara el JSON contra el
   .xlsx real (hojas, valores de la caché de cada fórmula, combinadas) y
   congela el formato de número y cada rasgo del contrato.
+- **Vínculos gasto → celda (13-oct-2026, API 0.0.75, punto 5 del lote).**
+  Pedido del cliente: desde Conciliación, abrir el balance del avión o el
+  general (pestaña nueva) EN LA CELDA DEL GASTO. El API manda los ids y
+  pyservices solo los TRANSPORTA al libro JSON de la vista en pantalla:
+  **aquí no se decide a qué libro ni a qué mes va un gasto; solo se
+  transporta lo que el API ya acreditó.**
+  - **Entrada (ADITIVA, validadores liberales: jamás un 422 por un
+    metadato)**: cada renglón de las hojas de gastos (`BalanceAvionGastoFila`)
+    trae `gasto_id` (texto recortado; vacío o no-texto ⇒ None; en un parcial
+    de reparto manual, el del gasto PADRE) y `gasto_parte` ('reparto' |
+    'remanente'; cualquier otra cosa ⇒ None). Cada fila de vuelo
+    (`BalanceAvionVuelo`) trae `op_vinculos`, `piloto_vinculos` y
+    `otros_vinculos` (`BalanceVinculoGasto {id, rol, monto_mxn, gasto_mxn}`;
+    lo que no es lista ⇒ []; solo se quedan los objetos con `id` de texto no
+    vacío; `rol` texto en minúsculas, vacío ⇒ 'suma'; montos: número finito
+    o texto numérico, lo demás ⇒ None). `vinculos_gasto: true` en
+    `BalanceAvionRequest` / `BalanceGeneralRequest` SOLO en la petición del
+    libro (cualquier otro valor ⇒ None).
+  - **Salida**: `libro_json.vincular_lista(cell, vinculos)` (registro pegado
+    al workbook por `id(ws)` + coordenada, como `vincular`; guarda COPIAS,
+    una segunda llamada REEMPLAZA, lista vacía no anota) ⇒ la celda gana
+    `vinculos: [{tipo:'gasto', id, rol, monto_mxn?, gasto_mxn?, parte?,
+    fila?, columna?}]` (una celda SIN valor ni estilo pero con vínculos SÍ se
+    exporta) y `exportar_libro(..., vinculos_gasto=True)` agrega
+    `vinculos_gasto: true` como ÚLTIMA llave de la raíz (sin la bandera, las
+    8 llaves de siempre). Roles: `fila` = la celda es el MONTO de la fila de
+    ese gasto; `suma` = la celda lo suma con otros; `nota` = solo va en la
+    nota (TUA, extensión de horario); `sin_tc` = USD sin T.C. que aún no
+    suma.
+  - **Celdas anotadas** (`balance_avion_xlsx`): MONTO MXN de las hojas de
+    gastos (`_hoja_gastos`: «Gastos Indirectos» fusionada, «refacciones»,
+    «permisos» —también con `tc_por_fila`, donde la celda es FÓRMULA—, y en
+    el general «otros gastos», «repartidos a aviones» y el fallback
+    «refacciones») y de combustible (`_hoja_combustible`, individual y
+    flota) y VENTA AL AVIÓN del bloque 2 de «inventario» (`_hoja_inventario`),
+    todas con rol 'fila' (`_anotar_vinculo_fila`, + `parte` si el API la
+    manda); OPERACIONES, PILOTO y OTROS de la hoja maestra (individual y
+    «reporte horas FLOTA»; `_VINCULOS_ATTR`, `_anotar_vinculos_vuelo`, con
+    `fila` = la clave del vuelo y `columna` = el encabezado sin saltos) con
+    los roles que manda el API; y TOTAL PARA PROVEEDOR (PESOS) de la variante
+    «general» con la UNIÓN por id de las tres listas (`_vinculos_unidos`: un
+    vínculo por id en orden de primera aparición, 'suma' si alguna parte
+    suma, `monto_mxn` = Σ de las partes que suman —operación 67.14 + FBO
+    87.00 de una factura ⇒ 154.14—, `gasto_mxn` el primero no nulo). NO se
+    anotan TOTALES, COSTO TOTAL, COMISIONES ni el AFAC.
+  - **El .xlsx sale byte a byte**: el registro no toca openpyxl
+    (`tests/test_balance_vinculos.py` (f) compara los miembros del zip con y
+    sin ids, individual y las dos variantes del general). Sin ids ni
+    bandera, el libro JSON es el de siempre (g). Pruebas:
+    `tests/test_balance_vinculos.py` (a)–(h) y las dos de
+    `tests/test_libro_json.py` (`vinculos` en lista y la bandera raíz).
 - **PERMISO AFAC con fórmula POR FILA en la hoja de la flota y bloque
   «PERMISOS AFAC» en 'otros movimientos' (12-oct-2026, API 0.0.69).** Pedido
   de Ale: «una de las columnas de Permisos de AFAC necesitamos que venga con
