@@ -18,8 +18,11 @@ Ninguna prueba llama a Claude (`claude_fake`).
 """
 
 import base64
+import re
 from io import BytesIO
+from pathlib import Path
 
+import pytest
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
@@ -177,6 +180,37 @@ def test_leyendas_son_las_nueve_del_api_en_forma_plana() -> None:
     # Mismo criterio que normalizarPlano del API: acentos, puntos y espacios.
     assert _plano("  Sel Tránsf.  Interbancaria   SPEI ") == "SEL TRANSF INTERBANCARIA SPEI"
     assert _plano(None) == ""
+
+
+# Repo hermano del API: solo existe en el workspace local (en el CI de
+# pyservices, o mientras el API no tenga el util, la prueba se salta).
+_API = Path(__file__).resolve().parents[2] / "vuelatour-api" / "src"
+
+
+def _leer_api(rel: str) -> str | None:
+    ruta = _API / rel
+    return ruta.read_text(encoding="utf-8") if ruta.exists() else None
+
+
+def test_leyendas_paridad_con_el_api_repo_hermano() -> None:
+    """Las 9 leyendas son las MISMAS que `LEYENDAS_SIN_CONCEPTO` del API
+    (`conciliacion/enriquecer-descripcion.util.ts`), comparadas en forma
+    `_plano` (el API puede escribirlas crudas o ya normalizadas)."""
+    fuente = _leer_api("modules/conciliacion/enriquecer-descripcion.util.ts")
+    if fuente is None:
+        pytest.skip("sin el repo hermano del API o sin enriquecer-descripcion.util.ts")
+    sin_comentarios = re.sub(r"/\*.*?\*/|//[^\n]*", "", fuente, flags=re.S)
+    bloque = re.search(
+        r"export const LEYENDAS_SIN_CONCEPTO\b[^=]*=\s*(?:new Set(?:<[^>]*>)?\(\s*)?\[(.*?)\]",
+        sin_comentarios,
+        re.S,
+    )
+    assert bloque, "el API ya no declara LEYENDAS_SIN_CONCEPTO como arreglo"
+    del_api = {
+        _plano(simple or doble)
+        for simple, doble in re.findall(r"'([^']+)'|\"([^\"]+)\"", bloque.group(1))
+    }
+    assert del_api == set(_LEYENDAS_SIN_CONCEPTO)
 
 
 def test_advertencia_con_la_leyenda_sola_y_no_con_concepto() -> None:

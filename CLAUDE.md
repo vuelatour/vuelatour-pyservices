@@ -1913,7 +1913,10 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `_advertencias_pdf`, dentro del tope de 10— cuenta las filas cuya
   descripción en forma `_plano` (= `normalizarPlano` del API: NFD sin marcas
   U+0300–U+036F, mayúsculas, `[^A-Z0-9]+` → espacio) es una de las 9
-  `_LEYENDAS_SIN_CONCEPTO` (las MISMAS de `LEYENDAS_SIN_CONCEPTO` del API):
+  `_LEYENDAS_SIN_CONCEPTO` (las MISMAS de `LEYENDAS_SIN_CONCEPTO` del API;
+  `test_leyendas_paridad_con_el_api_repo_hermano` lee
+  `vuelatour-api/src/modules/conciliacion/enriquecer-descripcion.util.ts` y
+  se SALTA sin el repo hermano, como en Railway):
   «N transferencia(s) o pago(s) se leyeron SIN su concepto (solo la leyenda
   del banco, p. ej. «SEL TRANSF. INTERBANCARIA SPEI») …». El esquema NO
   cambia. El API completa la descripción de las filas YA importadas al
