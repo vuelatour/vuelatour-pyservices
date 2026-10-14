@@ -956,8 +956,9 @@ class BalanceAvionVuelo(BaseModel):
     # fuente única `comisionesDelVuelo`; aquí solo se pintan. ---
     # Total de la celda COMISIONES MXN = parte del avión de la comisión
     # bancaria de los cobros + comisión del vendedor (hasta el API 0.0.73 como
-    # PROVISIÓN; desde el 0.0.74, su pago REAL capturado). None (vuelo
-    # anterior o API ≤ 0.0.64) ⇒ celda vacía y GANANCIA = REMANENTE.
+    # PROVISIÓN; desde el 0.0.74, los pagos capturados como «Comisión del
+    # vendedor (avión)», en cualquier fecha). None (vuelo sin nada que
+    # absorber o API ≤ 0.0.64) ⇒ celda vacía y GANANCIA = REMANENTE.
     comisiones_mxn: float | None = None
     # Una línea por concepto, YA armada por el API (nota de la celda).
     comisiones_detalle: list[str] = Field(default_factory=list)
@@ -967,11 +968,13 @@ class BalanceAvionVuelo(BaseModel):
     comision_banco_avion_mxn: float | None = None
     comision_vendedor_prov_mxn: float | None = None
     # ADITIVOS (13-oct-2026, API 0.0.74, invariante 61 del API: comisión del
-    # vendedor SOLO como gasto real): la parte de ESTE avión del Σ de los
-    # gastos «Comisión del vendedor» del vuelo (MXN; 0 si el avión no lo
-    # absorbe) y cuántos pagos absorbió (0 = no absorbió). Viajan juntas con
-    # las de arriba; aquí no se pintan en celda (solo el respaldo de la nota
-    # de COMISIONES, `_nota_comisiones`). None = API previo.
+    # vendedor SOLO como gasto real, en dos categorías): la parte de ESTE
+    # avión del Σ de los gastos «Comisión del vendedor (avión)» del vuelo
+    # (MXN; 0 si el avión no los absorbe; los de «(VuelaTour)» nunca) y
+    # cuántos pagos absorbió (0 = no absorbió). Viajan juntas con las de
+    # arriba; aquí no se pintan en celda (solo el respaldo de la nota de
+    # COMISIONES, `_nota_comisiones`, y la excepción de la nota de un vuelo
+    # multi-avión, `_nota_participacion`). None = API previo.
     comision_vendedor_real_mxn: float | None = None
     comision_vendedor_real_pagos: int | None = None
 
@@ -1030,7 +1033,8 @@ class BalanceAvionTotales(BaseModel):
     comisiones_mxn: float | None = None
     # Σ de las partes del vendedor de las filas (informativas, no se pintan):
     # la provisión (0 desde el API 0.0.74) y, ADITIVO del 13-oct-2026 (API
-    # 0.0.74, invariante 61), el pago REAL que absorben los aviones.
+    # 0.0.74, invariante 61), los pagos «Comisión del vendedor (avión)» que
+    # absorben los aviones.
     comision_vendedor_prov_mxn: float | None = None
     comision_vendedor_real_mxn: float | None = None
 
@@ -1257,13 +1261,15 @@ class BalanceHojaOtrosMovimientos(BaseModel):
     # con el API nuevo ya no llega.
     sin_provision_vendedor: bool | None = None
     # ADITIVO (13-oct-2026, API 0.0.74, invariante 61 del API; decisión 3 del
-    # lote del cliente: «comisión del vendedor SOLO como gasto real»): ya no
-    # hay provisión en NINGÚN libro; en los vuelos COMPLETADOS de la regla de
-    # comisiones con comisión cotizada el pago real lo carga el avión en su
-    # columna COMISIONES y esta pestaña lo trae apareado con egreso $0.00
-    # «· a cargo del avión …». Con `true` cambian SOLO leyendas (fila 2,
-    # RESUMEN, bloque VUELATOUR) y MANDA sobre `sin_provision_vendedor`; sin
-    # ella (None/False, API ≤ 0.0.73) los textos de siempre, byte a byte.
+    # lote del cliente: «comisión del vendedor SOLO como gasto real», con su
+    # ajuste de DOS categorías): ya no hay provisión en NINGÚN libro; el pago
+    # capturado como «Comisión del vendedor (VuelaTour)» egresa en esta
+    # pestaña y el capturado como «Comisión del vendedor (avión)» lo carga el
+    # avión en su columna COMISIONES (aquí, apareado con egreso $0.00 «· a
+    # cargo del avión …»; si ningún avión lo carga, lo paga VuelaTour). Con
+    # `true` cambian SOLO leyendas (fila 2, RESUMEN, bloque VUELATOUR) y MANDA
+    # sobre `sin_provision_vendedor`; sin ella (None/False, API ≤ 0.0.73) los
+    # textos de siempre, byte a byte.
     comision_vendedor_solo_gasto_real: bool | None = None
     # ADITIVO (12-oct-2026, API 0.0.69): bloque informativo «PERMISOS AFAC»
     # (provisión vs pagado). None = API previo o periodo sin provisión ni
@@ -1338,8 +1344,9 @@ class BalanceAvionRequest(BaseModel):
     # previo) ⇒ la nota de hoy, libro byte a byte.
     factura_vuelatour_segun_cobros: bool | None = None
     # ADITIVO (13-oct-2026, API 0.0.74, invariante 61 del API): la comisión
-    # del vendedor resta SOLO como gasto real (COMISIONES = parte del avión de
-    # la comisión bancaria + el pago REAL capturado; sin gasto, solo la
+    # del vendedor resta SOLO como gasto real, en dos categorías (COMISIONES
+    # = parte del avión de la comisión bancaria + los pagos «Comisión del
+    # vendedor (avión)»; la «(VuelaTour)» nunca; sin pago, solo la
     # bancaria). Viaja en el libro individual, en cada `aviones[]` del
     # general Y en el `consolidado` FLOTA (a diferencia de
     # `sin_provision_vendedor`; como `factura_vuelatour_segun_cobros`): las
@@ -1892,15 +1899,25 @@ class DineroXlsxRequest(BaseModel):
     # restado de utilidades_otros_ingresos_mxn en lugar de la provisión de
     # esos vuelos (nunca los dos). El API lo manda SOLO si algún vuelo del
     # periodo tiene pago real: None ⇒ leyendas de siempre (byte-idéntico).
+    # Desde el API 0.0.74 (dos categorías) es el Σ de las DOS.
     utilidades_comision_vendedor_pagada_mxn: float | None = None
+    # ADITIVO (13-oct-2026, API 0.0.74, invariante 61 del API, dos
+    # categorías): de lo pagado, la parte capturada como «Comisión del
+    # vendedor (avión)» en vuelos que carga un avión (MXN). INFORMATIVA: ya va
+    # dentro de lo pagado y de utilidades_otros_ingresos_mxn (este libro es
+    # la caja de VuelaTour y resta las dos); es la diferencia esperada contra
+    # el bloque VUELATOUR del Balance general. El API la manda SOLO > 0 y con
+    # la bandera; la fila 9 la nombra (`_UTILIDADES_NOTA_COMISION_AVION`).
+    utilidades_comision_vendedor_avion_mxn: float | None = None
     utilidades_otros_gastos_mxn: float | None = None
     utilidades_tc: float | None = None
     utilidades_aviones: list[DineroUtilidadAvion] = Field(default_factory=list)
-    # ADITIVO (13-oct-2026, API 0.0.74, invariante 61 del API): sin gasto real
-    # «Comisión del vendedor» la fila de comisión de 'Otros ingresos' ya NO
-    # lleva egreso (sin provisión) y utilidades solo resta lo pagado de
-    # verdad. Con `true` cambian SOLO dos leyendas (fila 2 de 'Otros
-    # ingresos' y fila 9 de 'utilidades'), mandando sobre
+    # ADITIVO (13-oct-2026, API 0.0.74, invariante 61 del API): sin pago
+    # capturado la fila de comisión de 'Otros ingresos' ya NO lleva egreso
+    # (sin provisión) y utilidades solo resta lo pagado de verdad, en las DOS
+    # categorías («(VuelaTour)» y «(avión)»: la caja es de VuelaTour). Con
+    # `true` cambian SOLO tres leyendas (fila 2 de 'Otros ingresos' y filas
+    # 6 y 9 de 'utilidades'), mandando sobre
     # `utilidades_comision_vendedor_pagada_mxn`; None/False (API ≤ 0.0.73) ⇒
     # libro byte a byte.
     comision_vendedor_solo_gasto_real: bool | None = None

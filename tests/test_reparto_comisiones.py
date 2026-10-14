@@ -17,7 +17,11 @@ cliente: «comisión del vendedor SOLO como gasto real»): lo del vendedor en
 `comisiones_venta_usd` es su PAGO REAL (el gasto «Comisión del vendedor»
 capturado), ya no la provisión. Con la bandera ADITIVA
 `comision_vendedor_solo_gasto_real` las frases dicen «pago real»; sin ella
-(ausente/None/False) los documentos de siempre.
+(ausente/None/False) los documentos de siempre. Ajuste del mismo día (dos
+categorías, misma bandera): lo del vendedor es el pago capturado como
+«Comisión del vendedor (avión)» —en cualquier fecha— y el de «Comisión del
+vendedor (VuelaTour)» lo paga VuelaTour: las frases nombran las dos y la
+línea gris dice «pago «(avión)» resta en Comisiones» (88 caracteres, cabe).
 """
 
 from __future__ import annotations
@@ -259,26 +263,30 @@ def test_rutas_aceptan_el_payload_del_api(monkeypatch, request) -> None:
 
 # ===========================================================================
 # 13-oct-2026 (API 0.0.74, invariante 61): «comisión del vendedor SOLO como
-# gasto real». Bandera `comision_vendedor_solo_gasto_real`.
+# gasto real». Bandera `comision_vendedor_solo_gasto_real`. Los literales
+# son los del ajuste «dos categorías» del mismo día (contrato del ajuste),
+# que reescribió EN SU LUGAR los de la decisión 3.
 # ===========================================================================
 
 FRASE_GASTO_REAL = (
-    "Con la regla de septiembre 2026 (por fecha del vuelo), el avión absorbe el pago "
-    "real de la comisión del vendedor (el gasto «Comisión del vendedor» ligado al vuelo) "
-    "y su parte de la comisión bancaria de sus cobros"
+    "Con la regla de septiembre 2026 (por fecha del vuelo), el avión absorbe su parte de "
+    "la comisión bancaria de sus cobros y, en cualquier fecha, el pago al vendedor "
+    "capturado como «Comisión del vendedor (avión)» (el de «Comisión del vendedor "
+    "(VuelaTour)» lo paga VuelaTour)"
 )
 LINEA_GASTO_REAL = (
-    "   incluye comisión del vendedor cotizada (pre-IVA) — su pago real resta en Comisiones"
+    "   incluye comisión del vendedor cotizada (pre-IVA) — pago «(avión)» resta en Comisiones"
 )
 NOTA_OTROS_INGRESOS_COLA = (
-    "Lo cobrado al cliente por la comisión sigue siendo de VuelaTour; el pago real al "
-    "vendedor lo carga el avión ('otros movimientos' del Balance general lo muestra con "
-    "egreso $0.00)."
+    "Lo cobrado al cliente por la comisión sigue siendo de VuelaTour; el pago capturado "
+    "como «Comisión del vendedor (avión)» lo carga el avión ('otros movimientos' del "
+    "Balance general lo muestra con egreso $0.00) y el de «Comisión del vendedor "
+    "(VuelaTour)» lo paga VuelaTour ahí mismo."
 )
 NOTA_POR_AVION_GASTO_REAL = (
-    "Comisión del vendedor cotizada por avión (ingreso de VuelaTour; con la regla de "
-    "septiembre 2026, por fecha del vuelo, su pago real (gasto capturado) lo absorbe el "
-    "avión en Comisiones): XB-TST $80.00."
+    "Comisión del vendedor cotizada por avión (ingreso de VuelaTour; su pago, si se "
+    "captura como «Comisión del vendedor (avión)», lo absorbe el avión en Comisiones (el "
+    "de «(VuelaTour)» lo paga VuelaTour)): XB-TST $80.00."
 )
 
 
@@ -300,6 +308,21 @@ def test_bandera_aditiva_con_default_none_y_textos_del_contrato() -> None:
         NOTA_POR_AVION_GASTO_REAL,
     ):
         assert "provisi" not in t.lower()
+        # Ninguna nombra la categoría vieja (sin «(VuelaTour)» / «(avión)»).
+        assert "«Comisión del vendedor»" not in t
+    # La frase con «con» (nota de la tabla del Excel) es la misma.
+    assert frase_regla(req, "con") == "c" + FRASE_GASTO_REAL[1:]
+
+
+def test_linea_gris_de_las_dos_categorias_medida() -> None:
+    """La línea del ajuste mide 88 caracteres (|Δ| = 2 con la de siempre) y
+    ~301.4 pt en Helvetica-Oblique 7.5: cabe en la celda de 120 mm (tope
+    328.2 pt)."""
+    assert len(LINEA_GASTO_REAL) == 88
+    assert abs(len(LINEA_GASTO_REAL) - len(LINEA_COMISION_VENDEDOR)) == 2
+    ancho = stringWidth(LINEA_GASTO_REAL, "Helvetica-Oblique", 7.5)
+    assert round(ancho, 1) == 301.4
+    assert ancho <= 328.2 and ancho <= 120 * mm - 12
 
 
 def test_pdf_con_la_bandera_dice_pago_real_y_nada_de_provision() -> None:
@@ -333,7 +356,11 @@ def test_xlsx_con_la_bandera_dice_pago_real() -> None:
     assert f". {ETIQUETA_COLUMNA}: {frase_regla(req, 'con')}; restan antes del saldo" in (
         ws["A8"].value
     )
-    frase = "con la regla de septiembre 2026 (por fecha del vuelo), el avión absorbe el pago real"
+    frase = (
+        "con la regla de septiembre 2026 (por fecha del vuelo), el avión absorbe su parte "
+        "de la comisión bancaria de sus cobros y, en cualquier fecha, el pago al vendedor "
+        "capturado como «Comisión del vendedor (avión)»"
+    )
     assert frase in ws["A8"].value
     assert ws["A10"].value == NOTA_POR_AVION_GASTO_REAL
     assert not any("provisi" in t.lower() for t in _textos_xlsx(ws))
@@ -356,12 +383,19 @@ def test_xlsx_sin_la_bandera_miembros_identicos() -> None:
 def test_con_la_bandera_y_la_regla_del_api_nadie_dice_septiembre() -> None:
     req = _req(comision_vendedor_solo_gasto_real=True, regla_comisiones="regla desde 15-oct-2026")
     texto = _texto_pdf(render_reparto_pdf(req))
-    frase = "Con la regla desde 15-oct-2026 (por fecha del vuelo), el avión absorbe el pago real"
+    frase = (
+        "Con la regla desde 15-oct-2026 (por fecha del vuelo), el avión absorbe su parte "
+        "de la comisión bancaria de sus cobros y, en cualquier fecha, el pago al vendedor"
+    )
     assert frase in texto
     assert "septiembre" not in texto
     textos = _textos_xlsx(load_workbook(BytesIO(render_reparto_xlsx(req))).active)
     assert not any("septiembre" in t for t in textos)
-    assert any("su pago real (gasto capturado) lo absorbe el avión" in t for t in textos)
+    assert any(
+        "si se captura como «Comisión del vendedor (avión)», lo absorbe el avión en Comisiones"
+        in t
+        for t in textos
+    )
 
 
 def test_rutas_aceptan_el_payload_del_api_0074(monkeypatch, request) -> None:

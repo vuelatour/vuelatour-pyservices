@@ -54,7 +54,12 @@ como gasto real»): la parte del vendedor de COMISIONES es su pago REAL
 0; con la bandera raíz `comision_vendedor_solo_gasto_real` cambian SOLO los
 textos (encabezado y pie de COMISIONES). El libro con esa forma cuadra igual
 (GANANCIA = ROUND(REMANENTE − COMISIONES, 2) sin degradar) y sin la bandera,
-o con las llaves nuevas en null, no cambia ni un byte.
+o con las llaves nuevas en null, no cambia ni un byte. Ajuste del mismo día
+(dos categorías): lo del vendedor son los pagos «Comisión del vendedor
+(avión)» —en CUALQUIER fecha—, así que un libro ANTERIOR a la vigencia
+también puede traer COMISIONES (solo del vendedor) y cuadra igual; el
+respaldo de la nota se rotula «Comisión del vendedor (avión)» y la nota de un
+vuelo multi-avión dice que ese pago es la excepción que sí se reparte.
 """
 
 from __future__ import annotations
@@ -82,9 +87,12 @@ from app.schemas.reportes import (
 )
 from app.services import xlsx_formulas
 from app.services.balance_avion_xlsx import (
+    _ALTO_NOTA_PARTICIPACION,
+    _ALTO_NOTA_PARTICIPACION_PAGO_VENDEDOR,
     _COLS,
     _COLS_FLOTA,
     _COLS_GENERAL,
+    _COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL,
     _CPH_NOTA_REMANENTE,
     _DISP_FLOTA,
     _DISP_GENERAL,
@@ -93,20 +101,25 @@ from app.services.balance_avion_xlsx import (
     _GRUPO_COSTO_HORA,
     _MAESTRA_PAGO_VENDEDOR_GASTO_REAL,
     _NOTA_BLOQUE_EMPRESA,
+    _NOTA_CASCADA_COMISIONES_GASTO_REAL,
     _NOTA_COBRADO_REAL,
     _NOTA_COBRADO_REAL_FLOTA,
     _NOTA_COBRANZA_NETO,
     _NOTA_COBRANZA_NETO_FLOTA,
     _NOTA_COMISIONES,
     _NOTA_COMISIONES_FLOTA,
+    _NOTA_COMISIONES_FLOTA_GASTO_REAL,
     _NOTA_COMISIONES_GASTO_REAL,
     _NOTA_EMPRESA_BASE,
     _NOTA_ENCABEZADO_COMISIONES,
     _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL,
     _NOTA_ENCABEZADO_GANANCIA_FLOTA,
+    _NOTA_ENCABEZADO_GANANCIA_FLOTA_GASTO_REAL,
     _NOTA_ENCABEZADO_REMANENTE,
+    _NOTA_ENCABEZADO_REMANENTE_GASTO_REAL,
     _NOTA_GANANCIA,
     _NOTA_GANANCIA_FLOTA,
+    _NOTA_PARTICIPACION_PAGO_VENDEDOR_AVION,
     _OM_REGLA_COMISIONES,
     _RESUMEN_COMISIONES,
     _RESUMEN_COMISIONES_GASTO_REAL,
@@ -118,6 +131,7 @@ from app.services.balance_avion_xlsx import (
     _neto_cobro,
     _nota_cobro,
     _nota_comisiones,
+    _nota_participacion,
     _nota_resumen_cobros,
     _notas_parcialidades,
     _valor_columna,
@@ -473,11 +487,12 @@ def test_nota_de_la_celda_comisiones() -> None:
 
 
 def test_nota_de_respaldo_con_el_pago_real_del_api_0074() -> None:
-    """API 0.0.74 (invariante 61): sin detalle, la parte del vendedor sale de
-    `comision_vendedor_real_mxn` («(gasto real)») y la provisión, que viaja
-    en 0, NO se pinta (`_monto_no_cero`)."""
+    """API 0.0.74 (invariante 61, dos categorías): sin detalle, la parte del
+    vendedor sale de `comision_vendedor_real_mxn` —los pagos «Comisión del
+    vendedor (avión)» que absorbe la fila— y se rotula «Comisión del vendedor
+    (avión)»; la provisión, que viaja en 0, NO se pinta (`_monto_no_cero`)."""
     real = BalanceAvionVuelo(comision_vendedor_real_mxn=3000.0, comision_vendedor_prov_mxn=0.0)
-    assert _nota_comisiones(real) == "Comisión del vendedor (gasto real) · $3,000.00"
+    assert _nota_comisiones(real) == "Comisión del vendedor (avión) · $3,000.00"
     mezcla = BalanceAvionVuelo(
         comision_banco_avion_mxn=123.39,
         comision_vendedor_prov_mxn=0.0,
@@ -486,8 +501,9 @@ def test_nota_de_respaldo_con_el_pago_real_del_api_0074() -> None:
     )
     assert _nota_comisiones(mezcla) == (
         "2 conceptos\nComisión bancaria (parte del avión) · $123.39\n"
-        "Comisión del vendedor (gasto real) · $3,000.00"
+        "Comisión del vendedor (avión) · $3,000.00"
     )
+    assert "(gasto real)" not in _nota_comisiones(mezcla)
     assert "(provisión)" not in _nota_comisiones(mezcla)
     # El avión no absorbió (pagos 0, real 0): solo la bancaria.
     sin = BalanceAvionVuelo(
@@ -923,10 +939,29 @@ _TEXTOS_CON_MES = (
     _RESUMEN_COMISIONES,
     _NOTA_COBRADO_REAL,
     _NOTA_COBRANZA_NETO,
-    # API 0.0.74 (13-oct-2026, invariante 61): las versiones «gasto real».
+    # API 0.0.74 (13-oct-2026, invariante 61): las versiones «gasto real»,
+    # reescritas por el ajuste de las dos categorías — TODAS las que pasan por
+    # `_con_regla` (la regla solo para la parte bancaria).
     _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL,
     _NOTA_COMISIONES_GASTO_REAL,
     _RESUMEN_COMISIONES_GASTO_REAL,
+    _NOTA_COMISIONES_FLOTA_GASTO_REAL,
+    _NOTA_CASCADA_COMISIONES_GASTO_REAL,
+    _NOTA_ENCABEZADO_GANANCIA_FLOTA_GASTO_REAL,
+    _NOTA_ENCABEZADO_REMANENTE_GASTO_REAL,
+)
+# Las reescritas por el ajuste de las dos categorías (13-oct-2026) que pasan
+# por `_con_regla`: UNA sola «regla de septiembre 2026» y ningún otro
+# «septiembre» (la «(avión)» no tiene vigencia).
+_TEXTOS_DOS_CATEGORIAS_CON_REGLA = (
+    _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL,
+    _NOTA_COMISIONES_GASTO_REAL,
+    _RESUMEN_COMISIONES_GASTO_REAL,
+    _NOTA_COMISIONES_FLOTA_GASTO_REAL,
+    _NOTA_CASCADA_COMISIONES_GASTO_REAL,
+    _COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL,
+    _NOTA_ENCABEZADO_GANANCIA_FLOTA_GASTO_REAL,
+    _NOTA_ENCABEZADO_REMANENTE_GASTO_REAL,
 )
 
 
@@ -940,6 +975,16 @@ def test_regla_comisiones_liberal() -> None:
     assert BalanceAvionRequest().regla_comisiones is None
     general = BalanceGeneralRequest.model_validate({"regla_comisiones": " sep-2026"})
     assert general.regla_comisiones == "regla sep-2026"
+
+
+def test_textos_dos_categorias_una_sola_regla_y_ningun_otro_mes() -> None:
+    for texto in _TEXTOS_DOS_CATEGORIAS_CON_REGLA:
+        assert texto.count("regla de septiembre 2026") == 1, texto[:60]
+        assert texto.count("septiembre") == 1, texto[:60]
+        assert "provisi" not in texto.lower(), texto[:60]
+        assert "«Comisión del vendedor (avión)»" in texto, texto[:60]
+        con = _con_regla(texto, REGLA_API)
+        assert con.count(REGLA_API) == 1 and "septiembre" not in con, texto[:60]
 
 
 def test_textos_con_la_regla_del_api() -> None:
@@ -1114,6 +1159,128 @@ def test_individual_con_la_forma_0074_cuadra_y_cambia_solo_los_textos(registros)
     assert _NOTA_COMISIONES + "(el pago apareado como PROVISIÓN a la fecha del vuelo)." + (
         _NOTA_GANANCIA
     ) in _pie(ws_sin)
+
+
+# Línea del detalle como la arma el API 0.0.74 para el pago del vendedor.
+DETALLE_PREVIA_AVION = ["Comisión vendedor (Alex Saab) · $1,500.00 · gasto real"]
+
+
+def _previa_avion(fila: dict, spec: dict, tc_prom: float | None) -> dict:
+    """La fila de un vuelo ANTERIOR a la vigencia como la manda el API 0.0.74
+    cuando el avión absorbe un pago «Comisión del vendedor (avión)»
+    (13-oct-2026, dos categorías: en cualquier fecha): COMISIONES = SOLO el
+    vendedor (la bancaria en 0: la regla no aplica y los cobros van SIN
+    neto), las llaves del pago real y GANANCIA = REMANENTE − COMISIONES. Sin
+    `spec["previa_avion"]`, la fila de siempre (anterior, sin llaves)."""
+    vendedor = spec.get("previa_avion")
+    if vendedor is None:
+        return fila
+    ganancia = r2(fila["remanente_mxn"] - vendedor)
+    tc_g = fila["tc_costos"] if fila["tc_costos"] is not None else tc_prom
+    return {
+        **fila,
+        "comisiones_mxn": vendedor,
+        "comisiones_detalle": list(DETALLE_PREVIA_AVION),
+        "comision_banco_avion_mxn": 0.0,
+        "comision_vendedor_prov_mxn": 0.0,
+        "comision_vendedor_real_mxn": vendedor,
+        "comision_vendedor_real_pagos": 1,
+        "ganancia_mxn": ganancia,
+        "ganancia_usd": r2(ganancia / tc_g) if tc_g is not None else None,
+    }
+
+
+def _libro_previo_con_avion() -> dict:
+    """XA-TST con TODOS sus vuelos anteriores a la vigencia (sin llaves de
+    comisiones) salvo el #401, que absorbe $1,500.00 de «(avión)»."""
+    specs = copy.deepcopy(tf._SPECS_TST)
+    specs[0]["previa_avion"] = 1500.0
+    libro = tf._libro_api(
+        "XA-TST", 25.0, specs, tf._HOJAS_TST, tf._SOCIOS, ajusta_fila=_previa_avion
+    )
+    libro["totales"]["comision_vendedor_real_mxn"] = 1500.0
+    libro["comision_vendedor_solo_gasto_real"] = True
+    return libro
+
+
+def test_individual_anterior_a_la_vigencia_con_pago_avion_cuadra(registros) -> None:
+    """Un libro ANTERIOR a la vigencia con una fila que absorbe un pago
+    «Comisión del vendedor (avión)»: la fila trae COMISIONES (solo del
+    vendedor) y GANANCIA = ROUND(REMANENTE − COMISIONES, 2) sin degradar; las
+    demás, GANANCIA = REMANENTE; los cobros sin neto; TOTALES = Σ y las
+    leyendas de la bandera siguen siendo verdad."""
+    req = BalanceAvionRequest.model_validate(_libro_previo_con_avion())
+    assert req.totales.comisiones_mxn == 1500.0
+    data = render_balance_avion_xlsx(req)
+    assert registros[-1].degradadas() == _DEGRADADAS_INDIVIDUAL
+    assert verificar_libro(data)
+    wb, wv = _libros(data)
+    ws, wsv = wb[MAESTRA_TST], wv[MAESTRA_TST]
+    assert ws["AC2"].comment.text == _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL
+    assert (
+        _NOTA_COMISIONES_GASTO_REAL + _MAESTRA_PAGO_VENDEDOR_GASTO_REAL + _NOTA_GANANCIA
+    ) in _pie(ws)
+    for k, v in enumerate(req.vuelos):
+        f = 3 + k
+        ganancia = _celda(ws, f, GANANCIA).value
+        if k == 0:
+            assert _celda(ws, f, COMISIONES).value == 1500.0
+            assert _celda(ws, f, COMISIONES).comment.text == DETALLE_PREVIA_AVION[0]
+            assert ganancia == f"=ROUND({_ref(ws, f, REMANENTE)}-AC{f},2)"
+            assert v.ganancia_mxn == r2(v.remanente_mxn - 1500.0)
+            assert all(c.neto_mxn is None for c in v.cobros)  # sin neto: no es la regla
+        else:
+            assert v.comisiones_mxn is None and _celda(ws, f, COMISIONES).value is None
+            assert ganancia == f"={_ref(ws, f, REMANENTE)}", v.clave
+        assert _celda(wsv, f, GANANCIA).value == v.ganancia_mxn, v.clave
+    tot = _tot(ws)
+    assert wsv[f"AC{tot}"].value == 1500.0
+    assert wsv[f"AD{tot}"].value == req.totales.ganancia_mxn
+
+
+def test_nota_participacion_con_la_excepcion_del_pago_avion() -> None:
+    """Vuelo multi-avión: con la bandera y un pago «(avión)» absorbido por la
+    fila la nota dice que ese pago SÍ se reparte como la venta; sin la
+    bandera, o sin pago absorbido, el texto de siempre."""
+    base = BalanceAvionVuelo(multi_avion=True, participacion=0.5, participacion_fuente="tramos")
+    hoy = _nota_participacion(base)
+    assert hoy.endswith("son de VuelaTour y no se reparten.")
+    con = base.model_copy(update={"comision_vendedor_real_pagos": 2})
+    assert _nota_participacion(con, True) == hoy + _NOTA_PARTICIPACION_PAGO_VENDEDOR_AVION
+    assert _nota_participacion(con, True).endswith(
+        " El pago «Comisión del vendedor (avión)» es la excepción: se reparte entre los "
+        "aviones como la venta (va en COMISIONES)."
+    )
+    assert _nota_participacion(con) == hoy  # sin la bandera
+    for pagos in (None, 0):
+        sin = base.model_copy(update={"comision_vendedor_real_pagos": pagos})
+        assert _nota_participacion(sin, True) == hoy
+    assert _ALTO_NOTA_PARTICIPACION == 110 < _ALTO_NOTA_PARTICIPACION_PAGO_VENDEDOR
+
+
+def test_individual_multi_avion_con_pago_avion_nota_de_la_venta() -> None:
+    """En el libro: la celda VENTA AVIÓN USD del #402 (multi-avión) lleva la
+    excepción solo con la bandera y la fila que absorbió el pago."""
+    libro = _forma_0074(_libro_tst())
+    fila = next(f for f in libro["vuelos"] if f["clave"] == "#402 · Cliente Dos")
+    fila["comision_vendedor_real_pagos"] = 1
+
+    def notas_multi(lib: dict) -> list[str]:
+        ws = load_workbook(
+            BytesIO(render_balance_avion_xlsx(BalanceAvionRequest.model_validate(lib)))
+        )[MAESTRA_TST]
+        return [
+            c.comment.text
+            for fila_c in ws.iter_rows()
+            for c in fila_c
+            if c.comment is not None and c.comment.text.startswith("Vuelo multi-avión")
+        ]
+
+    con = notas_multi(libro)
+    assert len(con) == 1 and con[0].endswith(_NOTA_PARTICIPACION_PAGO_VENDEDOR_AVION)
+    libro["comision_vendedor_solo_gasto_real"] = None
+    sin = notas_multi(libro)
+    assert len(sin) == 1 and not sin[0].endswith(_NOTA_PARTICIPACION_PAGO_VENDEDOR_AVION)
 
 
 def test_individual_bandera_apagada_byte_a_byte() -> None:

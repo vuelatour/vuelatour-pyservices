@@ -124,7 +124,7 @@ _PIE_COMISION_VENDEDOR = (
 _PIE_FIN = " Montos en USD. Vuela Tour · Aero Charter Cancún."
 # Línea gris bajo «Otros ingresos VuelaTour» cuando el avión NO absorbe
 # comisiones (la de siempre; con comisiones, `linea_comision_vendedor(req)`:
-# «su provisión…» o, con el API 0.0.74, «su pago real…»).
+# «su provisión…» o, con el API 0.0.74, «pago «(avión)» resta…»).
 _LINEA_COMISION_VENDEDOR_VUELATOUR = (
     "   incluye comisión del vendedor cotizada (pre-IVA) — su pago no es costo del avión"
 )
@@ -154,13 +154,16 @@ def _nota_otros_ingresos(req: RepartoPdfRequest, desglose_txt: str) -> str:
             "movimientos), no del avión."
         )
     if solo_gasto_real(req):
-        # API 0.0.74 (13-oct-2026, invariante 61): el avión carga el pago
-        # REAL al vendedor; «otros movimientos» lo trae con egreso $0.00.
+        # API 0.0.74 (13-oct-2026, invariante 61, dos categorías): el avión
+        # carga el pago «Comisión del vendedor (avión)» («otros movimientos»
+        # lo trae con egreso $0.00) y el de «(VuelaTour)» lo paga VuelaTour.
         return base + (
             f"{frase_regla(req)}: restan en {ETIQUETA_FILA}. Lo cobrado al "
-            "cliente por la comisión sigue siendo de VuelaTour; el pago real "
-            "al vendedor lo carga el avión ('otros movimientos' del Balance "
-            "general lo muestra con egreso $0.00)."
+            "cliente por la comisión sigue siendo de VuelaTour; el pago "
+            "capturado como «Comisión del vendedor (avión)» lo carga el avión "
+            "('otros movimientos' del Balance general lo muestra con egreso "
+            "$0.00) y el de «Comisión del vendedor (VuelaTour)» lo paga "
+            "VuelaTour ahí mismo."
         )
     return base + (
         f"{frase_regla(req)}: restan en {ETIQUETA_FILA}. Lo cobrado al "
@@ -279,9 +282,10 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
     total_saldo = sum(a.saldo_usd for a in req.aviones)
     # comisiones_venta_usd: 0 desde el 28-ago-2026 (regla A) y, desde la
     # regla de septiembre 2026 (API 0.0.65), las comisiones que absorbe cada
-    # avión (banco + lo del vendedor: su provisión hasta el API 0.0.73, su
-    # pago real desde el 0.0.74): restan antes del saldo, así que «Gastos
-    # del periodo» las incluye y venta − gastos = saldo.
+    # avión (banco + lo del vendedor: su provisión hasta el API 0.0.73, el
+    # pago «Comisión del vendedor (avión)» desde el 0.0.74): restan antes del
+    # saldo, así que «Gastos del periodo» las incluye y venta − gastos =
+    # saldo.
     total_gastos = sum(
         _gastos_avion(a) + a.comisiones_venta_usd for a in req.aviones
     )
@@ -431,8 +435,8 @@ def _bloque_avion(
     # solo si el API manda el desglose. Con la regla de septiembre 2026 el
     # avión absorbe lo que se le paga al vendedor (resta abajo, en
     # Comisiones): la línea lo dice en lugar de «su pago no es costo del
-    # avión» — `linea_comision` = «su provisión…» o, con el API 0.0.74, «su
-    # pago real…».
+    # avión» — `linea_comision` = «su provisión…» o, con el API 0.0.74,
+    # «pago «(avión)» resta…».
     desg = avion.otros_ingresos_vuelatour_desglose
     if desg is not None and desg.comision_usd:
         info_rows.append(len(filas))
@@ -455,9 +459,9 @@ def _bloque_avion(
     filas += [
         # Comisiones que absorbe el avión: desde la regla de septiembre 2026
         # (API 0.0.65) la parte del avión de la comisión bancaria + lo del
-        # vendedor (su provisión hasta el API 0.0.73; su pago real desde el
-        # 0.0.74). 0 (regla A del 28-ago, o sin comisiones) ⇒ la fila NO se
-        # imprime.
+        # vendedor (su provisión hasta el API 0.0.73; el pago «Comisión del
+        # vendedor (avión)» desde el 0.0.74). 0 (regla A del 28-ago, o sin
+        # comisiones) ⇒ la fila NO se imprime.
         *(
             [[ETIQUETA_FILA, _usd(-avion.comisiones_venta_usd)]]
             if avion.comisiones_venta_usd

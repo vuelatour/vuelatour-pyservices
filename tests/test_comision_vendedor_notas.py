@@ -52,6 +52,19 @@ movimientos', raíz de cada libro —individual, `aviones[]` Y consolidado
 FLOTA—, Libro Dinero y reparto) cambian SOLO textos (`*_GASTO_REAL`, ninguno
 dice «provisi…»); manda sobre `sin_provision_vendedor` y
 `hay_pago_vendedor_real`. Sin ella, los de hoy byte a byte.
+
+13-oct-2026 · dos categorías (ajuste del cliente de las 17:10, mismo API
+0.0.74 y MISMA bandera: «necesitamos una opción que sea Comisión del vendedor
+pero que esa opción sí se cargue al balance del avión, y dejamos el otro que
+se va a balance de vuelatour»): el pago al vendedor se captura como
+«Comisión del vendedor (VuelaTour)» (lo paga VuelaTour en 'otros
+movimientos') o «Comisión del vendedor (avión)» (lo carga el avión en su
+columna COMISIONES, en cualquier fecha). Los textos de la bandera se
+reescriben EN SU LUGAR (contrato §G del ajuste) y nacen los `*_DOS_CATEGORIAS`
+(fila 2, RESUMEN y base del bloque VUELATOUR), que `_fragmento_*` y
+`_bloque_empresa` eligen PRIMERO; con solo `sin_provision_vendedor` (API
+0.0.73) los `*_SIN_PROVISION` byte a byte. Libro Dinero: filas 2, 6 y 9 y la
+llave ADITIVA `utilidades_comision_vendedor_avion_mxn` (solo > 0).
 """
 
 import json
@@ -74,30 +87,51 @@ from app.schemas.reportes import (
     DineroXlsxRequest,
 )
 from app.services.balance_avion_xlsx import (
+    _COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL,
+    _EMPRESA_AFAC_EN_FILAS,
     _EMPRESA_REGLA_COMISIONES,
     _EMPRESA_REGLA_COMISIONES_CUBRE_AVION,
     _EMPRESA_REGLA_COMISIONES_CUBRE_AVION_SIN_PROVISION,
+    _EMPRESA_REGLA_COMISIONES_GASTO_REAL,
     _LEYENDA_PROVISION,
     _MAESTRA_PAGO_VENDEDOR_GASTO_REAL,
     _MAESTRA_PAGO_VENDEDOR_SIN_PROVISION,
     _NOTA_BLOQUE_EMPRESA,
+    _NOTA_CASCADA_COMISIONES_GASTO_REAL,
+    _NOTA_COMISIONES_FLOTA_GASTO_REAL,
     _NOTA_COMISIONES_GASTO_REAL,
     _NOTA_EMPRESA_BASE,
+    _NOTA_EMPRESA_BASE_DOS_CATEGORIAS,
     _NOTA_EMPRESA_BASE_SIN_PROVISION,
     _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL,
+    _NOTA_ENCABEZADO_GANANCIA_FLOTA_GASTO_REAL,
+    _NOTA_ENCABEZADO_REMANENTE_GASTO_REAL,
+    _NOTA_PARTICIPACION_PAGO_VENDEDOR_AVION,
+    _OM_PAGO_VENDEDOR_DOS_CATEGORIAS,
+    _OM_PAGO_VENDEDOR_PROVISION,
+    _OM_PAGO_VENDEDOR_REAL,
     _OM_PAGO_VENDEDOR_SIN_PROVISION,
     _OM_REGLA_COMISIONES_CUBRE_AVION,
     _OM_REGLA_COMISIONES_CUBRE_AVION_SIN_PROVISION,
+    _OM_REGLA_COMISIONES_GASTO_REAL,
     _RESUMEN_COMISIONES_GASTO_REAL,
+    _RESUMEN_PAGO_VENDEDOR_DOS_CATEGORIAS,
+    _RESUMEN_PAGO_VENDEDOR_PROVISION,
+    _RESUMEN_PAGO_VENDEDOR_REAL,
     _RESUMEN_PAGO_VENDEDOR_SIN_PROVISION,
     _RESUMEN_REGLA_CUBRE_AVION,
     _RESUMEN_REGLA_CUBRE_AVION_SIN_PROVISION,
+    _RESUMEN_REGLA_GASTO_REAL,
     AMBER,
+    _fragmento_om_pago_vendedor,
+    _fragmento_resumen_pago_vendedor,
     render_balance_avion_xlsx,
     render_balance_general_xlsx,
 )
 from app.services.dinero_xlsx import (
     _LEYENDA_PAGO_VENDEDOR_GASTO_REAL,
+    _UTILIDADES_FILA6_GASTO_REAL,
+    _UTILIDADES_NOTA_COMISION_AVION,
     _UTILIDADES_OTROS_INGRESOS_GASTO_REAL,
     render_dinero_xlsx,
 )
@@ -170,6 +204,9 @@ MAESTRA_GENERAL_NOTA = (
 # Prefijos con que se encuentran en la columna A.
 RESUMEN_PREFIJO = "COMISIONES = las de la columna COMISIONES"
 MAESTRA_PREFIJO = "COMISIONES MXN (regla de septiembre 2026"
+# La del individual CON la bandera del API 0.0.74 (dos categorías): la regla
+# va dentro, solo para la parte bancaria.
+MAESTRA_PREFIJO_GASTO_REAL = "COMISIONES MXN = lo que absorbe el avión"
 MAESTRA_GENERAL_PREFIJO = "COMISIONES (regla de septiembre 2026"
 DINERO_FILA2_VIEJA = (
     "Ingreso de VuelaTour (no del avión): TUAs, extras, pernocta y "
@@ -956,9 +993,9 @@ def _individual(**extra) -> BalanceAvionRequest:
     )
 
 
-def _maestra_individual(req: BalanceAvionRequest) -> str:
+def _maestra_individual(req: BalanceAvionRequest, prefijo: str = MAESTRA_PREFIJO) -> str:
     return _celda_que_empieza(
-        _libro(render_balance_avion_xlsx(req))["reporte horas N4142R"], MAESTRA_PREFIJO
+        _libro(render_balance_avion_xlsx(req))["reporte horas N4142R"], prefijo
     )
 
 
@@ -1022,53 +1059,60 @@ def test_rutas_aceptan_el_payload_0073(monkeypatch) -> None:
 # gasto real». Bandera `comision_vendedor_solo_gasto_real`.
 # ===========================================================================
 
-# Textos del CONTRATO, literales.
+# Textos del CONTRATO, literales. Reescritos EN SU LUGAR por el ajuste «dos
+# categorías» del mismo día (contrato §G del ajuste; sección final): la
+# bandera es la misma y estas pruebas siguen cubriendo esquemas, individual,
+# independencia hoja/raíz, Libro Dinero y rutas.
 ENCABEZADO_GASTO_REAL = (
-    "COMISIONES (regla de septiembre 2026, por fecha del vuelo) = lo que absorbe el "
-    "avión: su parte de la comisión bancaria de los cobros del vuelo (en la misma "
-    "proporción con que el cobro se prorratea al avión) + el pago REAL de la comisión "
-    "del vendedor (el gasto «Comisión del vendedor» capturado en Gastos y ligado al "
-    "vuelo, solo en vuelos COMPLETADOS con comisión cotizada; sin gasto capturado no "
-    "se resta nada). La nota de cada celda dice cuáles son. Vuelos anteriores: vacía "
-    "(la comisión era de VuelaTour)."
+    "COMISIONES = lo que absorbe el avión: su parte de la comisión bancaria de los cobros "
+    "del vuelo (regla de septiembre 2026, por fecha del vuelo; en la misma proporción con "
+    "que el cobro se prorratea al avión) + el pago al vendedor capturado en Gastos como "
+    "«Comisión del vendedor (avión)» y ligado al vuelo (en cualquier fecha, en vuelos "
+    "completados o cancelados con cobros retenidos; en un vuelo de varios aviones, su "
+    "parte de la venta). La «Comisión del vendedor (VuelaTour)» no va aquí: la paga "
+    "VuelaTour en 'otros movimientos'. Sin pago capturado no se resta nada. La nota de "
+    "cada celda dice cuáles son."
 )
 MAESTRA_GASTO_REAL = (
-    "COMISIONES MXN (regla de septiembre 2026, por fecha del vuelo) = lo que absorbe el "
-    "avión: su parte de la comisión bancaria de los cobros y el pago REAL de la "
-    "comisión del vendedor (el gasto «Comisión del vendedor» capturado en Gastos y "
-    "ligado al vuelo, solo en vuelos COMPLETADOS con comisión cotizada; sin gasto "
-    "capturado no se resta nada); la nota de cada celda dice cuáles son y en los "
-    "vuelos anteriores va vacía. Lo cobrado al cliente por la comisión del vendedor "
-    "sigue siendo ingreso de VuelaTour y vive en 'otros movimientos' del Balance "
-    "general (ahí el pago real se aparea con lo cobrado y, en los vuelos completados "
-    "de esta regla, sale con egreso $0.00 «a cargo del avión» porque ya resta en esta "
-    "columna). GANANCIA de la fila = REMANENTE (VENTA − COSTO TOTAL) − COMISIONES."
+    "COMISIONES MXN = lo que absorbe el avión: su parte de la comisión bancaria de los "
+    "cobros (regla de septiembre 2026, por fecha del vuelo) y el pago al vendedor "
+    "capturado en Gastos como «Comisión del vendedor (avión)» y ligado al vuelo (en "
+    "cualquier fecha, en vuelos completados o cancelados con cobros retenidos; en un vuelo "
+    "de varios aviones, su parte de la venta; sin ese pago no se resta nada); la nota de "
+    "cada celda dice cuáles son. Lo cobrado al cliente por la comisión del vendedor sigue "
+    "siendo ingreso de VuelaTour y vive en 'otros movimientos' del Balance general (ahí el "
+    "pago capturado como «Comisión del vendedor (VuelaTour)» egresa apareado con lo "
+    "cobrado y el capturado como «Comisión del vendedor (avión)» sale con egreso $0.00 «a "
+    "cargo del avión», porque ya resta en esta columna). GANANCIA de la fila = REMANENTE "
+    "(VENTA − COSTO TOTAL) − COMISIONES."
 )
 RESUMEN_GASTO_REAL = (
-    "COMISIONES = las de la columna COMISIONES del libro individual de cada avión "
-    "(regla de septiembre 2026, por fecha del vuelo: su parte de la comisión bancaria "
-    "de los cobros y el pago real de la comisión del vendedor —el gasto «Comisión del "
-    "vendedor» ligado al vuelo; sin gasto capturado no se resta nada—; en vuelos "
-    "anteriores no hay); en este libro no van en la hoja de vuelos (ahí la GANANCIA va "
-    "antes de comisiones): restan aquí y en la cascada de cada avión de la hoja "
-    "'balance'. Lo cobrado al cliente por la comisión del vendedor sigue siendo "
-    "INGRESO de VuelaTour; ese ingreso y el pago al vendedor viven en 'otros "
-    "movimientos' "
+    "COMISIONES = las de la columna COMISIONES del libro individual de cada avión (su "
+    "parte de la comisión bancaria de los cobros —regla de septiembre 2026, por fecha del "
+    "vuelo— y el pago al vendedor capturado como «Comisión del vendedor (avión)» ligado al "
+    "vuelo; sin ese pago no se resta nada del vendedor); en este libro no van en la hoja "
+    "de vuelos (ahí la GANANCIA va antes de comisiones): restan aquí y en la cascada de "
+    "cada avión de la hoja 'balance'. Lo cobrado al cliente por la comisión del vendedor "
+    "sigue siendo INGRESO de VuelaTour; ese ingreso y el pago capturado como «Comisión del "
+    "vendedor (VuelaTour)» viven en 'otros movimientos' "
 )
 DINERO_LEYENDA_GASTO_REAL = (
-    "El pago de la comisión al vendedor va apareado en su fila SOLO cuando se captura "
-    "en Gastos el gasto real «Comisión del vendedor» ligado al vuelo (con «faltan $…» o "
-    "«excede $…» si no cuadra con lo cobrado); mientras no se capture, la fila no lleva "
-    "egreso (regla del 13-oct-2026: sin gasto real no se resta nada). "
+    "El pago de la comisión al vendedor va apareado en su fila SOLO cuando se captura en "
+    "Gastos ligado al vuelo, como «Comisión del vendedor (VuelaTour)» o «Comisión del "
+    "vendedor (avión)» (con «faltan $…» o «excede $…» si no cuadra con lo cobrado); "
+    "mientras no se capture, la fila no lleva egreso (sin gasto real no se resta nada). "
+    "Este libro es la caja de VuelaTour: resta los pagos de las dos categorías, aunque en "
+    "el Balance general y en el reparto la «(avión)» la cargue el avión en su columna "
+    "COMISIONES (la nota de la celda lo dice). "
 )
 DINERO_FILA9_GASTO_REAL = (
-    "OTROS INGRESOS = ingreso de VuelaTour (TUAs/extras/pernocta/comisión del vendedor "
-    "+ su IVA), no del avión (regla 28-ago-2026), NETO del pago REAL al vendedor (el "
-    "gasto «Comisión del vendedor» ligado al vuelo; sin gasto capturado no se resta "
-    "nada; este libro lo resta entero aunque en el Balance general, en los vuelos "
-    "completados de la regla de comisiones, lo cargue el avión en su columna "
-    "COMISIONES), más los ingresos sin vuelo registrados en Ingresos (ING-n), netos de "
-    "su comisión bancaria: ver hoja 'Otros ingresos'."
+    "OTROS INGRESOS = ingreso de VuelaTour (TUAs/extras/pernocta/comisión del vendedor + "
+    "su IVA), no del avión (regla 28-ago-2026), NETO del pago REAL al vendedor (los gastos "
+    "«Comisión del vendedor (VuelaTour)» y «Comisión del vendedor (avión)» ligados al "
+    "vuelo; sin gasto capturado no se resta nada; este libro resta los dos porque el "
+    "dinero salió de VuelaTour, aunque en el Balance general y en el reparto la «(avión)» "
+    "la cargue el avión), más los ingresos sin vuelo registrados en Ingresos (ING-n), "
+    "netos de su comisión bancaria: ver hoja 'Otros ingresos'."
 )
 
 
@@ -1141,7 +1185,9 @@ def test_individual_con_la_bandera_raiz_0074_nota_del_pago_real(sin_provision) -
     extra = {"comision_vendedor_solo_gasto_real": True}
     if sin_provision is not ...:
         extra["sin_provision_vendedor"] = sin_provision
-    assert _maestra_individual(_individual(**extra)) == MAESTRA_GASTO_REAL
+    assert _maestra_individual(_individual(**extra), MAESTRA_PREFIJO_GASTO_REAL) == (
+        MAESTRA_GASTO_REAL
+    )
 
 
 @pytest.mark.parametrize("valor", [None, False], ids=["null", "false"])
@@ -1181,21 +1227,23 @@ def test_individual_ignora_la_bandera_de_la_hoja_y_el_general_la_raiz_del_indivi
 
 def test_general_con_la_bandera_sin_vuelos_de_la_regla() -> None:
     """Con la bandera de la hoja y sin vuelos de la regla: fila 2 = el
-    fragmento sin provisión (sin frase de regla), RESUMEN = la nota del pago
-    real + el fragmento sin provisión, y la base del bloque VUELATOUR sin «o
-    provisionado»."""
+    fragmento de las DOS categorías (sin frase de regla; manda sobre el de la
+    0.0.73), RESUMEN = la nota del pago capturado + el fragmento de las dos
+    categorías, y la base del bloque VUELATOUR de las dos categorías (sin «o
+    provisionado»)."""
     req = _general(..., filas=[_FILA_V73_VIGENCIA_SIN_GASTO, _FILA_PAGO_REAL], sin_provision=True)
     req.consolidado.otros_movimientos.comision_vendedor_solo_gasto_real = True
     om, resumen, maestra = _leyendas_general(render_balance_general_xlsx(req))
-    assert om == _cambia(OM_FILA2_VIEJA, OM_FRAG_VIEJO, OM_FRAG_SIN_PROVISION)
-    assert resumen == RESUMEN_GASTO_REAL + RESUMEN_FRAG_SIN_PROVISION
+    assert om == _cambia(OM_FILA2_VIEJA, OM_FRAG_VIEJO, OM_FRAG_DOS_CATEGORIAS)
+    assert resumen == RESUMEN_GASTO_REAL + RESUMEN_FRAG_DOS_CATEGORIAS
     assert maestra == MAESTRA_GENERAL_NOTA  # el consolidado no trae la raíz
     for caso in ("sin_regla", "regla_sin_cubre"):
         p = _payload_empresa(caso, True)
         p["consolidado"]["otros_movimientos"]["comision_vendedor_solo_gasto_real"] = True
         pie = _pie_balance(p)
-        assert any(x.startswith(EMPRESA_BASE_SIN_PROVISION) for x in pie), caso
+        assert any(x.startswith(EMPRESA_BASE_DOS_CATEGORIAS) for x in pie), caso
         assert not any("o provisionado" in x for x in pie), caso
+        assert not any(EMPRESA_BASE_SIN_PROVISION in x for x in pie), caso
 
 
 # --- Libro Dinero ---------------------------------------------------------------
@@ -1276,7 +1324,9 @@ def test_rutas_aceptan_el_payload_0074(monkeypatch) -> None:
         headers=headers,
     )
     assert res.status_code == 200, res.text
-    maestra = _celda_que_empieza(_libro(res.content)["reporte horas N4142R"], MAESTRA_PREFIJO)
+    maestra = _celda_que_empieza(
+        _libro(res.content)["reporte horas N4142R"], MAESTRA_PREFIJO_GASTO_REAL
+    )
     assert maestra == MAESTRA_GASTO_REAL
     res = client.post(
         "/pdf/balance-avion-libro",
@@ -1284,7 +1334,9 @@ def test_rutas_aceptan_el_payload_0074(monkeypatch) -> None:
         headers=headers,
     )
     assert res.status_code == 200, res.text
-    assert "el pago real se aparea con lo cobrado" in json.dumps(res.json(), ensure_ascii=False)
+    assert "«Comisión del vendedor (VuelaTour)» egresa apareado con lo cobrado" in json.dumps(
+        res.json(), ensure_ascii=False
+    )
     res = client.post(
         "/pdf/dinero-xlsx",
         json=_dinero_0074(filas=[_FILA_V74_SIN_GASTO]).model_dump(mode="json"),
@@ -1293,3 +1345,348 @@ def test_rutas_aceptan_el_payload_0074(monkeypatch) -> None:
     assert res.status_code == 200, res.text
     fila2, fila9 = _leyendas_dinero(res.content)
     assert DINERO_LEYENDA_GASTO_REAL in fila2 and fila9 == DINERO_FILA9_GASTO_REAL
+
+
+# ===========================================================================
+# 13-oct-2026 · dos categorías (ajuste del cliente de las 17:10; API 0.0.74,
+# invariante 61 del API; MISMA bandera `comision_vendedor_solo_gasto_real`):
+# «Comisión del vendedor (VuelaTour)» la paga VuelaTour en 'otros
+# movimientos' y «Comisión del vendedor (avión)» la carga el avión en su
+# columna COMISIONES. Cambian SOLO textos; sin la bandera, byte a byte.
+# ===========================================================================
+
+# Textos del CONTRATO §G del ajuste, literales (los reescritos de la sección
+# anterior —ENCABEZADO_GASTO_REAL, MAESTRA_GASTO_REAL, RESUMEN_GASTO_REAL,
+# DINERO_LEYENDA_GASTO_REAL, DINERO_FILA9_GASTO_REAL— también lo son).
+NOTA_COMISIONES_DOS = (
+    "COMISIONES MXN = lo que absorbe el avión: su parte de la comisión bancaria de los "
+    "cobros (regla de septiembre 2026, por fecha del vuelo) y el pago al vendedor "
+    "capturado en Gastos como «Comisión del vendedor (avión)» y ligado al vuelo (en "
+    "cualquier fecha, en vuelos completados o cancelados con cobros retenidos; en un vuelo "
+    "de varios aviones, su parte de la venta; sin ese pago no se resta nada); la nota de "
+    "cada celda dice cuáles son. Lo cobrado al cliente por la comisión del vendedor sigue "
+    "siendo ingreso de VuelaTour y vive en 'otros movimientos' del Balance general "
+)
+MAESTRA_FRAG_DOS = (
+    "(ahí el pago capturado como «Comisión del vendedor (VuelaTour)» egresa apareado con "
+    "lo cobrado y el capturado como «Comisión del vendedor (avión)» sale con egreso $0.00 "
+    "«a cargo del avión», porque ya resta en esta columna)."
+)
+FUERA_DE_LA_HOJA_DOS = (
+    "Las comisiones que absorbe cada avión (su parte de la comisión bancaria de sus cobros "
+    "—regla de septiembre 2026, por fecha del vuelo— y el pago al vendedor capturado como "
+    "«Comisión del vendedor (avión)» ligado al vuelo; sin ese pago no se resta nada del "
+    "vendedor) no van en esta hoja: están en la columna COMISIONES del libro individual de "
+    "cada avión y ya van restadas en la cascada de cada avión de la hoja 'balance'."
+)
+FLOTA_DOS = (
+    "COMISIONES (regla de septiembre 2026, por fecha del vuelo, para la parte bancaria): "
+    "las que absorbe cada avión —su parte de la comisión bancaria de sus cobros y el pago "
+    "al vendedor capturado como «Comisión del vendedor (avión)» ligado al vuelo— no van en "
+    "esta hoja: están en la columna COMISIONES del libro individual de cada avión "
+    "(Reportes › Balance por avión) y ya van restadas en la cascada de cada avión de la "
+    "hoja 'balance'. Lo cobrado al cliente por la comisión del vendedor es ingreso de "
+    "VuelaTour: ese ingreso, el pago capturado como «Comisión del vendedor (VuelaTour)» y "
+    "la parte de VuelaTour de la comisión bancaria viven en 'otros movimientos' (su "
+    "leyenda explica cada línea)."
+)
+RESUMEN_FRAG_DOS_CATEGORIAS = (
+    "(ingreso cobrado; el pago al vendedor se aparea solo cuando se captura ligado al "
+    "vuelo: «Comisión del vendedor (VuelaTour)» como egreso y «Comisión del vendedor "
+    "(avión)» con egreso $0.00 porque lo carga el avión; sin pago capturado no se "
+    "provisiona nada en esa hoja)."
+)
+RESUMEN_REGLA_DOS = (
+    " Con la {regla} (por fecha del vuelo), la comisión bancaria de 'otros movimientos' es "
+    "solo la parte de VuelaTour; la del avión resta en su columna COMISIONES, igual que "
+    "los pagos «Comisión del vendedor (avión)»."
+)
+OM_FRAG_DOS_CATEGORIAS = (
+    "el pago de la comisión al vendedor va apareado en la misma fila SOLO cuando se "
+    "captura en Gastos ligado al vuelo, con una de dos categorías: la «Comisión del "
+    "vendedor (VuelaTour)» la paga VuelaTour y aquí egresa (con «faltan $…» o «excede $…» "
+    "si no cuadra con lo cobrado); la «Comisión del vendedor (avión)» la carga el avión en "
+    "la columna COMISIONES de su libro y aquí sale con egreso $0.00 «a cargo del avión …» "
+    "(si ningún avión la carga —vuelo aún no completado, cancelado sin cobros retenidos o "
+    "sin avión de la flota— la paga VuelaTour y el concepto lo dice). Mientras no se "
+    "capture, la fila no lleva egreso. Ese pago NO se captura como «Otros gastos "
+    "VuelaTour»: quedaría duplicado en la hoja 'otros gastos'."
+)
+OM_REGLA_DOS = (
+    " Con la {regla} (por fecha del vuelo), la comisión bancaria de aquí es solo la parte "
+    "de VuelaTour: la de cada avión resta en la columna COMISIONES de su libro individual "
+    "y en la cascada de la hoja 'balance', igual que los pagos «Comisión del vendedor "
+    "(avión)» que aquí salen con egreso $0.00."
+)
+EMPRESA_REGLA_DOS = (
+    " Con la {regla} (por fecha del vuelo), de la comisión bancaria los egresos propios "
+    "solo traen la parte de VuelaTour; los pagos «Comisión del vendedor (avión)» los carga "
+    "cada avión en su columna COMISIONES (aquí egresan $0.00)."
+)
+EMPRESA_BASE_DOS_CATEGORIAS = (
+    "Ingresos y egresos propios = hoja 'otros movimientos': lo cotizado de los vuelos del "
+    "periodo (no cancelados) más los otros ingresos registrados, y lo pagado (el pago al "
+    "vendedor solo cuando se captura: la «Comisión del vendedor (VuelaTour)» egresa aquí; "
+    "la «(avión)» la carga el avión y aquí egresa $0.00) — no es lo cobrado: el RESULTADO "
+    "no es dinero en caja."
+)
+CASCADA_DOS = (
+    "Comisiones que absorbe el avión, en USD — las de la columna COMISIONES de su libro "
+    "individual: su parte de la comisión bancaria de sus cobros (regla de septiembre 2026, "
+    "por fecha del vuelo) y el pago al vendedor capturado como «Comisión del vendedor "
+    "(avión)» ligado al vuelo. Por vuelo es la misma cifra que descuenta el reparto a "
+    "socios, pero el total puede no coincidir con el del reparto: por ejemplo, si un vuelo "
+    "que aún no se completa ya tiene un anticipo con comisión bancaria, este balance "
+    "cuenta ese cobro y su comisión, y el reparto no (solo lee vuelos completados o "
+    "cancelados)."
+)
+PARTICIPACION_DOS = (
+    " El pago «Comisión del vendedor (avión)» es la excepción: se reparte entre los "
+    "aviones como la venta (va en COMISIONES)."
+)
+DINERO_FILA6_DOS = (
+    "CHARTERS y UTILIDAD dependen del costo por hora del proveedor (regla pendiente de "
+    "definir con el equipo): esas celdas van vacías a propósito — no se inventan números. "
+    "Las comisiones del vendedor tienen regla: lo cobrado al cliente es ingreso de "
+    "VuelaTour (hoja 'Otros ingresos') y su pago real (las dos categorías) se descuenta "
+    "ahí; en el Balance general y en el reparto la «Comisión del vendedor (avión)» la "
+    "resta el avión."
+)
+# Cola de la fila 9 (solo con la llave > 0); «$X» = el monto con formato.
+DINERO_NOTA_AVION_DOS = (
+    " De lo pagado al vendedor, $X MXN se capturó como «Comisión del vendedor (avión)» en "
+    "vuelos que carga un avión: el Balance general y el reparto se lo restan al avión "
+    "(columna COMISIONES); aquí sigue restando porque el dinero salió de VuelaTour."
+)
+# La fila 6 de hoy (sin la bandera), literal.
+DINERO_FILA6_VIEJA = (
+    "CHARTERS y UTILIDAD dependen del costo por hora del proveedor (regla pendiente de "
+    "definir con el equipo): esas celdas van vacías a propósito — no se inventan números. "
+    "Las comisiones del vendedor ya tienen regla (28-ago-2026): ingreso y pago de "
+    "VuelaTour en la hoja 'Otros ingresos', no restan al avión."
+)
+
+
+def test_dos_categorias_literales_del_contrato() -> None:
+    assert _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL == ENCABEZADO_GASTO_REAL
+    assert _NOTA_COMISIONES_GASTO_REAL == NOTA_COMISIONES_DOS
+    assert _MAESTRA_PAGO_VENDEDOR_GASTO_REAL == MAESTRA_FRAG_DOS
+    assert NOTA_COMISIONES_DOS.endswith("del Balance general ")  # termina con un espacio
+    assert _COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL == FUERA_DE_LA_HOJA_DOS
+    assert _NOTA_ENCABEZADO_GANANCIA_FLOTA_GASTO_REAL.endswith(FUERA_DE_LA_HOJA_DOS)
+    assert _NOTA_ENCABEZADO_REMANENTE_GASTO_REAL.endswith(FUERA_DE_LA_HOJA_DOS)
+    assert _NOTA_COMISIONES_FLOTA_GASTO_REAL == FLOTA_DOS
+    assert _RESUMEN_COMISIONES_GASTO_REAL == RESUMEN_GASTO_REAL
+    assert _RESUMEN_PAGO_VENDEDOR_DOS_CATEGORIAS == RESUMEN_FRAG_DOS_CATEGORIAS
+    assert _RESUMEN_REGLA_GASTO_REAL == RESUMEN_REGLA_DOS
+    assert _OM_PAGO_VENDEDOR_DOS_CATEGORIAS == OM_FRAG_DOS_CATEGORIAS
+    assert _OM_REGLA_COMISIONES_GASTO_REAL == OM_REGLA_DOS
+    assert _EMPRESA_REGLA_COMISIONES_GASTO_REAL == EMPRESA_REGLA_DOS
+    assert _NOTA_EMPRESA_BASE_DOS_CATEGORIAS == EMPRESA_BASE_DOS_CATEGORIAS
+    assert _NOTA_CASCADA_COMISIONES_GASTO_REAL == CASCADA_DOS
+    assert _NOTA_PARTICIPACION_PAGO_VENDEDOR_AVION == PARTICIPACION_DOS
+    assert _LEYENDA_PAGO_VENDEDOR_GASTO_REAL == DINERO_LEYENDA_GASTO_REAL
+    assert _UTILIDADES_OTROS_INGRESOS_GASTO_REAL == DINERO_FILA9_GASTO_REAL
+    assert _UTILIDADES_FILA6_GASTO_REAL == DINERO_FILA6_DOS
+    assert _UTILIDADES_NOTA_COMISION_AVION.format(monto="$X") == DINERO_NOTA_AVION_DOS
+
+
+# Todo lo que se pinta con la bandera para el pago al vendedor.
+_TEXTOS_DOS_CATEGORIAS = (
+    ENCABEZADO_GASTO_REAL,
+    MAESTRA_GASTO_REAL,
+    RESUMEN_GASTO_REAL,
+    FUERA_DE_LA_HOJA_DOS,
+    FLOTA_DOS,
+    RESUMEN_FRAG_DOS_CATEGORIAS,
+    RESUMEN_REGLA_DOS,
+    OM_FRAG_DOS_CATEGORIAS,
+    OM_REGLA_DOS,
+    EMPRESA_REGLA_DOS,
+    EMPRESA_BASE_DOS_CATEGORIAS,
+    CASCADA_DOS,
+    PARTICIPACION_DOS,
+    DINERO_LEYENDA_GASTO_REAL,
+    DINERO_FILA9_GASTO_REAL,
+    DINERO_FILA6_DOS,
+    DINERO_NOTA_AVION_DOS,
+)
+
+
+def test_dos_categorias_sin_el_nombre_viejo_ni_provision() -> None:
+    """Con la bandera ningún texto nombra la categoría vieja («Comisión del
+    vendedor» seguido de la comilla de cierre) ni habla de una provisión. La
+    ÚNICA mención es la negación literal del contrato en el fragmento del
+    RESUMEN («sin pago capturado no se provisiona nada en esa hoja»)."""
+    for t in _TEXTOS_DOS_CATEGORIAS:
+        assert "«Comisión del vendedor»" not in t, t[:70]
+        if t is RESUMEN_FRAG_DOS_CATEGORIAS:
+            assert t.lower().count("provisi") == 1
+            assert "no se provisiona nada en esa hoja" in t
+        else:
+            assert "provisi" not in t.lower(), t[:70]
+    # Las leyendas de 'otros movimientos' y del bloque VUELATOUR nombran las
+    # DOS categorías; las del avión, solo la que el avión carga.
+    for t in (OM_FRAG_DOS_CATEGORIAS, RESUMEN_FRAG_DOS_CATEGORIAS, MAESTRA_FRAG_DOS):
+        assert "«Comisión del vendedor (VuelaTour)»" in t
+        assert "«Comisión del vendedor (avión)»" in t
+    for t in (FUERA_DE_LA_HOJA_DOS, CASCADA_DOS, RESUMEN_REGLA_DOS, OM_REGLA_DOS):
+        assert "«Comisión del vendedor (avión)»" in t
+        assert "«Comisión del vendedor (VuelaTour)»" not in t
+
+
+@pytest.mark.parametrize("hay_pago_real", [..., True, False], ids=["sin", "true", "false"])
+@pytest.mark.parametrize("sin_provision", [..., True, False], ids=["ausente", "0073", "false"])
+def test_fragmentos_con_la_bandera_evaluan_dos_categorias_primero(
+    sin_provision, hay_pago_real
+) -> None:
+    datos: dict = {"comision_vendedor_solo_gasto_real": True}
+    if sin_provision is not ...:
+        datos["sin_provision_vendedor"] = sin_provision
+    if hay_pago_real is not ...:
+        datos["hay_pago_vendedor_real"] = hay_pago_real
+    om = BalanceHojaOtrosMovimientos(**datos)
+    assert _fragmento_om_pago_vendedor(om) == OM_FRAG_DOS_CATEGORIAS
+    assert _fragmento_resumen_pago_vendedor(om) == RESUMEN_FRAG_DOS_CATEGORIAS
+
+
+@pytest.mark.parametrize("bandera", [..., None, False], ids=["ausente", "null", "false"])
+def test_fragmentos_sin_la_bandera_los_de_siempre_byte_a_byte(bandera) -> None:
+    """Con solo `sin_provision_vendedor` (API 0.0.73) los `*_SIN_PROVISION`;
+    con solo `hay_pago_vendedor_real`, los del 0.0.39; sin nada, los de la
+    provisión. Ninguno es el de las dos categorías."""
+
+    def om(**datos) -> BalanceHojaOtrosMovimientos:
+        if bandera is not ...:
+            datos["comision_vendedor_solo_gasto_real"] = bandera
+        return BalanceHojaOtrosMovimientos(**datos)
+
+    sin = om(sin_provision_vendedor=True, hay_pago_vendedor_real=True)
+    assert _fragmento_om_pago_vendedor(sin) == OM_FRAG_SIN_PROVISION
+    assert _fragmento_resumen_pago_vendedor(sin) == RESUMEN_FRAG_SIN_PROVISION
+    real = om(hay_pago_vendedor_real=True)
+    assert _fragmento_om_pago_vendedor(real) == _OM_PAGO_VENDEDOR_REAL == OM_FRAG_NUEVO
+    assert _fragmento_resumen_pago_vendedor(real) == _RESUMEN_PAGO_VENDEDOR_REAL
+    nada = om()
+    assert _fragmento_om_pago_vendedor(nada) == _OM_PAGO_VENDEDOR_PROVISION
+    assert _fragmento_resumen_pago_vendedor(nada) == _RESUMEN_PAGO_VENDEDOR_PROVISION
+    assert _fragmento_resumen_pago_vendedor(None) == RESUMEN_FRAG_VIEJO
+
+
+# --- Base del pie del bloque VUELATOUR, con y sin `afac_en_filas` ---------------
+
+
+def _payload_empresa_dos(caso: str, *, afac: bool) -> dict:
+    p = _payload_empresa(caso, True)
+    om = p["consolidado"]["otros_movimientos"]
+    om["comision_vendedor_solo_gasto_real"] = True
+    if afac:
+        om["afac_en_filas"] = True
+    return p
+
+
+@pytest.mark.parametrize("afac", [False, True], ids=["sin AFAC", "afac_en_filas"])
+@pytest.mark.parametrize("caso", ["cubre_avion", "regla_sin_cubre", "sin_regla"])
+def test_bloque_empresa_base_dos_categorias(caso, afac) -> None:
+    """Con la bandera la base es la de las DOS categorías (manda sobre la de
+    la 0.0.73), con el fragmento AFAC justo después si viaja `afac_en_filas`
+    y, con «cubre avión» (API 0.0.66+), la regla nueva al final."""
+    pie = _pie_balance(_payload_empresa_dos(caso, afac=afac))
+    base = EMPRESA_BASE_DOS_CATEGORIAS + (_EMPRESA_AFAC_EN_FILAS if afac else "")
+    if caso == "cubre_avion":
+        assert base + EMPRESA_REGLA_DOS.format(regla=REGLA) in pie
+    else:
+        assert any(x.startswith(base) for x in pie), caso
+    assert not any(EMPRESA_BASE_SIN_PROVISION in x or "o provisionado" in x for x in pie)
+    if not afac:
+        assert not any(_EMPRESA_AFAC_EN_FILAS in x for x in pie)
+
+
+@pytest.mark.parametrize("afac", [False, True], ids=["sin AFAC", "afac_en_filas"])
+def test_bloque_empresa_dos_categorias_sin_nota_pie_fijo(afac) -> None:
+    p = _payload_empresa_dos("sin_regla", afac=afac)
+    p["empresa"]["nota"] = None
+    pie = _pie_balance(p)
+    base = EMPRESA_BASE_DOS_CATEGORIAS + (_EMPRESA_AFAC_EN_FILAS if afac else "")
+    assert _NOTA_BLOQUE_EMPRESA.replace(_NOTA_EMPRESA_BASE, base) in pie
+
+
+# --- Libro Dinero: filas 2, 6 y 9 y la llave nueva ------------------------------
+
+
+def _miembros(data: bytes) -> dict[str, bytes]:
+    """Miembros del .xlsx salvo docProps/core.xml (lleva la hora)."""
+    import zipfile
+
+    z = zipfile.ZipFile(BytesIO(data))
+    return {n: z.read(n) for n in sorted(z.namelist()) if n != "docProps/core.xml"}
+
+
+def _dinero_dos(pagada=..., avion=...) -> DineroXlsxRequest:
+    """El Libro Dinero del API 0.0.74 con la llave
+    `utilidades_comision_vendedor_avion_mxn` (`...` ⇒ no viaja)."""
+    req = _dinero_0074(pagada=pagada, filas=[_FILA_V74_SIN_GASTO, _FILA_PAGO_REAL])
+    if avion is not ...:
+        req = req.model_copy(update={"utilidades_comision_vendedor_avion_mxn": avion})
+    return req
+
+
+def test_dinero_esquema_acepta_la_llave_nueva_con_default_none() -> None:
+    assert DineroXlsxRequest().utilidades_comision_vendedor_avion_mxn is None
+    req = DineroXlsxRequest.model_validate(
+        {"comision_vendedor_solo_gasto_real": True, "utilidades_comision_vendedor_avion_mxn": 900}
+    )
+    assert req.utilidades_comision_vendedor_avion_mxn == 900.0
+
+
+def test_dinero_dos_categorias_filas_2_6_y_9_con_la_llave() -> None:
+    wb = _libro(render_dinero_xlsx(_dinero_dos(pagada=1600.0, avion=1000.0)))
+    assert wb["Otros ingresos"]["A2"].value == _cambia(
+        DINERO_FILA2_VIEJA, DINERO_FRAG_VIEJO + " ", DINERO_LEYENDA_GASTO_REAL
+    )
+    assert wb["utilidades"]["A6"].value == DINERO_FILA6_DOS
+    assert wb["utilidades"]["A9"].value == (
+        DINERO_FILA9_GASTO_REAL
+        + " Pagado al vendedor con gasto real en este periodo: $1,600.00 MXN."
+        + DINERO_NOTA_AVION_DOS.replace("$X", "$1,000.00")
+    )
+
+
+@pytest.mark.parametrize("avion", [..., None, 0.0], ids=["ausente", "null", "cero"])
+def test_dinero_dos_categorias_sin_la_llave_sin_cola_del_avion(avion) -> None:
+    wb = _libro(render_dinero_xlsx(_dinero_dos(pagada=1600.0, avion=avion)))
+    assert wb["utilidades"]["A6"].value == DINERO_FILA6_DOS
+    assert wb["utilidades"]["A9"].value == (
+        DINERO_FILA9_GASTO_REAL
+        + " Pagado al vendedor con gasto real en este periodo: $1,600.00 MXN."
+    )
+
+
+@pytest.mark.parametrize("bandera", [None, False], ids=["null", "false"])
+def test_dinero_sin_la_bandera_la_llave_no_mueve_un_byte(bandera) -> None:
+    """Sin la bandera (API ≤ 0.0.73) la llave nueva se ignora y las filas 2, 6
+    y 9 son las de hoy."""
+    base = _dinero(provision=2030.0).model_copy(
+        update={"comision_vendedor_solo_gasto_real": bandera}
+    )
+    con = base.model_copy(update={"utilidades_comision_vendedor_avion_mxn": 1000.0})
+    a, b = render_dinero_xlsx(base), render_dinero_xlsx(con)
+    assert _miembros(a) == _miembros(b)
+    wb = _libro(b)
+    assert wb["Otros ingresos"]["A2"].value == DINERO_FILA2_VIEJA
+    assert wb["utilidades"]["A6"].value == DINERO_FILA6_VIEJA
+    assert "Comisión del vendedor (avión)" not in wb["utilidades"]["A9"].value
+
+
+def test_rutas_aceptan_el_dinero_con_la_llave_nueva(monkeypatch, request) -> None:
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    request.addfinalizer(get_settings.cache_clear)
+    res = client.post(
+        "/pdf/dinero-xlsx",
+        json=_dinero_dos(pagada=1600.0, avion=1000.0).model_dump(mode="json"),
+        headers={"X-Internal-Token": TOKEN},
+    )
+    assert res.status_code == 200, res.text
+    fila9 = _libro(res.content)["utilidades"]["A9"].value
+    assert fila9.endswith(DINERO_NOTA_AVION_DOS.replace("$X", "$1,000.00"))

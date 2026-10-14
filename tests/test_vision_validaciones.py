@@ -85,6 +85,19 @@ def test_ticket_monto_como_texto_con_comas(claude_fake) -> None:
     assert res.monto == 1234.56
 
 
+def test_ticket_nunca_sugiere_una_comision_del_vendedor(claude_fake) -> None:
+    """Regresión del 13-oct-2026 (dos categorías de la comisión del vendedor,
+    invariante 61 del API): ni «Comisión del vendedor (VuelaTour)» ni
+    «Comisión del vendedor (avión)» se sugieren desde un ticket — `valid_cats`
+    no las incluye; si el modelo las devuelve, la sugerencia se descarta y el
+    resto de la lectura queda igual (el pago al vendedor lo clasifica oficina)."""
+    for categoria in ("COMISION_VENDEDOR_AVION", "COMISION_VENDEDOR"):
+        claude_fake(anthropic_vision, {**TICKET_OK, "categoria_sugerida": categoria})
+        res = leer_ticket_gasto(_ticket())
+        assert res.categoria_sugerida is None, categoria
+        assert res.monto == 939.60 and res.folio == "FEDCUN 193422"
+
+
 def test_ticket_matricula_y_tarjeta_fuera_de_catalogo_avisan(claude_fake) -> None:
     payload = {**TICKET_OK, "matricula": "XA-ZZZ", "tarjeta_terminacion": "1111"}
     claude_fake(anthropic_vision, payload)

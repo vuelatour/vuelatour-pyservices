@@ -46,6 +46,7 @@ from app.services.balance_avion_xlsx import (
     _MARCA_PROVISION,
     _NOTA_BLOQUE_EMPRESA,
     _NOTA_EMPRESA_BASE,
+    _NOTA_EMPRESA_BASE_DOS_CATEGORIAS,
     _NOTA_EMPRESA_BASE_SIN_PROVISION,
     _OM_AFAC_EN_FILAS,
     _OM_SECCION_AFAC,
@@ -445,11 +446,13 @@ def test_bloque_empresa_con_bandera_y_sin_provision() -> None:
 
 
 def test_bloque_empresa_con_bandera_y_regla_del_api_0074() -> None:
-    """Con la regla de comisiones el fragmento AFAC va ANTES de la regla."""
+    """Con la regla de comisiones el fragmento AFAC va ANTES de la regla. Con
+    la bandera de la comisión del vendedor del 0.0.74 la base es la de las
+    dos categorías (ajuste del 13-oct-2026)."""
     req = _con_afac(BalanceGeneralRequest.model_validate(tcg._payload_0074()))
     pie = _textos(load_workbook(BytesIO(render_balance_general_xlsx(req)))["balance"])
     esperado = (
-        _NOTA_EMPRESA_BASE_SIN_PROVISION
+        _NOTA_EMPRESA_BASE_DOS_CATEGORIAS
         + _EMPRESA_AFAC_EN_FILAS
         + _EMPRESA_REGLA_COMISIONES_GASTO_REAL.format(regla=tcg.REGLA)
     )

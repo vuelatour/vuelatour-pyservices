@@ -22,7 +22,12 @@
                       o, mientras no se capture, la PROVISIÓN a la fecha del
                       vuelo — 28-sep-2026, invariante 31 del API; con el API
                       0.0.74 —bandera `comision_vendedor_solo_gasto_real`,
-                      invariante 61— sin gasto real la fila no lleva egreso).
+                      invariante 61— sin gasto real la fila no lleva egreso
+                      y el pago va en DOS categorías, «Comisión del vendedor
+                      (VuelaTour)» y «Comisión del vendedor (avión)»: este
+                      libro es la caja de VuelaTour y resta las dos, aunque
+                      el Balance general y el reparto le carguen la
+                      «(avión)» al avión).
   3. otros gastos   — gastos del mes sin vuelo, con acumulado.
   4. utilidades     — resumen del periodo (lo computable hoy).
 
@@ -342,28 +347,59 @@ _LEYENDA_PAGO_VENDEDOR_REAL = (
     "28-ago-2026). "
 )
 # API 0.0.74 (13-oct-2026, invariante 61 del API; decisión 3 del lote del
-# cliente: «comisión del vendedor SOLO como gasto real»): ya no hay provisión;
-# sin gasto real la fila de comisión no lleva egreso. Con la bandera
-# `comision_vendedor_solo_gasto_real` esta leyenda MANDA sobre las dos de
-# arriba; sin ella, las de siempre (libro byte a byte).
+# cliente: «comisión del vendedor SOLO como gasto real», y su ajuste de las
+# 17:10: el pago va en DOS categorías, «Comisión del vendedor (VuelaTour)» y
+# «Comisión del vendedor (avión)»): ya no hay provisión; sin gasto real la
+# fila de comisión no lleva egreso. Este libro es la CAJA de VuelaTour: resta
+# los pagos de las dos categorías (el dinero salió de VuelaTour) aunque el
+# Balance general y el reparto le carguen la «(avión)» al avión — la
+# aritmética la hace el API y no cambió; aquí solo cambian textos. Con la
+# bandera `comision_vendedor_solo_gasto_real` esta leyenda MANDA sobre las
+# dos de arriba; sin ella, las de siempre (libro byte a byte).
 _LEYENDA_PAGO_VENDEDOR_GASTO_REAL = (
     "El pago de la comisión al vendedor va apareado en su fila SOLO cuando se "
-    "captura en Gastos el gasto real «Comisión del vendedor» ligado al vuelo "
-    "(con «faltan $…» o «excede $…» si no cuadra con lo cobrado); mientras no "
-    "se capture, la fila no lleva egreso (regla del 13-oct-2026: sin gasto "
-    "real no se resta nada). "
+    "captura en Gastos ligado al vuelo, como «Comisión del vendedor "
+    "(VuelaTour)» o «Comisión del vendedor (avión)» (con «faltan $…» o «excede "
+    "$…» si no cuadra con lo cobrado); mientras no se capture, la fila no "
+    "lleva egreso (sin gasto real no se resta nada). Este libro es la caja de "
+    "VuelaTour: resta los pagos de las dos categorías, aunque en el Balance "
+    "general y en el reparto la «(avión)» la cargue el avión en su columna "
+    "COMISIONES (la nota de la celda lo dice). "
 )
-# Fila 9 de 'utilidades' con la bandera (le sigue, solo con monto > 0, «
-# Pagado al vendedor con gasto real en este periodo: $X MXN.»).
+# Fila 9 de 'utilidades' con la bandera (le siguen, solo con monto > 0, «
+# Pagado al vendedor con gasto real en este periodo: $X MXN.» y, solo con
+# `utilidades_comision_vendedor_avion_mxn` > 0,
+# `_UTILIDADES_NOTA_COMISION_AVION`).
 _UTILIDADES_OTROS_INGRESOS_GASTO_REAL = (
     "OTROS INGRESOS = ingreso de VuelaTour (TUAs/extras/pernocta/comisión del "
     "vendedor + su IVA), no del avión (regla 28-ago-2026), NETO del pago REAL "
-    "al vendedor (el gasto «Comisión del vendedor» ligado al vuelo; sin gasto "
-    "capturado no se resta nada; este libro lo resta entero aunque en el "
-    "Balance general, en los vuelos completados de la regla de comisiones, lo "
-    "cargue el avión en su columna COMISIONES), más los ingresos sin vuelo "
-    "registrados en Ingresos (ING-n), netos de su comisión bancaria: ver hoja "
-    "'Otros ingresos'."
+    "al vendedor (los gastos «Comisión del vendedor (VuelaTour)» y «Comisión "
+    "del vendedor (avión)» ligados al vuelo; sin gasto capturado no se resta "
+    "nada; este libro resta los dos porque el dinero salió de VuelaTour, "
+    "aunque en el Balance general y en el reparto la «(avión)» la cargue el "
+    "avión), más los ingresos sin vuelo registrados en Ingresos (ING-n), netos "
+    "de su comisión bancaria: ver hoja 'Otros ingresos'."
+)
+# Cola de la fila 9 con la bandera: cuánto de lo pagado se capturó como
+# «Comisión del vendedor (avión)» en vuelos que carga un avión (la diferencia
+# esperada contra el bloque VUELATOUR del Balance general). `{monto}` =
+# «$1,234.56». Solo con la llave del API > 0.
+_UTILIDADES_NOTA_COMISION_AVION = (
+    " De lo pagado al vendedor, {monto} MXN se capturó como «Comisión del "
+    "vendedor (avión)» en vuelos que carga un avión: el Balance general y el "
+    "reparto se lo restan al avión (columna COMISIONES); aquí sigue restando "
+    "porque el dinero salió de VuelaTour."
+)
+# Fila 6 de 'utilidades' con la bandera: las comisiones del vendedor ya no
+# «no restan al avión» (la «(avión)» la resta el avión en el Balance general
+# y en el reparto). Sin la bandera, el texto de siempre.
+_UTILIDADES_FILA6_GASTO_REAL = (
+    "CHARTERS y UTILIDAD dependen del costo por hora del proveedor (regla "
+    "pendiente de definir con el equipo): esas celdas van vacías a propósito — "
+    "no se inventan números. Las comisiones del vendedor tienen regla: lo "
+    "cobrado al cliente es ingreso de VuelaTour (hoja 'Otros ingresos') y su "
+    "pago real (las dos categorías) se descuenta ahí; en el Balance general y "
+    "en el reparto la «Comisión del vendedor (avión)» la resta el avión."
 )
 
 
@@ -588,10 +624,14 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
         cell.border = _border
         if isinstance(v, (int, float)):
             cell.number_format = TC if i == len(vals) - 1 else MONEY
+    # Con la bandera del API 0.0.74 (dos categorías) la «(avión)» sí la resta
+    # el avión en el Balance general y en el reparto; sin ella, el de siempre.
     ws.cell(
         row=6,
         column=1,
-        value="CHARTERS y UTILIDAD dependen del costo por hora del proveedor "
+        value=_UTILIDADES_FILA6_GASTO_REAL
+        if _solo_gasto_real(req)
+        else "CHARTERS y UTILIDAD dependen del costo por hora del proveedor "
         "(regla pendiente de definir con el equipo): esas celdas van vacías a "
         "propósito — no se inventan números. Las comisiones del vendedor ya "
         "tienen regla (28-ago-2026): ingreso y pago de VuelaTour en la hoja "
@@ -625,10 +665,20 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
         if pagada is not None and pagada > 0
         else ""
     )
+    # Pagos «Comisión del vendedor (avión)» de vuelos que carga un avión
+    # (API 0.0.74, invariante 61, dos categorías): informativo, solo > 0 y
+    # solo con la bandera (aquí siguen restando: la caja es de VuelaTour).
+    avion = req.utilidades_comision_vendedor_avion_mxn
+    nota_avion = (
+        _UTILIDADES_NOTA_COMISION_AVION.format(monto=f"${avion:,.2f}")
+        if avion is not None and avion > 0
+        else ""
+    )
     # Con la bandera del API 0.0.74 (invariante 61): sin provisión que nombrar
-    # (viaja en 0) y lo pagado de verdad, igual; sin ella, el texto de siempre.
+    # (viaja en 0), lo pagado de verdad igual y, con la llave, la parte
+    # «(avión)»; sin ella, el texto de siempre.
     fila9 = (
-        _UTILIDADES_OTROS_INGRESOS_GASTO_REAL + nota_pagada
+        _UTILIDADES_OTROS_INGRESOS_GASTO_REAL + nota_pagada + nota_avion
         if _solo_gasto_real(req)
         else "OTROS INGRESOS = ingreso de VuelaTour (TUAs/extras/pernocta/"
         "comisión del vendedor + su IVA), no del avión (regla 28-ago-2026), "

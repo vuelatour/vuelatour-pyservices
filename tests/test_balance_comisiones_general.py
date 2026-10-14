@@ -31,7 +31,12 @@ como gasto real»): con la bandera `comision_vendedor_solo_gasto_real` (hoja
 pestaña, del RESUMEN, del bloque VUELATOUR, de la cascada y de la hoja de
 vuelos hablan del pago REAL que el avión carga (la fila llega «a cargo del
 avión» con egreso $0.00). `_FILA_CUBIERTA`/`_FILA_EXCEDE`/`_CASCADA_0065`
-(sin la bandera) no se tocan.
+(sin la bandera) no se tocan. Ajuste del mismo día (dos categorías): el pago
+se captura como «Comisión del vendedor (VuelaTour)» —egresa en la fila— o
+«Comisión del vendedor (avión)» —$0.00 «a cargo del avión …» si un avión lo
+carga; si ninguno, lo paga VuelaTour y el concepto dice por qué—; las
+leyendas de la bandera nombran las dos y la pestaña cuadra igual con la fila
+mixta, la informativa y la que ningún avión carga.
 """
 
 from __future__ import annotations
@@ -75,20 +80,20 @@ from app.services.balance_avion_xlsx import (
     _NOTA_COMISIONES_FLOTA,
     _NOTA_COMISIONES_FLOTA_GASTO_REAL,
     _NOTA_EMPRESA_BASE,
-    _NOTA_EMPRESA_BASE_SIN_PROVISION,
+    _NOTA_EMPRESA_BASE_DOS_CATEGORIAS,
     _NOTA_ENCABEZADO_GANANCIA_FLOTA,
     _NOTA_ENCABEZADO_GANANCIA_FLOTA_GASTO_REAL,
     _NOTA_ENCABEZADO_REMANENTE,
     _NOTA_ENCABEZADO_REMANENTE_GASTO_REAL,
     _NOTA_GANANCIA_FLOTA,
-    _OM_PAGO_VENDEDOR_SIN_PROVISION,
+    _OM_PAGO_VENDEDOR_DOS_CATEGORIAS,
     _OM_REGLA_COMISIONES,
     _OM_REGLA_COMISIONES_CUBRE_AVION,
     _OM_REGLA_COMISIONES_CUBRE_AVION_SIN_PROVISION,
     _OM_REGLA_COMISIONES_GASTO_REAL,
     _RESUMEN_COMISIONES,
     _RESUMEN_COMISIONES_GASTO_REAL,
-    _RESUMEN_PAGO_VENDEDOR_SIN_PROVISION,
+    _RESUMEN_PAGO_VENDEDOR_DOS_CATEGORIAS,
     _RESUMEN_REGLA_CUBRE_AVION,
     _RESUMEN_REGLA_GASTO_REAL,
     AMBER,
@@ -819,32 +824,32 @@ def _payload_0074(
 
 
 def test_textos_gasto_real_son_los_del_contrato_y_sin_provision() -> None:
+    """Literales del contrato §G del ajuste de las dos categorías (13-oct-2026),
+    que reescribió EN SU LUGAR los de la decisión 3."""
     assert _OM_REGLA_COMISIONES_GASTO_REAL == (
-        " Con la {regla} (por fecha del vuelo), en los vuelos COMPLETADOS con comisión "
-        "cotizada el pago real de la comisión del vendedor (el gasto «Comisión del "
-        "vendedor» ligado al vuelo) lo carga el avión en su columna COMISIONES: aquí la "
-        "fila lo muestra apareado con egreso $0.00 y «a cargo del avión …», y la "
-        "comisión bancaria de aquí es solo la parte de VuelaTour. Lo que absorbe cada "
-        "avión (ese pago y su parte de la comisión bancaria) resta en la columna "
-        "COMISIONES de su libro individual y en la cascada de la hoja 'balance'."
+        " Con la {regla} (por fecha del vuelo), la comisión bancaria de aquí es solo la "
+        "parte de VuelaTour: la de cada avión resta en la columna COMISIONES de su libro "
+        "individual y en la cascada de la hoja 'balance', igual que los pagos «Comisión "
+        "del vendedor (avión)» que aquí salen con egreso $0.00."
     )
     assert _EMPRESA_REGLA_COMISIONES_GASTO_REAL == (
-        " Con la {regla} (por fecha del vuelo), en los vuelos completados el pago real "
-        "al vendedor lo carga cada avión en su columna COMISIONES (los egresos propios "
-        "lo traen en $0.00) y, de la comisión bancaria, los egresos solo traen la parte "
-        "de VuelaTour."
+        " Con la {regla} (por fecha del vuelo), de la comisión bancaria los egresos "
+        "propios solo traen la parte de VuelaTour; los pagos «Comisión del vendedor "
+        "(avión)» los carga cada avión en su columna COMISIONES (aquí egresan $0.00)."
     )
     assert _RESUMEN_REGLA_GASTO_REAL == (
-        " Con la {regla} (por fecha del vuelo), en los vuelos completados ese pago real "
-        "lo carga el avión en su columna COMISIONES: en 'otros movimientos' queda «a "
-        "cargo del avión» con egreso $0.00."
+        " Con la {regla} (por fecha del vuelo), la comisión bancaria de 'otros "
+        "movimientos' es solo la parte de VuelaTour; la del avión resta en su columna "
+        "COMISIONES, igual que los pagos «Comisión del vendedor (avión)»."
     )
     assert _NOTA_CASCADA_COMISIONES_GASTO_REAL.startswith(
-        "Comisiones que absorbe el avión (regla de septiembre 2026, por fecha del "
-        "vuelo): su parte de la comisión bancaria de sus cobros y el pago real de la "
-        "comisión del vendedor (el gasto «Comisión del vendedor» ligado al vuelo), en "
-        "USD — las de la columna COMISIONES de su libro individual."
+        "Comisiones que absorbe el avión, en USD — las de la columna COMISIONES de su "
+        "libro individual: su parte de la comisión bancaria de sus cobros (regla de "
+        "septiembre 2026, por fecha del vuelo) y el pago al vendedor capturado como "
+        "«Comisión del vendedor (avión)» ligado al vuelo."
     )
+    # La nota de la cascada crece y no llega al tope de alto (no se corta).
+    assert _comentario_cobro(_NOTA_CASCADA_COMISIONES_GASTO_REAL).height < 260
     for texto in (
         _OM_REGLA_COMISIONES_GASTO_REAL,
         _EMPRESA_REGLA_COMISIONES_GASTO_REAL,
@@ -867,7 +872,8 @@ def test_general_0074_leyendas_y_fila_a_cargo_del_avion(variante) -> None:
     om, omv = wb["otros movimientos"], wv["otros movimientos"]
     a2 = om["A2"].value
     assert (
-        _OM_PAGO_VENDEDOR_SIN_PROVISION + _OM_REGLA_COMISIONES_GASTO_REAL.format(regla=REGLA) in a2
+        _OM_PAGO_VENDEDOR_DOS_CATEGORIAS + _OM_REGLA_COMISIONES_GASTO_REAL.format(regla=REGLA)
+        in a2
     )
     assert _OM_REGLA_COMISIONES_CUBRE_AVION_SIN_PROVISION.format(regla=REGLA) not in a2
     assert "cubierto por el avión" not in a2
@@ -896,13 +902,14 @@ def test_general_0074_leyendas_y_fila_a_cargo_del_avion(variante) -> None:
     )
     assert resumen == (
         _RESUMEN_COMISIONES_GASTO_REAL
-        + _RESUMEN_PAGO_VENDEDOR_SIN_PROVISION
+        + _RESUMEN_PAGO_VENDEDOR_DOS_CATEGORIAS
         + _RESUMEN_REGLA_GASTO_REAL.format(regla=REGLA)
     )
-    # Bloque VUELATOUR (empresa): base sin «o provisionado» + regla nueva.
+    # Bloque VUELATOUR (empresa): base de las dos categorías + regla nueva.
     pie = _pie(wb["balance"])
     assert (
-        _NOTA_EMPRESA_BASE_SIN_PROVISION + _EMPRESA_REGLA_COMISIONES_GASTO_REAL.format(regla=REGLA)
+        _NOTA_EMPRESA_BASE_DOS_CATEGORIAS
+        + _EMPRESA_REGLA_COMISIONES_GASTO_REAL.format(regla=REGLA)
         in pie
     )
     assert not any(
@@ -985,11 +992,117 @@ def test_bloque_empresa_0074_sin_nota_del_api_pie_fijo() -> None:
     p["empresa"]["nota"] = None
     pie = _pie(_wb(_render(p))[0]["balance"])
     assert any(
-        _NOTA_EMPRESA_BASE_SIN_PROVISION + _EMPRESA_REGLA_COMISIONES_GASTO_REAL.format(regla=REGLA)
+        _NOTA_EMPRESA_BASE_DOS_CATEGORIAS
+        + _EMPRESA_REGLA_COMISIONES_GASTO_REAL.format(regla=REGLA)
         in x
         for x in pie
     )
     assert not any("o provisionado" in x for x in pie)
+
+
+# Las tres filas del pago al vendedor de la gramática única del API 0.0.74
+# (dos categorías, `egresoPagoVendedorDeVuelo`), como llegan: mixta (la
+# «(VuelaTour)» egresa y la «(avión)» la carga el avión), informativa $0.00
+# (`_FILA_A_CARGO`) y la «(avión)» que ningún avión carga (la paga VuelaTour).
+_FILA_MIXTA = {
+    "clave": "#402 · Cliente Dos",
+    "avion_color": "#16A34A",
+    "estado": "COMPLETADO",
+    "fecha_vuelo": "2026-09-08",
+    "concepto_egreso": (
+        "pago comisión vendedor (Pablo Canales) · gasto real (2 pagos) · VuelaTour "
+        "$2,000.00 · a cargo del avión XB-DOS ($1,000.00 en su columna COMISIONES)"
+    ),
+    "egreso_mxn": 2000.0,
+    "fecha_egreso": "2026-09-22",
+    "concepto_ingreso": "comisión vendedor (Pablo Canales)",
+    "ingreso_mxn": 3000.0,
+    "fecha_ingreso": "2026-09-08",
+    "remanente_mxn": 1000.0,
+}
+_FILA_NINGUNO = {
+    "clave": "#414 · Cliente Catorce",
+    "avion_color": "#2563EB",
+    "estado": "CONFIRMADO",
+    "fecha_vuelo": "2026-09-28",
+    "concepto_egreso": (
+        "pago comisión vendedor (Alex Saab) · gasto real · incluye «Comisión del vendedor "
+        "(avión)» que ningún avión carga (el vuelo aún no se completa: al completarse lo "
+        "cargará el avión): la paga VuelaTour"
+    ),
+    "egreso_mxn": 1180.0,
+    "fecha_egreso": "2026-09-27",
+    "concepto_ingreso": "comisión vendedor (Alex Saab)",
+    "ingreso_mxn": 1180.0,
+    "fecha_ingreso": "2026-09-28",
+    "remanente_mxn": 0.0,
+}
+
+
+@pytest.mark.parametrize("variante", ["mensual", "general"])
+def test_general_0074_dos_categorias_filas_mixta_informativa_y_sin_avion(variante) -> None:
+    """La pestaña pinta TAL CUAL las tres filas (más la de VuelaTour de
+    siempre): sin amarillo, remanente con la fórmula viva y TOTALES = Σ filas
+    (la informativa suma $0.00); la fila 2 explica las dos categorías."""
+    p = _payload_0074(variante)
+    filas = [_FILA_MIXTA, _FILA_A_CARGO, _FILA_NINGUNO, _FILA_VT]
+    p["consolidado"]["otros_movimientos"]["filas"] = filas
+    data = _render(p)
+    assert verificar_libro(data)
+    wb, wv = _wb(data)
+    om, omv = wb["otros movimientos"], wv["otros movimientos"]
+    assert _OM_PAGO_VENDEDOR_DOS_CATEGORIAS in om["A2"].value
+    for k, fila in enumerate(filas):
+        r = 4 + k
+        assert om[f"A{r}"].value.startswith(fila["clave"]), r
+        assert om[f"C{r}"].value == fila["concepto_egreso"], r
+        assert (om[f"D{r}"].value, om[f"G{r}"].value) == (fila["egreso_mxn"], fila["ingreso_mxn"])
+        assert om[f"I{r}"].value == f"=ROUND(G{r}-D{r},2)", r
+        assert omv[f"I{r}"].value == fila["remanente_mxn"], r
+    # La informativa: egreso 0.0 (no vacío) y remanente = ingreso.
+    assert (om["D5"].value, omv["I5"].value) == (0.0, 2360.0)
+    # La que ningún avión carga: remanente 0 (nunca −0).
+    assert omv["I6"].value == 0 and not str(omv["I6"].value).startswith("-")
+    rellenos = {
+        om.cell(row=f, column=c).fill.fgColor.rgb
+        for f in range(4, 4 + len(filas))
+        for c in range(1, 11)
+        if om.cell(row=f, column=c).fill.fill_type
+    }
+    assert "00" + AMBER not in rellenos
+    tot = next(c.row for c in om["A"] if c.value == "TOTALES")
+    todas = filas + p["consolidado"]["otros_movimientos"].get("filas_sueltas", [])
+    egresos = r2(sum(f.get("egreso_mxn") or 0.0 for f in todas))
+    ingresos = r2(sum(f.get("ingreso_mxn") or 0.0 for f in todas))
+    assert omv[f"D{tot}"].value == egresos == 4680.0
+    assert omv[f"G{tot}"].value == ingresos
+    assert omv[f"I{tot}"].value == r2(ingresos - egresos)
+
+
+def test_general_0074_con_la_bandera_nadie_nombra_la_categoria_vieja() -> None:
+    """Con la bandera ninguna leyenda pintada (pestaña, RESUMEN, hoja de
+    vuelos, cascada y bloque VUELATOUR) nombra «Comisión del vendedor» sin
+    su categoría ni habla de una provisión del vendedor (la de AFAC, «PERMISO
+    AFAC (PROVISIÓN)», es otra cosa): las leyendas nombran las dos."""
+    wb = _wb(_render(_payload_0074("mensual")))[0]
+    textos = [
+        c.value
+        for hoja in ("otros movimientos", "RESUMEN flota", MAESTRA, "balance")
+        for fila in wb[hoja].iter_rows()
+        for c in fila
+        if isinstance(c.value, str)
+    ]
+    notas = [
+        c.comment.text
+        for hoja in (MAESTRA, "balance")
+        for fila in wb[hoja].iter_rows()
+        for c in fila
+        if c.comment is not None
+    ]
+    assert not any("«Comisión del vendedor»" in t for t in textos + notas)
+    assert not any("provisión" in t.lower() and "vendedor" in t.lower() for t in textos)
+    assert any("«Comisión del vendedor (VuelaTour)»" in t for t in textos)
+    assert any("«Comisión del vendedor (avión)»" in t for t in textos)
 
 
 def test_rutas_aceptan_el_payload_del_api_0074(monkeypatch, request) -> None:

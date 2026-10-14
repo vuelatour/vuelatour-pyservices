@@ -10,8 +10,10 @@ Ocho hojas en el orden del libro:
      la columna que era COMISIÓN VENDEDOR se llama COMISIONES y lleva lo
      que absorbe el avión: su parte de la comisión bancaria de los cobros +
      la comisión del vendedor (hasta el API 0.0.73 como PROVISIÓN; desde el
-     0.0.74 —13-oct-2026, bandera `comision_vendedor_solo_gasto_real`— su
-     pago REAL capturado; nota por celda); GANANCIA =
+     0.0.74 —13-oct-2026, bandera `comision_vendedor_solo_gasto_real`— el
+     pago capturado como «Comisión del vendedor (avión)», en cualquier
+     fecha; la «Comisión del vendedor (VuelaTour)» la paga VuelaTour en
+     'otros movimientos'; nota por celda); GANANCIA =
      REMANENTE − COMISIONES. Vuelos MULTI-AVIÓN (regla B): la venta se
      reparte entre las matrículas por tramo; los gastos van al avión de su
      tramo. Costos SIN combustible; el TUA pagado es SOLO nota en
@@ -73,9 +75,10 @@ COMISIONES de su libro INDIVIDUAL y restan en la cascada de su bloque de la
 hoja 'balance' (dos líneas visibles con el API 0.0.66). En 'otros
 movimientos' (las dos variantes) las filas con PROVISIÓN van en amarillo con
 su leyenda al pie (API ≤ 0.0.72: desde el 0.0.73 no llega ninguna; con el
-0.0.74 el pago real de los vuelos completados de la regla llega apareado con
-egreso $0.00 «a cargo del avión …» y solo cambian las leyendas, con la
-bandera `comision_vendedor_solo_gasto_real`).
+0.0.74 el pago al vendedor va en DOS categorías —el capturado como «Comisión
+del vendedor (VuelaTour)» egresa en su fila y el «(avión)» que carga un avión
+llega apareado con egreso $0.00 «a cargo del avión …»— y solo cambian las
+leyendas, con la bandera `comision_vendedor_solo_gasto_real`).
 
 Los montos vienen YA calculados del API (aquí solo se pintan; jamás se
 recalcula dinero). None = celda vacía — nunca un 0 falso.
@@ -1256,34 +1259,45 @@ _NOTAS_ENCABEZADO_SIN_COMISIONES = {
     "permiso_afac_usd_hr": _NOTA_ENCABEZADO_TARIFA_AFAC,
 }
 
-# ===== COMISIÓN DEL VENDEDOR SOLO COMO GASTO REAL (13-oct-2026, API 0.0.74,
-# invariante 61 del API; decisión 3 del lote del cliente) =====
-# Ya no hay provisión en ningún libro: lo que el avión absorbe del vendedor es
-# su pago REAL (el gasto «Comisión del vendedor» capturado y ligado al vuelo,
-# solo en vuelos COMPLETADOS con comisión cotizada); sin gasto, nada. El API
-# lo avisa con la bandera ADITIVA `comision_vendedor_solo_gasto_real` (raíz de
-# cada libro —individual, `aviones[]` y consolidado FLOTA— y hoja 'otros
-# movimientos'); SOLO con ella (`is True`) estos textos sustituyen a los de
+# ===== COMISIÓN DEL VENDEDOR SOLO COMO GASTO REAL, EN DOS CATEGORÍAS
+# (13-oct-2026, API 0.0.74, invariante 61 del API; decisión 3 del lote del
+# cliente y su ajuste de las 17:10: «necesitamos una opción que sea Comisión
+# del vendedor pero que esa opción sí se cargue al balance del avión, y
+# dejamos el otro que se va a balance de vuelatour») =====
+# Ya no hay provisión en ningún libro y el pago al vendedor se captura en una
+# de DOS categorías: el de «Comisión del vendedor (avión)» lo absorbe el avión
+# del vuelo en su columna COMISIONES (× su parte de la venta, en CUALQUIER
+# fecha, en vuelos completados o cancelados con cobros retenidos) y el de
+# «Comisión del vendedor (VuelaTour)» lo paga VuelaTour en 'otros
+# movimientos' (nunca es costo del avión); sin pago capturado, nada. El API
+# lo avisa con la bandera ADITIVA `comision_vendedor_solo_gasto_real` (raíz
+# de cada libro —individual, `aviones[]` y consolidado FLOTA— y hoja 'otros
+# movimientos'): la MISMA del 0.0.74, sin bandera nueva (D3 y su ajuste
+# salen juntos). SOLO con ella (`is True`) estos textos sustituyen a los de
 # «PROVISIÓN»; sin ella (API ≤ 0.0.73) los de siempre, byte a byte (huellas
-# intactas). Sin columnas, fórmulas ni merges nuevos. Todos llevan «regla de
-# septiembre 2026» para `_con_regla`.
+# intactas). Sin columnas, fórmulas ni merges nuevos. Los que pasan por
+# `_con_regla` llevan UNA vez «regla de septiembre 2026» —la vigencia
+# gobierna solo la parte bancaria— y ningún otro «septiembre». Un libro
+# ANTERIOR a la vigencia que absorbe un pago «(avión)» también trae
+# COMISIONES y estas leyendas (`_regla_vigente`): siguen siendo verdad.
 _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL = (
-    "COMISIONES (regla de septiembre 2026, por fecha del vuelo) = lo que "
-    "absorbe el avión: su parte de la comisión bancaria de los cobros del "
-    "vuelo (en la misma proporción con que el cobro se prorratea al avión) + "
-    "el pago REAL de la comisión del vendedor (el gasto «Comisión del "
-    "vendedor» capturado en Gastos y ligado al vuelo, solo en vuelos "
-    "COMPLETADOS con comisión cotizada; sin gasto capturado no se resta "
-    "nada). La nota de cada celda dice cuáles son. Vuelos anteriores: vacía "
-    "(la comisión era de VuelaTour)."
+    "COMISIONES = lo que absorbe el avión: su parte de la comisión bancaria de "
+    "los cobros del vuelo (regla de septiembre 2026, por fecha del vuelo; en "
+    "la misma proporción con que el cobro se prorratea al avión) + el pago al "
+    "vendedor capturado en Gastos como «Comisión del vendedor (avión)» y "
+    "ligado al vuelo (en cualquier fecha, en vuelos completados o cancelados "
+    "con cobros retenidos; en un vuelo de varios aviones, su parte de la "
+    "venta). La «Comisión del vendedor (VuelaTour)» no va aquí: la paga "
+    "VuelaTour en 'otros movimientos'. Sin pago capturado no se resta nada. La "
+    "nota de cada celda dice cuáles son."
 )
 _COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL = (
-    "Las comisiones que absorbe cada avión (regla de septiembre 2026, por "
-    "fecha del vuelo: su parte de la comisión bancaria de sus cobros y el "
-    "pago real de la comisión del vendedor —el gasto «Comisión del vendedor» "
-    "ligado al vuelo; sin gasto capturado no se resta nada—) no van en esta "
-    "hoja: están en la columna COMISIONES del libro individual de cada avión "
-    "y ya van restadas en la cascada de cada avión de la hoja 'balance'."
+    "Las comisiones que absorbe cada avión (su parte de la comisión bancaria "
+    "de sus cobros —regla de septiembre 2026, por fecha del vuelo— y el pago "
+    "al vendedor capturado como «Comisión del vendedor (avión)» ligado al "
+    "vuelo; sin ese pago no se resta nada del vendedor) no van en esta hoja: "
+    "están en la columna COMISIONES del libro individual de cada avión y ya "
+    "van restadas en la cascada de cada avión de la hoja 'balance'."
 )
 _NOTA_ENCABEZADO_GANANCIA_FLOTA_GASTO_REAL = (
     "GANANCIA (MXN y su equivalente en USD) = REMANENTE (VENTA − COSTO "
@@ -1326,19 +1340,21 @@ _NOTA_GANANCIA = " GANANCIA de la fila = REMANENTE (VENTA − COSTO TOTAL) − C
 # (manda sobre `sin_provision_vendedor`): le siguen
 # `_MAESTRA_PAGO_VENDEDOR_GASTO_REAL` y `_NOTA_GANANCIA`.
 _NOTA_COMISIONES_GASTO_REAL = (
-    "COMISIONES MXN (regla de septiembre 2026, por fecha del vuelo) = lo que "
-    "absorbe el avión: su parte de la comisión bancaria de los cobros y el "
-    "pago REAL de la comisión del vendedor (el gasto «Comisión del vendedor» "
-    "capturado en Gastos y ligado al vuelo, solo en vuelos COMPLETADOS con "
-    "comisión cotizada; sin gasto capturado no se resta nada); la nota de "
-    "cada celda dice cuáles son y en los vuelos anteriores va vacía. Lo "
-    "cobrado al cliente por la comisión del vendedor sigue siendo ingreso de "
-    "VuelaTour y vive en 'otros movimientos' del Balance general "
+    "COMISIONES MXN = lo que absorbe el avión: su parte de la comisión "
+    "bancaria de los cobros (regla de septiembre 2026, por fecha del vuelo) y "
+    "el pago al vendedor capturado en Gastos como «Comisión del vendedor "
+    "(avión)» y ligado al vuelo (en cualquier fecha, en vuelos completados o "
+    "cancelados con cobros retenidos; en un vuelo de varios aviones, su parte "
+    "de la venta; sin ese pago no se resta nada); la nota de cada celda dice "
+    "cuáles son. Lo cobrado al cliente por la comisión del vendedor sigue "
+    "siendo ingreso de VuelaTour y vive en 'otros movimientos' del Balance "
+    "general "
 )
 _MAESTRA_PAGO_VENDEDOR_GASTO_REAL = (
-    "(ahí el pago real se aparea con lo cobrado y, en los vuelos completados "
-    "de esta regla, sale con egreso $0.00 «a cargo del avión» porque ya resta "
-    "en esta columna)."
+    "(ahí el pago capturado como «Comisión del vendedor (VuelaTour)» egresa "
+    "apareado con lo cobrado y el capturado como «Comisión del vendedor "
+    "(avión)» sale con egreso $0.00 «a cargo del avión», porque ya resta en "
+    "esta columna)."
 )
 # Su versión en el Balance GENERAL (las dos variantes, 7-oct-2026): la hoja no
 # lleva COMISIONES; el pago al vendedor lo explica la leyenda de 'otros
@@ -1360,16 +1376,16 @@ _NOTA_GANANCIA_FLOTA = (
 )
 # `_NOTA_COMISIONES_FLOTA` con la bandera del API 0.0.74 (la del consolidado).
 _NOTA_COMISIONES_FLOTA_GASTO_REAL = (
-    "COMISIONES (regla de septiembre 2026, por fecha del vuelo): las que "
-    "absorbe cada avión —su parte de la comisión bancaria de sus cobros y el "
-    "pago real de la comisión del vendedor (el gasto «Comisión del vendedor» "
-    "ligado al vuelo; sin gasto capturado no se resta nada)— no van en esta "
-    "hoja: están en la columna COMISIONES del libro individual de cada avión "
-    "(Reportes › Balance por avión) y ya van restadas en la cascada de cada "
-    "avión de la hoja 'balance'. Lo cobrado al cliente por la comisión del "
-    "vendedor es ingreso de VuelaTour: ese ingreso, el pago al vendedor y la "
-    "parte de VuelaTour de la comisión bancaria viven en 'otros movimientos' "
-    "(su leyenda explica cada línea)."
+    "COMISIONES (regla de septiembre 2026, por fecha del vuelo, para la parte "
+    "bancaria): las que absorbe cada avión —su parte de la comisión bancaria "
+    "de sus cobros y el pago al vendedor capturado como «Comisión del vendedor "
+    "(avión)» ligado al vuelo— no van en esta hoja: están en la columna "
+    "COMISIONES del libro individual de cada avión (Reportes › Balance por "
+    "avión) y ya van restadas en la cascada de cada avión de la hoja "
+    "'balance'. Lo cobrado al cliente por la comisión del vendedor es ingreso "
+    "de VuelaTour: ese ingreso, el pago capturado como «Comisión del vendedor "
+    "(VuelaTour)» y la parte de VuelaTour de la comisión bancaria viven en "
+    "'otros movimientos' (su leyenda explica cada línea)."
 )
 # Cómo se nombra la regla en los textos de arriba (y en `_RESUMEN_COMISIONES`,
 # `_NOTA_COBRADO_REAL` y `_NOTA_COBRANZA_NETO`) cuando el API no manda su
@@ -1416,7 +1432,11 @@ def _regla_vigente(cons: BalanceAvionRequest) -> str | None:
     """Nombre de la regla si el libro trae vuelos de ella, o None. El API
     manda `comisiones_mxn` en los totales SOLO si alguna fila de avión cae en
     la vigencia (aunque sus comisiones sean 0); antes de ella, o con un API
-    ≤ 0.0.64, no viene."""
+    ≤ 0.0.64, no viene. Desde el API 0.0.74 (13-oct-2026, invariante 61,
+    dos categorías) también viene en un libro ANTERIOR a la vigencia si
+    alguna fila absorbe un pago «Comisión del vendedor (avión)» (en cualquier
+    fecha): las leyendas de la regla están redactadas para seguir siendo
+    verdad ahí (la vigencia gobierna solo la parte bancaria)."""
     if cons.totales.comisiones_mxn is None:
         return None
     return cons.regla_comisiones or REGLA_COMISIONES_RESPALDO
@@ -1507,33 +1527,31 @@ _RESUMEN_REGLA_CUBRE_AVION_SIN_PROVISION = (
     "lo cubre el avión con su provisión: en 'otros movimientos' solo queda lo "
     "que un pago real capturado la exceda."
 )
-# API 0.0.74 (13-oct-2026, invariante 61 del API): ya no hay provisión; en los
-# vuelos COMPLETADOS de la regla con comisión cotizada el pago REAL lo carga
-# el avión en su columna COMISIONES y 'otros movimientos' lo trae apareado
-# con egreso $0.00 «a cargo del avión …». Con la bandera
-# `comision_vendedor_solo_gasto_real` de la hoja (`_solo_gasto_real_om`)
-# estas tres sustituyen a las de arriba (mandan sobre la de la 0.0.73); sin
-# ella, las de arriba, byte a byte.
+# API 0.0.74 (13-oct-2026, invariante 61 del API, dos categorías): ya no hay
+# provisión; la regla (la vigencia) gobierna SOLO la parte bancaria y los
+# pagos «Comisión del vendedor (avión)» los carga el avión en su columna
+# COMISIONES ('otros movimientos' los trae apareados con egreso $0.00 «a
+# cargo del avión …»), mientras el de «(VuelaTour)» egresa ahí. Con la
+# bandera `comision_vendedor_solo_gasto_real` de la hoja
+# (`_solo_gasto_real_om`) estas tres sustituyen a las de arriba (mandan sobre
+# la de la 0.0.73); sin ella, las de arriba, byte a byte.
 _OM_REGLA_COMISIONES_GASTO_REAL = (
-    " Con la {regla} (por fecha del vuelo), en los vuelos COMPLETADOS con "
-    "comisión cotizada el pago real de la comisión del vendedor (el gasto "
-    "«Comisión del vendedor» ligado al vuelo) lo carga el avión en su columna "
-    "COMISIONES: aquí la fila lo muestra apareado con egreso $0.00 y «a cargo "
-    "del avión …», y la comisión bancaria de aquí es solo la parte de "
-    "VuelaTour. Lo que absorbe cada avión (ese pago y su parte de la comisión "
-    "bancaria) resta en la columna COMISIONES de su libro individual y en la "
-    "cascada de la hoja 'balance'."
+    " Con la {regla} (por fecha del vuelo), la comisión bancaria de aquí es "
+    "solo la parte de VuelaTour: la de cada avión resta en la columna "
+    "COMISIONES de su libro individual y en la cascada de la hoja 'balance', "
+    "igual que los pagos «Comisión del vendedor (avión)» que aquí salen con "
+    "egreso $0.00."
 )
 _EMPRESA_REGLA_COMISIONES_GASTO_REAL = (
-    " Con la {regla} (por fecha del vuelo), en los vuelos completados el pago "
-    "real al vendedor lo carga cada avión en su columna COMISIONES (los "
-    "egresos propios lo traen en $0.00) y, de la comisión bancaria, los "
-    "egresos solo traen la parte de VuelaTour."
+    " Con la {regla} (por fecha del vuelo), de la comisión bancaria los "
+    "egresos propios solo traen la parte de VuelaTour; los pagos «Comisión del "
+    "vendedor (avión)» los carga cada avión en su columna COMISIONES (aquí "
+    "egresan $0.00)."
 )
 _RESUMEN_REGLA_GASTO_REAL = (
-    " Con la {regla} (por fecha del vuelo), en los vuelos completados ese pago "
-    "real lo carga el avión en su columna COMISIONES: en 'otros movimientos' "
-    "queda «a cargo del avión» con egreso $0.00."
+    " Con la {regla} (por fecha del vuelo), la comisión bancaria de 'otros "
+    "movimientos' es solo la parte de VuelaTour; la del avión resta en su "
+    "columna COMISIONES, igual que los pagos «Comisión del vendedor (avión)»."
 )
 # «N conceptos» que encabeza la nota cuando hay más de una comisión (si el API
 # ya lo trae en el detalle, no se repite).
@@ -1550,12 +1568,14 @@ def _nota_comisiones(v: BalanceAvionVuelo) -> str | None:
     no hay nada que decir."""
     lineas = list(v.comisiones_detalle)
     if not lineas:
-        # Desde el API 0.0.74 la parte del vendedor es su pago REAL
-        # (`comision_vendedor_real_mxn`) y la provisión viaja en 0 (un 0 no se
-        # pinta: `_monto_no_cero`); con un API previo, la provisión.
+        # Desde el API 0.0.74 la parte del vendedor son los pagos capturados
+        # como «Comisión del vendedor (avión)» que absorbe la fila
+        # (`comision_vendedor_real_mxn`; los de «(VuelaTour)» nunca llegan
+        # aquí) y la provisión viaja en 0 (un 0 no se pinta:
+        # `_monto_no_cero`); con un API previo, la provisión.
         partes = (
             ("Comisión bancaria (parte del avión)", v.comision_banco_avion_mxn),
-            ("Comisión del vendedor (gasto real)", v.comision_vendedor_real_mxn),
+            ("Comisión del vendedor (avión)", v.comision_vendedor_real_mxn),
             ("Comisión del vendedor (provisión)", v.comision_vendedor_prov_mxn),
         )
         lineas = [f"{nombre} · {_monto_nota(m)}" for nombre, m in partes if _monto_no_cero(m)]
@@ -1571,11 +1591,29 @@ def _pct(factor: float | None) -> str:
     return "—" if factor is None else f"{round(factor * 100, 2):g} %"
 
 
-def _nota_participacion(v: BalanceAvionVuelo) -> str:
+# Excepción del pago al vendedor en la nota de un vuelo MULTI-AVIÓN
+# (13-oct-2026, API 0.0.74, invariante 61 del API, dos categorías): el pago
+# capturado como «Comisión del vendedor (avión)» SÍ se reparte entre los
+# aviones, como la venta (lo cobrado al cliente por la comisión sigue siendo
+# de VuelaTour y no se reparte). Solo con la bandera raíz y si la fila lo
+# absorbió (`comision_vendedor_real_pagos > 0`).
+_NOTA_PARTICIPACION_PAGO_VENDEDOR_AVION = (
+    " El pago «Comisión del vendedor (avión)» es la excepción: se reparte "
+    "entre los aviones como la venta (va en COMISIONES)."
+)
+# Alto de esa nota (la caja de siempre; con la excepción, dos renglones más).
+_ALTO_NOTA_PARTICIPACION = 110
+_ALTO_NOTA_PARTICIPACION_PAGO_VENDEDOR = 150
+
+
+def _nota_participacion(v: BalanceAvionVuelo, solo_gasto_real: bool = False) -> str:
     """Nota de la celda VENTA AVIÓN USD de una fila de vuelo MULTI-AVIÓN
-    (regla B, 28-ago-2026): cuánto le toca a esta matrícula y con qué base."""
+    (regla B, 28-ago-2026): cuánto le toca a esta matrícula y con qué base.
+    Con la bandera del API 0.0.74 (`solo_gasto_real`) y un pago «Comisión
+    del vendedor (avión)» absorbido por la fila, agrega que ese pago es la
+    excepción (se reparte como la venta); sin eso, el texto de siempre."""
     base = _FUENTE_PARTICIPACION.get(v.participacion_fuente or "")
-    return (
+    nota = (
         f"Vuelo multi-avión: esta fila trae el {_pct(v.participacion)} de la "
         "venta del avión (repartida entre las matrículas del vuelo"
         + (f" por {base}" if base else "")
@@ -1584,6 +1622,9 @@ def _nota_participacion(v: BalanceAvionVuelo) -> str:
         "tramo), sin repartir. TUAs/extras/pernocta/comisión del vendedor "
         "son de VuelaTour y no se reparten."
     )
+    if solo_gasto_real and (v.comision_vendedor_real_pagos or 0) > 0:
+        nota += _NOTA_PARTICIPACION_PAGO_VENDEDOR_AVION
+    return nota
 
 
 def _nota_tc_oficial(v: BalanceAvionVuelo) -> str:
@@ -1620,7 +1661,9 @@ def _nota_tc_oficial(v: BalanceAvionVuelo) -> str:
 # `otros_movimientos.sin_provision_vendedor` (`_sin_provision_vendedor`)
 # manda sobre `hay_pago_vendedor_real`: ya no hay PROVISIÓN que explicar y
 # los textos `*_SIN_PROVISION` valen para los dos casos (con o sin pago
-# real en el periodo).
+# real en el periodo). Desde el API 0.0.74 (13-oct-2026, invariante 61, dos
+# categorías) la bandera `comision_vendedor_solo_gasto_real` manda sobre
+# las dos: `*_DOS_CATEGORIAS` (`_fragmento_*` la evalúan PRIMERO).
 _OM_PAGO_VENDEDOR_PROVISION = (
     "el pago de la comisión al vendedor va apareado en la "
     "misma fila como PROVISIÓN a la fecha del vuelo mientras no exista el "
@@ -1644,6 +1687,22 @@ _OM_PAGO_VENDEDOR_SIN_PROVISION = (
     "se captura como «Otros gastos VuelaTour»: quedaría duplicado en la hoja "
     "'otros gastos'."
 )
+# Con la bandera del API 0.0.74 (`comision_vendedor_solo_gasto_real`,
+# invariante 61, dos categorías) MANDA sobre las de arriba: el pago se aparea
+# solo cuando se captura, y la fila dice cuál de las dos categorías egresa y
+# cuál lleva $0.00 «a cargo del avión …».
+_OM_PAGO_VENDEDOR_DOS_CATEGORIAS = (
+    "el pago de la comisión al vendedor va apareado en la misma fila SOLO "
+    "cuando se captura en Gastos ligado al vuelo, con una de dos categorías: "
+    "la «Comisión del vendedor (VuelaTour)» la paga VuelaTour y aquí egresa "
+    "(con «faltan $…» o «excede $…» si no cuadra con lo cobrado); la «Comisión "
+    "del vendedor (avión)» la carga el avión en la columna COMISIONES de su "
+    "libro y aquí sale con egreso $0.00 «a cargo del avión …» (si ningún avión "
+    "la carga —vuelo aún no completado, cancelado sin cobros retenidos o sin "
+    "avión de la flota— la paga VuelaTour y el concepto lo dice). Mientras no "
+    "se capture, la fila no lleva egreso. Ese pago NO se captura como «Otros "
+    "gastos VuelaTour»: quedaría duplicado en la hoja 'otros gastos'."
+)
 # Nota del RESUMEN sobre COMISIONES (6-oct-2026, API 0.0.65; antes
 # «COMISIONES VENDEDOR va vacía a propósito»): le sigue el fragmento de la
 # bandera (`_RESUMEN_PAGO_VENDEDOR_*`) y, con el API 0.0.66,
@@ -1661,18 +1720,18 @@ _RESUMEN_COMISIONES = (
     "pago al vendedor viven en 'otros movimientos' "
 )
 # `_RESUMEN_COMISIONES` con la bandera del API 0.0.74: le siguen
-# `_RESUMEN_PAGO_VENDEDOR_SIN_PROVISION` y, con vuelos de la regla,
+# `_RESUMEN_PAGO_VENDEDOR_DOS_CATEGORIAS` y, con vuelos de la regla,
 # `_RESUMEN_REGLA_GASTO_REAL`.
 _RESUMEN_COMISIONES_GASTO_REAL = (
     "COMISIONES = las de la columna COMISIONES del libro individual de cada "
-    "avión (regla de septiembre 2026, por fecha del vuelo: su parte de la "
-    "comisión bancaria de los cobros y el pago real de la comisión del "
-    "vendedor —el gasto «Comisión del vendedor» ligado al vuelo; sin gasto "
-    "capturado no se resta nada—; en vuelos anteriores no hay); en este libro "
-    "no van en la hoja de vuelos (ahí la GANANCIA va antes de comisiones): "
-    "restan aquí y en la cascada de cada avión de la hoja 'balance'. Lo "
-    "cobrado al cliente por la comisión del vendedor sigue siendo INGRESO de "
-    "VuelaTour; ese ingreso y el pago al vendedor viven en 'otros "
+    "avión (su parte de la comisión bancaria de los cobros —regla de "
+    "septiembre 2026, por fecha del vuelo— y el pago al vendedor capturado "
+    "como «Comisión del vendedor (avión)» ligado al vuelo; sin ese pago no se "
+    "resta nada del vendedor); en este libro no van en la hoja de vuelos (ahí "
+    "la GANANCIA va antes de comisiones): restan aquí y en la cascada de cada "
+    "avión de la hoja 'balance'. Lo cobrado al cliente por la comisión del "
+    "vendedor sigue siendo INGRESO de VuelaTour; ese ingreso y el pago "
+    "capturado como «Comisión del vendedor (VuelaTour)» viven en 'otros "
     "movimientos' "
 )
 _RESUMEN_PAGO_VENDEDOR_PROVISION = (
@@ -1686,6 +1745,14 @@ _RESUMEN_PAGO_VENDEDOR_SIN_PROVISION = (
     "(ingreso cobrado; el pago al vendedor se aparea solo cuando se captura el "
     "gasto real «Comisión del vendedor»: sin él no se provisiona nada en esa "
     "hoja)."
+)
+# Su versión con la bandera del API 0.0.74 (dos categorías; manda sobre la
+# de arriba).
+_RESUMEN_PAGO_VENDEDOR_DOS_CATEGORIAS = (
+    "(ingreso cobrado; el pago al vendedor se aparea solo cuando se captura "
+    "ligado al vuelo: «Comisión del vendedor (VuelaTour)» como egreso y "
+    "«Comisión del vendedor (avión)» con egreso $0.00 porque lo carga el "
+    "avión; sin pago capturado no se provisiona nada en esa hoja)."
 )
 _MAESTRA_PAGO_VENDEDOR_PROVISION = "(el pago apareado como PROVISIÓN a la fecha del vuelo)."
 # Libro INDIVIDUAL con la bandera RAÍZ `sin_provision_vendedor` de su payload
@@ -1895,18 +1962,26 @@ def _afac_en_filas(om: BalanceHojaOtrosMovimientos | None) -> bool:
 
 
 def _fragmento_om_pago_vendedor(om: BalanceHojaOtrosMovimientos) -> str:
-    """Fragmento del pago al vendedor de la fila 2 de 'otros movimientos':
-    con `sin_provision_vendedor` (o, desde el API 0.0.74,
-    `comision_vendedor_solo_gasto_real`) UN solo texto (con o sin pago real
-    en el periodo); sin ellas, el de siempre según `hay_pago_vendedor_real`."""
-    if _sin_provision_vendedor(om) or _solo_gasto_real_om(om):
+    """Fragmento del pago al vendedor de la fila 2 de 'otros movimientos'.
+    PRIMERO la bandera del API 0.0.74 (`comision_vendedor_solo_gasto_real`,
+    13-oct-2026, invariante 61, dos categorías): `_OM_PAGO_VENDEDOR_DOS_
+    CATEGORIAS`; con solo `sin_provision_vendedor` (API 0.0.73) UN solo texto
+    (con o sin pago real en el periodo), byte a byte; sin ninguna, el de
+    siempre según `hay_pago_vendedor_real`."""
+    if _solo_gasto_real_om(om):
+        return _OM_PAGO_VENDEDOR_DOS_CATEGORIAS
+    if _sin_provision_vendedor(om):
         return _OM_PAGO_VENDEDOR_SIN_PROVISION
     return _OM_PAGO_VENDEDOR_REAL if _hay_pago_vendedor_real(om) else _OM_PAGO_VENDEDOR_PROVISION
 
 
 def _fragmento_resumen_pago_vendedor(om: BalanceHojaOtrosMovimientos | None) -> str:
-    """Lo mismo para el fragmento de la nota de COMISIONES del RESUMEN."""
-    if _sin_provision_vendedor(om) or _solo_gasto_real_om(om):
+    """Lo mismo para el fragmento de la nota de COMISIONES del RESUMEN
+    (primero la bandera del API 0.0.74: `_RESUMEN_PAGO_VENDEDOR_DOS_
+    CATEGORIAS`)."""
+    if _solo_gasto_real_om(om):
+        return _RESUMEN_PAGO_VENDEDOR_DOS_CATEGORIAS
+    if _sin_provision_vendedor(om):
         return _RESUMEN_PAGO_VENDEDOR_SIN_PROVISION
     if _hay_pago_vendedor_real(om):
         return _RESUMEN_PAGO_VENDEDOR_REAL
@@ -2237,8 +2312,8 @@ def _hoja_maestra(
     # VENTA MENOS COMPRA (general) dicen que van antes de comisiones y dónde
     # quedaron.
     # Con la bandera del API 0.0.74 (`comision_vendedor_solo_gasto_real`,
-    # invariante 61) las notas hablan del pago REAL del vendedor; sin ella,
-    # las de siempre.
+    # invariante 61) las notas hablan de las DOS categorías del pago al
+    # vendedor (la «(avión)» resta en COMISIONES); sin ella, las de siempre.
     if disp.comision_col is not None:
         ws.cell(row=2, column=disp.comision_col).comment = _comentario_cobro(
             _con_regla(
@@ -2353,10 +2428,18 @@ def _hoja_maestra(
                 # Vuelo MULTI-AVIÓN (regla B, 28-ago-2026): la VENTA de la
                 # fila es la parte proporcional de esta matrícula — la nota
                 # de la celda dice cuánto y con qué base se repartió.
+                # Con la bandera del API 0.0.74 y un pago «Comisión del
+                # vendedor (avión)» absorbido, la nota dice que ese pago SÍ
+                # se reparte como la venta (y la caja crece).
                 if attr == "total_usd" and v.multi_avion:
-                    nota_part = Comment(_nota_participacion(v), "VuelaTour")
+                    texto_part = _nota_participacion(v, _solo_gasto_real(req))
+                    nota_part = Comment(texto_part, "VuelaTour")
                     nota_part.width = 320
-                    nota_part.height = 110
+                    nota_part.height = (
+                        _ALTO_NOTA_PARTICIPACION_PAGO_VENDEDOR
+                        if texto_part.endswith(_NOTA_PARTICIPACION_PAGO_VENDEDOR_AVION)
+                        else _ALTO_NOTA_PARTICIPACION
+                    )
                     cell.comment = nota_part
                 # TC no capturado en la cotización → se usó el oficial: la
                 # celda del TC y las que derivan de él (MXN) se marcan
@@ -2572,7 +2655,8 @@ def _hoja_maestra(
         # individual (API 0.0.73, 12-oct-2026) 'otros movimientos' ya no
         # provisiona; sin ella, el texto de siempre (byte a byte). Con la del
         # API 0.0.74 (`comision_vendedor_solo_gasto_real`, invariante 61, que
-        # manda sobre la anterior) toda la nota habla del pago REAL.
+        # manda sobre la anterior) toda la nota habla de las dos categorías
+        # del pago al vendedor.
         if _solo_gasto_real(req):
             nota_comisiones = (
                 _con_regla(_NOTA_COMISIONES_GASTO_REAL, req.regla_comisiones)
@@ -3409,17 +3493,18 @@ _NOTA_CASCADA_COMISIONES = (
     "(solo lee vuelos completados o cancelados)."
 )
 # La misma nota con la bandera RAÍZ del avión del API 0.0.74 (invariante 61):
-# lo del vendedor es su pago REAL.
+# lo del vendedor son los pagos capturados como «Comisión del vendedor
+# (avión)» (los de «(VuelaTour)» no: los paga VuelaTour).
 _NOTA_CASCADA_COMISIONES_GASTO_REAL = (
-    "Comisiones que absorbe el avión (regla de septiembre 2026, por fecha del "
-    "vuelo): su parte de la comisión bancaria de sus cobros y el pago real de "
-    "la comisión del vendedor (el gasto «Comisión del vendedor» ligado al "
-    "vuelo), en USD — las de la columna COMISIONES de su libro individual. Por "
-    "vuelo es la misma cifra que descuenta el reparto a socios, pero el total "
-    "puede no coincidir con el del reparto: por ejemplo, si un vuelo que aún "
-    "no se completa ya tiene un anticipo con comisión bancaria, este balance "
-    "cuenta ese cobro y su comisión, y el reparto no (solo lee vuelos "
-    "completados o cancelados)."
+    "Comisiones que absorbe el avión, en USD — las de la columna COMISIONES de "
+    "su libro individual: su parte de la comisión bancaria de sus cobros "
+    "(regla de septiembre 2026, por fecha del vuelo) y el pago al vendedor "
+    "capturado como «Comisión del vendedor (avión)» ligado al vuelo. Por vuelo "
+    "es la misma cifra que descuenta el reparto a socios, pero el total puede "
+    "no coincidir con el del reparto: por ejemplo, si un vuelo que aún no se "
+    "completa ya tiene un anticipo con comisión bancaria, este balance cuenta "
+    "ese cobro y su comisión, y el reparto no (solo lee vuelos completados o "
+    "cancelados)."
 )
 
 
@@ -3719,8 +3804,19 @@ _NOTA_EMPRESA_BASE_SIN_PROVISION = (
     "gasto real «Comisión del vendedor») — no es lo cobrado: el RESULTADO no "
     "es dinero en caja."
 )
+# Con la bandera del API 0.0.74 (`comision_vendedor_solo_gasto_real`,
+# invariante 61, dos categorías; manda sobre la de arriba): el pago al
+# vendedor egresa aquí solo si es «(VuelaTour)»; el «(avión)» va en $0.00.
+_NOTA_EMPRESA_BASE_DOS_CATEGORIAS = (
+    "Ingresos y egresos propios = hoja 'otros movimientos': lo cotizado de los "
+    "vuelos del periodo (no cancelados) más los otros ingresos registrados, y "
+    "lo pagado (el pago al vendedor solo cuando se captura: la «Comisión del "
+    "vendedor (VuelaTour)» egresa aquí; la «(avión)» la carga el avión y aquí "
+    "egresa $0.00) — no es lo cobrado: el RESULTADO no es dinero en caja."
+)
 # Con `afac_en_filas` (API 0.0.74, invariante 62 del API) se concatena a la
-# base del pie (`_NOTA_EMPRESA_BASE` o `_NOTA_EMPRESA_BASE_SIN_PROVISION`)
+# base del pie (`_NOTA_EMPRESA_BASE`, `_NOTA_EMPRESA_BASE_SIN_PROVISION` o
+# `_NOTA_EMPRESA_BASE_DOS_CATEGORIAS`)
 # ANTES del fragmento de la regla: con la `nota` del API y en el pie fijo de
 # respaldo (que lo hereda por el `replace`). Sin la bandera no se agrega.
 _EMPRESA_AFAC_EN_FILAS = (
@@ -3794,9 +3890,11 @@ def _bloque_empresa(
     `cubre_avion`: `_EMPRESA_REGLA_COMISIONES_CUBRE_AVION`; con el 0.0.73,
     `sin_provision`: `_EMPRESA_REGLA_COMISIONES_CUBRE_AVION_SIN_PROVISION`;
     con el 0.0.74, `solo_gasto_real`: `_EMPRESA_REGLA_COMISIONES_GASTO_REAL`,
-    los egresos propios ya no traen provisión del pago al vendedor, y la
-    base misma del pie es `_NOTA_EMPRESA_BASE_SIN_PROVISION` —sin «o
-    provisionado»— con o sin regla; sin la bandera, `_NOTA_EMPRESA_BASE`).
+    los egresos propios ya no traen provisión del pago al vendedor). La base
+    misma del pie, con o sin regla: con `solo_gasto_real` (API 0.0.74, dos
+    categorías) `_NOTA_EMPRESA_BASE_DOS_CATEGORIAS`; si no, con
+    `sin_provision` (API 0.0.73) `_NOTA_EMPRESA_BASE_SIN_PROVISION` —sin «o
+    provisionado»—; sin ninguna, `_NOTA_EMPRESA_BASE`.
     Con el API 0.0.74 (`afac_en_filas`, 13-oct-2026, invariante 62 del API)
     los ingresos y egresos propios ya traen las filas «AFAC · matrícula»: las
     etiquetas son `_EMPRESA_INGRESOS_AFAC` / `_EMPRESA_PAGOS_AFAC` y la base
@@ -3908,7 +4006,7 @@ def _bloque_empresa(
     # Pie: la `nota` del API (base de cada línea con sus números) + la base
     # de 'otros movimientos'; sin `nota`, el pie fijo completo.
     if cubre_avion and solo_gasto_real:
-        # API 0.0.74 (invariante 61): el pago real lo carga el avión.
+        # API 0.0.74 (invariante 61): los pagos «(avión)» los carga el avión.
         regla_empresa = _EMPRESA_REGLA_COMISIONES_GASTO_REAL
     elif cubre_avion and sin_provision:
         regla_empresa = _EMPRESA_REGLA_COMISIONES_CUBRE_AVION_SIN_PROVISION
@@ -3916,15 +4014,18 @@ def _bloque_empresa(
         regla_empresa = _EMPRESA_REGLA_COMISIONES_CUBRE_AVION
     else:
         regla_empresa = _EMPRESA_REGLA_COMISIONES
-    # Con la bandera (API 0.0.73, o la del 0.0.74) la base ya no dice «o
-    # provisionado»: los egresos propios no traen provisión del vendedor.
+    # Con la bandera del API 0.0.74 (dos categorías) la base dice cuál pago
+    # al vendedor egresa aquí; con la del 0.0.73, ya no dice «o
+    # provisionado» (los egresos propios no traen provisión del vendedor).
     # Con `afac_en_filas` (API 0.0.74) la base dice además que incluye las
     # filas «AFAC · matrícula» (antes de la regla); sin ella, byte a byte.
-    base_om = (
-        _NOTA_EMPRESA_BASE_SIN_PROVISION
-        if (sin_provision or solo_gasto_real)
-        else _NOTA_EMPRESA_BASE
-    ) + (_EMPRESA_AFAC_EN_FILAS if afac_en_filas else "")
+    if solo_gasto_real:
+        base_om = _NOTA_EMPRESA_BASE_DOS_CATEGORIAS
+    elif sin_provision:
+        base_om = _NOTA_EMPRESA_BASE_SIN_PROVISION
+    else:
+        base_om = _NOTA_EMPRESA_BASE
+    base_om += _EMPRESA_AFAC_EN_FILAS if afac_en_filas else ""
     base = base_om + (regla_empresa.format(regla=regla_vigente) if regla_vigente else "")
     if emp.nota:
         for texto in (emp.nota, base):
@@ -4886,9 +4987,10 @@ def _hoja_resumen_general(
     # Banderas de 'otros movimientos' (fragmento del pago al vendedor y, con
     # el API 0.0.73, la frase «cubierto por el avión» sin provisión).
     om_general = req.consolidado.otros_movimientos if req.consolidado is not None else None
-    # Con la bandera del API 0.0.74 (invariante 61) la nota entera habla del
-    # pago REAL (`_RESUMEN_COMISIONES_GASTO_REAL` + el fragmento sin provisión
-    # + `_RESUMEN_REGLA_GASTO_REAL`); sin ella, las de siempre.
+    # Con la bandera del API 0.0.74 (invariante 61, dos categorías) la nota
+    # entera habla del pago capturado (`_RESUMEN_COMISIONES_GASTO_REAL` +
+    # `_RESUMEN_PAGO_VENDEDOR_DOS_CATEGORIAS` + `_RESUMEN_REGLA_GASTO_REAL`);
+    # sin ella, las de siempre.
     if _solo_gasto_real_om(om_general):
         base_resumen = _RESUMEN_COMISIONES_GASTO_REAL
         regla_resumen = _RESUMEN_REGLA_GASTO_REAL
@@ -5000,9 +5102,11 @@ def _hoja_otros_movimientos(
     la fila 2 lo dice (`_OM_PAGO_VENDEDOR_SIN_PROVISION`,
     `_OM_REGLA_COMISIONES_CUBRE_AVION_SIN_PROVISION`); sin la bandera, los
     textos de siempre. Con el API 0.0.74 (`hoja.comision_vendedor_solo_gasto
-    _real`, 13-oct-2026, invariante 61) el pago REAL de los vuelos
-    completados de la regla llega con egreso $0.00 «a cargo del avión …» y
-    la fila 2 lo explica (`_OM_REGLA_COMISIONES_GASTO_REAL`). Con el API
+    _real`, 13-oct-2026, invariante 61, dos categorías) el pago capturado
+    como «Comisión del vendedor (avión)» que carga un avión llega con egreso
+    $0.00 «a cargo del avión …» y el de «(VuelaTour)» egresa en su fila; la
+    fila 2 lo explica (`_OM_PAGO_VENDEDOR_DOS_CATEGORIAS` y, con vuelos de la
+    regla, `_OM_REGLA_COMISIONES_GASTO_REAL`). Con el API
     0.0.74 (`hoja.afac_en_filas`, 13-oct-2026, invariante 62 del API) las
     filas «AFAC · matrícula» (`seccion == 'AFAC'`) llegan al final de
     `filas` y SUMAN en TOTALES como cualquier fila: se pinta un encabezado de
