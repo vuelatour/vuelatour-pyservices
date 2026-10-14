@@ -44,11 +44,16 @@ Ocho hojas en el orden del libro:
      contrato del API no cambia ni un campo.
   5. refacciones (salidas de inventario — 29-ago-2026: antes dentro de
      indirectos; solo si el API la manda)  6. permisos (todo AFAC).
+  6b. Otros ingresos (13-oct-2026, API 0.0.75; solo si el API manda
+     `otros_ingresos_avion`) — ingresos ING-n registrados en Ingresos y
+     ASIGNADOS a este avión (reembolso de su servicio, venta de una pieza
+     suya…), netos de comisión bancaria; su TOTAL USD SUMA en la cascada.
   7. balance — cascada (− combustible − GASTOS INDIRECTOS [una sola fila =
-     gastos_indirectos_usd + otros_usd] − refacciones − permisos) + reparto
-     real de socios. La cascada la calcula el API (utilidad_despues_usd ya
-     resta ambas listas UNA vez); aquí solo se suman las dos celdas para
-     mostrarlas juntas — restar otros además de indirectos contaría doble.
+     gastos_indirectos_usd + otros_usd] − refacciones − permisos [+ otros
+     ingresos del avión, con 6b]) + reparto real de socios. La cascada la
+     calcula el API (utilidad_despues_usd ya resta ambas listas UNA vez);
+     aquí solo se suman las dos celdas para mostrarlas juntas — restar otros
+     además de indirectos contaría doble.
   8. pendientes de captura — lo que falta para que el libro quede completo.
 El Balance GENERAL comparte estas funciones con otro juego de hojas (ver
 render_balance_general_xlsx); ahí la hoja 'refacciones' fue sustituida por
@@ -116,6 +121,7 @@ from app.schemas.reportes import (
     BalanceAvionGastoFila,
     BalanceAvionHojaCombustible,
     BalanceAvionHojaGastos,
+    BalanceAvionHojaOtrosIngresos,
     BalanceAvionRequest,
     BalanceAvionTotales,
     BalanceAvionVuelo,
@@ -2997,6 +3003,196 @@ def _fusionar_hojas_gastos(
     )
 
 
+# ===== Otros ingresos ASIGNADOS a un avión (13-oct-2026, API 0.0.75) =====
+# Invariante «INGRESO ASIGNADO A UN AVIÓN» del API: un ingreso de RESULTADO
+# registrado en Ingresos (clave ING-n: reembolso del servicio del avión, venta
+# de una pieza suya, intereses…) con `aeronave_id` cuenta UNA vez, en el mes
+# de su fecha, para ESE avión: en la pestaña «Otros ingresos» de su libro, en
+# la línea «(+) OTROS INGRESOS USD» de su cascada (SUMA a la utilidad y entra
+# al reparto a socios) y deja de ser ingreso de VuelaTour ('otros
+# movimientos', bloque VUELATOUR y Libro Dinero ya no lo cuentan). Todos los
+# números llegan del API (fuente única `filaLibroDeIngreso`); aquí se pintan
+# con fórmulas que los reproducen. La PRESENCIA de `otros_ingresos_avion`
+# manda: sin ella (API ≤ 0.0.74) ni pestaña ni línea, libro byte a byte.
+_FILA_OTROS_INGRESOS = "(+) OTROS INGRESOS USD"
+_TITULO_OTROS_INGRESOS_GENERAL = "Otros ingresos asignados a aviones — flota"
+_ENCABEZADOS_OTROS_INGRESOS = [
+    "FECHA",
+    "CATEGORÍA",
+    "DETALLE",
+    "MONTO ORIGINAL",
+    "MONEDA",
+    "T.C.",
+    "INGRESO MXN",
+    "COMISIÓN MXN",
+    "NETO MXN",
+    "CUENTA",
+    "NOTAS",
+]
+_ANCHOS_OTROS_INGRESOS = [12, 22, 50, 15, 9, 11, 15, 14, 15, 22, 36]
+_SIN_OTROS_INGRESOS = "Sin otros ingresos asignados a este avión en el periodo."
+_NOTA_OTROS_INGRESOS_AVION = (
+    "Ingresos registrados en Ingresos (clave ING-n) y asignados a este avión: "
+    "reembolsos de su servicio o de su aseguradora, ventas de piezas o "
+    "activos, intereses… NETO MXN = ingreso − comisión del banco (en dólares, "
+    "con el T.C. propio del ingreso). TOTAL USD = TOTAL NETO MXN ÷ TC PROMEDIO "
+    "de las hojas de este libro. Ese TOTAL USD SUMA en la hoja 'balance' "
+    "(«(+) OTROS INGRESOS USD») y en el reparto a socios (ahí cada ingreso se "
+    "convierte con el T.C. de su día: puede diferir unos centavos). No cuentan "
+    "como ingreso de VuelaTour: no están en 'otros movimientos' del Balance "
+    "general ni en el total de 'Otros ingresos' del Libro Dinero. Los "
+    "anticipos y las aportaciones nunca llevan avión."
+)
+_NOTA_OTROS_INGRESOS_AVIONES_GENERAL = (
+    "Ingresos registrados en Ingresos y asignados a un avión (clave ING-n), "
+    "netos de comisión bancaria. Cada uno YA SUMA en el bloque de su avión en "
+    "'balance' («(+) OTROS INGRESOS USD») y en su reparto a socios; por eso no "
+    "están en 'otros movimientos' ni en el bloque VUELATOUR (empresa). TOTAL "
+    "USD = suma de lo que suma cada avión (cada libro convierte con su propio "
+    "T.C. promedio)."
+)
+_NOTA_CASCADA_OTROS_INGRESOS = (
+    "Ingresos registrados en Ingresos y asignados a este avión (hoja 'Otros "
+    "ingresos' de su libro), netos de comisión bancaria, al T.C. promedio del "
+    "libro. Suman a la utilidad del avión y a su reparto a socios; no cuentan "
+    "como ingreso de VuelaTour."
+)
+# Cola de la fila 2 de 'otros movimientos' con la bandera
+# `otros_ingresos_por_avion` (empieza con espacio: se pega al texto de
+# siempre).
+_OM_OTROS_INGRESOS_POR_AVION = (
+    " Los otros ingresos asignados a un avión (por ejemplo el reembolso de su "
+    "servicio) no están aquí: cuentan en la hoja 'Otros ingresos' del libro de "
+    "ese avión, en su bloque de 'balance' y en su reparto a socios (si hay "
+    "alguno en el periodo, su detalle está en la hoja 'otros ingresos "
+    "aviones')."
+)
+# Caracteres por renglón de las columnas que envuelven (DETALLE y NOTAS):
+# el alto de la fila se estima con ellos, como DETALLE en `_hoja_gastos`.
+_CHARS_DETALLE_OTROS_INGRESOS = 50
+_CHARS_NOTAS_OTROS_INGRESOS = 36
+
+
+def _renglones(texto: str | None, ancho: int) -> int:
+    """Renglones que ENVUELVE `texto` en una columna de `ancho` caracteres
+    (mismo patrón que DETALLE en `_hoja_gastos`); vacío ⇒ 1."""
+    if not texto:
+        return 1
+    return sum(max(1, math.ceil(len(linea) / ancho)) for linea in texto.split("\n"))
+
+
+def _hoja_otros_ingresos_avion(
+    ws: Worksheet,
+    hoja: BalanceAvionHojaOtrosIngresos,
+    req: BalanceAvionRequest,
+    *,
+    maestra: _Maestra | None,
+    usd: str | None,
+    general: bool = False,
+) -> None:
+    """Pestaña «Otros ingresos» del libro INDIVIDUAL (siempre que el API la
+    mande, aunque venga vacía) o «otros ingresos aviones» del Balance GENERAL
+    (`general`: solo con filas; el detalle ya llega con «MATRÍCULA · » al
+    frente y teñido con el color del avión). Modelada en `_hoja_gastos`:
+    resumen arriba (fila 5) y una fila por ingreso desde la 8.
+    Fórmulas (todas con ROUND, verificadas por `xlsx_formulas`; si una no
+    reproduce el centavo del API vuelve a VALOR): INGRESO MXN =
+    ROUND(MONTO ORIGINAL × T.C., 2) en dólares y ROUND(MONTO ORIGINAL, 2) en
+    pesos; NETO MXN = ROUND(INGRESO − COMISIÓN, 2) (sin comisión,
+    ROUND(INGRESO, 2)); TOTAL NETO MXN = Σ de NETO MXN. Individual: TC
+    PROMEDIO cita la fila TOTALES de la hoja maestra y TOTAL USD = TOTAL NETO
+    MXN ÷ el T.C. promedio CRUDO del libro (`_USD_TC_LIBRO`, el mismo de las
+    hojas de gastos; sin vuelos, valor del API: el oficial del cierre).
+    General: TOTAL USD = VALOR (Σ de lo que suma cada avión, cada libro con
+    su T.C.: no hay fórmula que lo reproduzca). Aquí no se convierte nada."""
+    n_cols = len(_ENCABEZADOS_OTROS_INGRESOS)
+    titulo = (
+        _TITULO_OTROS_INGRESOS_GENERAL
+        if general
+        else f"Otros ingresos — {req.matricula}".strip(" —")
+    )
+    _title(ws, titulo, 1, n_cols)
+    periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'}"
+    ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
+
+    ultima = 7 + len(hoja.filas)
+    suma_neto = f"ROUND(SUM(I8:I{ultima}),2)" if hoja.filas else None
+    if general:
+        _header_row(ws, 4, ["TOTAL NETO MXN", "TOTAL USD (suma de los aviones)"])
+        _formula(ws, 5, 1, suma_neto, hoja.total_mxn, MONEY, bold=True)
+        _formula(ws, 5, 2, None, hoja.usd, MONEY, bold=True)
+        resumen = 2
+    else:
+        _header_row(ws, 4, ["TOTAL NETO MXN", "TC PROMEDIO", "TOTAL USD"])
+        _formula(ws, 5, 1, suma_neto, hoja.total_mxn, MONEY, bold=True)
+        _formula_cita(ws, 5, 2, maestra, "{tc_costos}", req.totales.tc_promedio, TC)
+        _formula(ws, 5, 3, _usd_de_mxn(usd, "A5", "B5", maestra), hoja.usd, MONEY, bold=True)
+        resumen = 3
+    for c in range(1, resumen + 1):
+        ws.cell(row=5, column=c).border = _border
+    ws.row_dimensions[4].height = 30
+
+    _header_row(ws, 7, _ENCABEZADOS_OTROS_INGRESOS)
+    row = 8
+    if hoja.filas:
+        for f in hoja.filas:
+            ws.cell(row=row, column=1, value=_fecha(f.fecha)).border = _border
+            ws.cell(row=row, column=2, value=f.categoria).border = _border
+            dc = ws.cell(row=row, column=3, value=f.detalle)
+            dc.border = _border
+            dc.alignment = Alignment(wrap_text=True, vertical="top")
+            # Balance GENERAL: el DETALLE (con la matrícula al frente) se
+            # tiñe con el color del avión, como las demás hojas de la flota.
+            avion_fill = _hex(f.avion_color) if general else None
+            if avion_fill:
+                dc.fill = PatternFill("solid", fgColor=avion_fill)
+            _num(ws, row, 4, f.monto_original).border = _border
+            ws.cell(row=row, column=5, value=f.moneda_original).border = _border
+            _num(ws, row, 6, f.tc_aplicado, TC).border = _border
+            moneda = (f.moneda_original or "").strip().upper()
+            if moneda == "USD" and f.tc_aplicado is not None:
+                formula_ingreso: str | None = f"ROUND(D{row}*F{row},2)"
+            elif moneda == "MXN":
+                formula_ingreso = f"ROUND(D{row},2)"
+            else:
+                formula_ingreso = None
+            _formula(ws, row, 7, formula_ingreso, f.ingreso_mxn).border = _border
+            _num(ws, row, 8, f.comision_mxn).border = _border
+            formula_neto = (
+                f"ROUND(G{row}-H{row},2)" if f.comision_mxn is not None else f"ROUND(G{row},2)"
+            )
+            _formula(ws, row, 9, formula_neto, f.neto_mxn).border = _border
+            ws.cell(row=row, column=10, value=f.cuenta).border = _border
+            nc = ws.cell(row=row, column=11, value=f.notas)
+            nc.border = _border
+            nc.alignment = Alignment(wrap_text=True, vertical="top")
+            # Alto de fila = renglones REALES del texto más alto (DETALLE o
+            # NOTAS): sin él Excel recorta el texto.
+            lineas = max(
+                _renglones(f.detalle, _CHARS_DETALLE_OTROS_INGRESOS),
+                _renglones(f.notas, _CHARS_NOTAS_OTROS_INGRESOS),
+            )
+            if lineas > 1:
+                ws.row_dimensions[row].height = 14 * lineas + 4
+            row += 1
+    else:
+        ws.cell(row=row, column=1, value=_SIN_OTROS_INGRESOS).font = Font(color=MUTED, italic=True)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
+        row += 1
+
+    row += 1
+    _pinta_nota_envuelta(
+        ws,
+        row,
+        _NOTA_OTROS_INGRESOS_AVIONES_GENERAL if general else _NOTA_OTROS_INGRESOS_AVION,
+        n_cols,
+        sum(_ANCHOS_OTROS_INGRESOS),
+    )
+    for i, w in enumerate(_ANCHOS_OTROS_INGRESOS, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A8"
+
+
 # Cobranza con la regla de septiembre 2026 (6-oct-2026, API 0.0.65): COBRADO
 # REAL llega NETO del API; el detalle pinta el neto con el bruto al lado y
 # la nota de abajo lo explica — SOLO si algún cobro trae `neto_mxn` (sin él,
@@ -3545,16 +3741,22 @@ _CASCADA_REFS = {
     "(−) GASTOS INDIRECTOS USD": "indirectos",
     "(−) REFACCIONES (INVENTARIO) USD": "refacciones",
     "(−) PERMISOS USD": "permisos",
+    # Otros ingresos asignados al avión (13-oct-2026, API 0.0.75): TOTAL USD
+    # de su pestaña «Otros ingresos» (solo si el payload la trae).
+    _FILA_OTROS_INGRESOS: "otros_ingresos_avion",
     "(−) PENDIENTE DE PAGO (COBRANZA PENDIENTE) USD": "por_cobrar",
 }
 
 
-def _refs_balance_individual(maestra: _Maestra, con_refacciones: bool) -> dict[str, str]:
+def _refs_balance_individual(
+    maestra: _Maestra, con_refacciones: bool, con_otros_ingresos: bool = False
+) -> dict[str, str]:
     """Celdas que la cascada del libro INDIVIDUAL cita: GANANCIA USD y POR
     COBRAR USD de la fila TOTALES de la hoja maestra y el TOTAL USD (fila 5)
     de las hojas combustible / Gastos Indirectos / refacciones / permisos —
     son los mismos números que el API resta (utilidad_antes = Σ ganancia
-    USD; cada hoja resta su `usd`)."""
+    USD; cada hoja resta su `usd`) — y, con `con_otros_ingresos` (13-oct-2026,
+    API 0.0.75), el TOTAL USD de la pestaña «Otros ingresos», que SUMA."""
     refs = {
         "antes": maestra.total("ganancia_usd"),
         "combustible": _ref_hoja("combustible", "$E$5"),
@@ -3564,6 +3766,8 @@ def _refs_balance_individual(maestra: _Maestra, con_refacciones: bool) -> dict[s
     }
     if con_refacciones:
         refs["refacciones"] = _ref_hoja("refacciones", "$C$5")
+    if con_otros_ingresos:
+        refs["otros_ingresos_avion"] = _ref_hoja("Otros ingresos", "$C$5")
     # Una columna que la hoja no tenga (`total` ⇒ None) deja su fila como
     # valor: nunca una referencia rota.
     return {clave: ref for clave, ref in refs.items() if ref is not None}
@@ -3624,10 +3828,20 @@ def _bloque_balance(
     nota) y UTILIDAD ANTES DE GASTOS = ROUND(antes − comisiones, 2) — el
     número del API de siempre: de ahí para abajo nada cambia, ni un centavo.
     El libro INDIVIDUAL nunca las pinta (ya restan en su columna
-    COMISIONES)."""
+    COMISIONES).
+    OTROS INGRESOS del avión (13-oct-2026, API 0.0.75, invariante «INGRESO
+    ASIGNADO A UN AVIÓN» del API): con `req.otros_ingresos_avion` presente
+    (en el GENERAL, `req` es el avión del bloque) la cascada gana «(+) OTROS
+    INGRESOS USD» entre «(−) PERMISOS USD» y «UTILIDAD DESPUÉS DE GASTOS USD»
+    —se pinta aunque el valor sea None (celda vacía)— y DESPUÉS = ROUND(antes
+    − las cinco restas + otros ingresos, 2): el `utilidad_despues_usd` del API
+    ya los suma. Individual: la línea cita la pestaña «Otros ingresos» (refs);
+    GENERAL: valor. Socios y `celdas_empresa` citan la fila corrida sola. Sin
+    la hoja (API ≤ 0.0.74), las fórmulas y filas de siempre, byte a byte."""
     b = req.balance
     refs = refs or {}
     fila_ini = row
+    con_oi = req.otros_ingresos_avion is not None
     previas: list[tuple[str, float | None, bool]] = []
     if general and _cascada_con_comisiones(b):
         previas = [
@@ -3648,11 +3862,17 @@ def _bloque_balance(
     antes = f"ROUND(B{fila_ini}-B{fila_ini + 1},2)" if previas else None
     # Filas de la cascada desde UTILIDAD ANTES DE GASTOS (`k`): 0 antes, 1
     # combustible, 2 indirectos, 3 refacciones, 4 permisos, 5 después, 6
-    # pendiente, 7 cobrada.
+    # pendiente, 7 cobrada. Con otros ingresos del avión (`con_oi`): 5 otros
+    # ingresos (SUMA), 6 después, 7 pendiente, 8 cobrada.
     k = fila_ini + len(previas)
-    despues = f"ROUND(B{k}-B{k + 1}-B{k + 2}-B{k + 3}-B{k + 4},2)"
-    cobrada = f"ROUND(B{k + 5}-B{k + 6},2)"
-    fila_cobrada = k + 7
+    if con_oi:
+        despues = f"ROUND(B{k}-B{k + 1}-B{k + 2}-B{k + 3}-B{k + 4}+B{k + 5},2)"
+        cobrada = f"ROUND(B{k + 6}-B{k + 7},2)"
+        fila_cobrada = k + 8
+    else:
+        despues = f"ROUND(B{k}-B{k + 1}-B{k + 2}-B{k + 3}-B{k + 4},2)"
+        cobrada = f"ROUND(B{k + 5}-B{k + 6},2)"
+        fila_cobrada = k + 7
     filas: list[tuple[str, float | None, bool]] = [
         *previas,
         ("UTILIDAD ANTES DE GASTOS USD", b.utilidad_antes_usd, False),
@@ -3665,6 +3885,9 @@ def _bloque_balance(
         # None = API viejo (celda vacía; ya venían dentro de indirectos).
         ("(−) REFACCIONES (INVENTARIO) USD", b.refacciones_usd, False),
         ("(−) PERMISOS USD", b.permisos_usd, False),
+        # Otros ingresos ASIGNADOS al avión (13-oct-2026): SUMAN. Solo con la
+        # hoja en el payload; sin ella, la cascada de siempre.
+        *([(_FILA_OTROS_INGRESOS, b.otros_ingresos_avion_usd, False)] if con_oi else []),
         ("UTILIDAD DESPUÉS DE GASTOS USD", b.utilidad_despues_usd, True),
         ("(−) PENDIENTE DE PAGO (COBRANZA PENDIENTE) USD", b.por_cobrar_usd, False),
         ("UTILIDAD COBRADA USD", b.utilidad_cobrada_usd, True),
@@ -3705,6 +3928,8 @@ def _bloque_balance(
             cell.comment = _nota_otros_en_indirectos(b.otros_usd, general)
         if label in notas_previas and val is not None:
             cell.comment = _comentario_cobro(notas_previas[label])
+        if label == _FILA_OTROS_INGRESOS and val is not None:
+            cell.comment = _comentario_cobro(_NOTA_CASCADA_OTROS_INGRESOS)
         row += 1
 
     row += 1
@@ -4802,9 +5027,11 @@ def _hoja_inventario(
 def construir_balance_avion(req: BalanceAvionRequest) -> Workbook:
     """Libro INDIVIDUAL de un avión (openpyxl, sin guardar). Pestañas, en
     orden: reporte horas, cobranza, combustible, Gastos Indirectos,
-    refacciones (solo si el API la manda), permisos, balance, pendientes de
-    captura. Lo cierran `render_balance_avion_xlsx` (.xlsx) y
-    `libro_balance_avion` (JSON para la vista en pantalla, 12-oct-2026)."""
+    refacciones (solo si el API la manda), permisos, Otros ingresos (solo si
+    el API manda `otros_ingresos_avion`, 13-oct-2026: desde el 0.0.75
+    siempre), balance, pendientes de captura. Lo cierran
+    `render_balance_avion_xlsx` (.xlsx) y `libro_balance_avion` (JSON para la
+    vista en pantalla, 12-oct-2026)."""
     wb = Workbook()
     maestra = _hoja_maestra(wb.active, req)
     _hoja_cobranza(wb.create_sheet("cobranza"), req)
@@ -4851,10 +5078,24 @@ def construir_balance_avion(req: BalanceAvionRequest) -> Workbook:
         usd=_USD_TC_LIBRO,
         con_tc=con_tc_permisos,
     )
+    # Pestaña «Otros ingresos» (13-oct-2026, API 0.0.75, invariante «INGRESO
+    # ASIGNADO A UN AVIÓN» del API): los ingresos ING-n asignados a ESTE avión,
+    # entre 'permisos' y 'balance'; su TOTAL USD lo cita la línea «(+) OTROS
+    # INGRESOS USD» de la cascada. Sin la llave (API ≤ 0.0.74), ni pestaña ni
+    # línea: libro byte a byte.
+    con_otros_ingresos = req.otros_ingresos_avion is not None
+    if req.otros_ingresos_avion is not None:
+        _hoja_otros_ingresos_avion(
+            wb.create_sheet("Otros ingresos"),
+            req.otros_ingresos_avion,
+            req,
+            maestra=maestra,
+            usd=_USD_TC_LIBRO,
+        )
     _hoja_balance(
         wb.create_sheet("balance"),
         req,
-        refs=_refs_balance_individual(maestra, req.refacciones is not None),
+        refs=_refs_balance_individual(maestra, req.refacciones is not None, con_otros_ingresos),
     )
     _hoja_pendientes(wb.create_sheet("pendientes de captura"), req)
 
@@ -5135,6 +5376,10 @@ def _hoja_otros_movimientos(
     # Filas AFAC que SUMAN (API 0.0.74, invariante 62): su leyenda va AL FINAL
     # de la fila 2, después del texto de siempre; sin la bandera, byte a byte.
     leyenda_afac = _OM_AFAC_EN_FILAS if _afac_en_filas(hoja) else ""
+    # Otros ingresos ASIGNADOS a un avión (13-oct-2026, API 0.0.75): ya no
+    # viajan en las sueltas; la fila 2 dice dónde están (al final de todo).
+    # Sin la bandera, byte a byte.
+    leyenda_oi = _OM_OTROS_INGRESOS_POR_AVION if hoja.otros_ingresos_por_avion is True else ""
     ws.cell(
         row=2,
         column=1,
@@ -5155,7 +5400,7 @@ def _hoja_otros_movimientos(
         "los OTROS INGRESOS registrados en Ingresos (clave ING-n: intereses, "
         "reembolsos, ventas de activos…); los anticipos y las aportaciones NO "
         "aparecen: no son resultado (29-ago: los gastos de empresa viven en "
-        "la hoja 'otros gastos' — antes llamada 'gastos VuelaTour')." + leyenda_afac,
+        "la hoja 'otros gastos' — antes llamada 'gastos VuelaTour')." + leyenda_afac + leyenda_oi,
     ).font = Font(italic=True, size=9, color=MUTED)
     headers = [
         "clave",
@@ -5471,7 +5716,13 @@ def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
     `_antes_de_comisiones`); la cascada de cada avión de 'balance' las
     muestra en dos líneas cuando el API manda `balance.comisiones_usd`, y las
     leyendas de 'otros movimientos', RESUMEN y bloque VUELATOUR (empresa)
-    explican el pago «cubierto por el avión» de ese API."""
+    explican el pago «cubierto por el avión» de ese API.
+    13-oct-2026 (API 0.0.75, invariante «INGRESO ASIGNADO A UN AVIÓN» del
+    API): hoja 'otros ingresos aviones' (después de 'repartidos a aviones',
+    SOLO si el consolidado trae filas) con los ingresos ING-n asignados a un
+    avión; cada bloque de 'balance' suma los de su avión en «(+) OTROS
+    INGRESOS USD» y la fila 2 de 'otros movimientos' dice que ahí ya no
+    están (bandera `otros_ingresos_por_avion`)."""
     wb = Workbook()
     cons = req.consolidado
     # Nombre de la regla de comisiones (6-oct-2026, ADITIVO): si el API lo
@@ -5560,6 +5811,22 @@ def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
             ),
             maestra=maestra,
         )
+        # Hoja 'otros ingresos aviones' (13-oct-2026, API 0.0.75, invariante
+        # «INGRESO ASIGNADO A UN AVIÓN» del API): los ingresos ING-n
+        # asignados a un avión, de toda la flota (el detalle ya llega con
+        # «MATRÍCULA · » al frente y el color del avión). SOLO con filas: el
+        # API manda la llave en el consolidado únicamente si algún libro trae
+        # ingresos. Cada uno ya SUMA en el bloque de su avión de 'balance'.
+        oi = cons.otros_ingresos_avion
+        if oi is not None and oi.filas:
+            _hoja_otros_ingresos_avion(
+                wb.create_sheet("otros ingresos aviones"),
+                oi,
+                cons,
+                maestra=maestra,
+                usd=None,
+                general=True,
+            )
         # Hoja "inventario" (tiendita, 30-ago): resumen POR ÍTEM del periodo
         # + el detalle de salidas que antes pintaba la hoja "refacciones" del
         # general (el libro INDIVIDUAL conserva la suya; la cascada de

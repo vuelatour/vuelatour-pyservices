@@ -46,7 +46,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from app.schemas.reportes import DineroVueloFila, DineroXlsxRequest
+from app.schemas.reportes import DineroOtroIngresoFila, DineroVueloFila, DineroXlsxRequest
 
 NAVY = "102A43"
 LIGHT = "EEF2F7"
@@ -403,6 +403,32 @@ _UTILIDADES_FILA6_GASTO_REAL = (
 )
 
 
+# Otros ingresos ASIGNADOS a un avión (13-oct-2026, API 0.0.75, invariante
+# «INGRESO ASIGNADO A UN AVIÓN» del API): un ingreso ING-n con avión cuenta en
+# el balance y el reparto de SU avión, NUNCA como ingreso de VuelaTour. El API
+# los manda APARTE (`otros_ingresos_avion`, solo con filas) y ya los excluye
+# de `otros_ingresos` y de `utilidades_otros_ingresos_mxn`; aquí se pintan al
+# final de 'Otros ingresos', fuera de TOTALES, y en 'utilidades' cada avión
+# gana su columna OTROS INGRESOS (`otros_ingresos_mxn`). Sin los campos, el
+# libro de siempre, byte a byte. Textos EXACTOS del contrato (es-MX).
+_SECCION_OTROS_INGRESOS_AVION = (
+    "OTROS INGRESOS DE AVIÓN (cuentan en el balance y en el reparto de su avión; "
+    "no suman en este libro)"
+)
+# Cola de la fila 2 de 'Otros ingresos' (solo con filas de avión).
+_LEYENDA_OTROS_INGRESOS_AVION = (
+    " Al final, aparte y fuera de TOTALES, los otros ingresos asignados a un "
+    "avión: cuentan en la hoja 'Otros ingresos' del balance de ese avión y en su "
+    "reparto, y en 'utilidades' van en la columna OTROS INGRESOS de ese avión."
+)
+# Cola de la fila 9 de 'utilidades' (solo con la columna por avión).
+_UTILIDADES_NOTA_OTROS_INGRESOS_AVION = (
+    " Los ingresos registrados en Ingresos y asignados a un avión NO están en "
+    "este total: van en la columna OTROS INGRESOS de su avión (netos de su "
+    "comisión bancaria)."
+)
+
+
 def _solo_gasto_real(req: DineroXlsxRequest) -> bool:
     """True solo con la bandera del API 0.0.74 (`is True`)."""
     return req.comision_vendedor_solo_gasto_real is True
@@ -432,7 +458,8 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
         )
         + "Al final, los otros ingresos que no son de un vuelo (clave ING-n, "
         "registrados en Ingresos). Los anticipos de clientes no están aquí: "
-        "cuentan como cobro del vuelo al aplicarse.",
+        "cuentan como cobro del vuelo al aplicarse."
+        + (_LEYENDA_OTROS_INGRESOS_AVION if req.otros_ingresos_avion else ""),
     ).font = Font(italic=True, size=9, color="5B6470")
     headers = [
         "clave", "fecha\nvuelo", "concepto", "egreso", "fecha", "concepto",
@@ -449,7 +476,9 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
     ws.column_dimensions["F"].width = 26
     row = 4
     tot_e = tot_i = 0.0
-    for f in req.otros_ingresos:
+
+    def pinta(f: DineroOtroIngresoFila) -> None:
+        nonlocal row
         vals = [
             f.clave, _fecha(f.fecha_vuelo), f.concepto_egreso, f.egreso_mxn,
             _fecha(f.fecha_egreso), f.concepto_ingreso, f.ingreso_mxn,
@@ -470,6 +499,9 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
             com.width = 420
             com.height = max(60, 18 * lineas + 20)
             ws.cell(row=row, column=4).comment = com
+
+    for f in req.otros_ingresos:
+        pinta(f)
         if isinstance(f.egreso_mxn, (int, float)):
             tot_e += f.egreso_mxn
         if isinstance(f.ingreso_mxn, (int, float)):
@@ -481,6 +513,24 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
         cell.font = Font(bold=True)
         cell.number_format = MONEY
         cell.fill = PatternFill("solid", fgColor=LIGHT)
+    # Otros ingresos ASIGNADOS a un avión (13-oct-2026, API 0.0.75): sección
+    # APARTE, después de TOTALES y FUERA de ellos (no suman a tot_e/tot_i:
+    # cuentan en el balance y el reparto de su avión). Mismo pintado de las
+    # filas de arriba y la CLAVE teñida con el color del avión. Sin filas,
+    # nada (libro de siempre).
+    if req.otros_ingresos_avion:
+        row += 2
+        sec = ws.cell(row=row, column=1, value=_SECCION_OTROS_INGRESOS_AVION)
+        sec.font = Font(bold=True, size=10, color=NAVY)
+        sec.fill = PatternFill("solid", fgColor=LIGHT)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=10)
+        row += 1
+        for f in req.otros_ingresos_avion:
+            pinta(f)
+            swatch = _hex(f.avion_color)
+            if swatch:
+                ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor=swatch)
+            row += 1
     ws.freeze_panes = "A4"
 
 
@@ -586,11 +636,18 @@ def _hoja_combustible(ws: Worksheet, req: DineroXlsxRequest) -> None:
 def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
     ws.title = "utilidades"
     ws.cell(row=1, column=1, value="UTILIDADES").font = Font(bold=True, size=12, color=NAVY)
+    # Columna OTROS INGRESOS por avión (13-oct-2026, API 0.0.75): solo si
+    # ALGÚN avión trae `otros_ingresos_mxn` (ingresos ING-n asignados a él);
+    # entonces CADA avión aporta 5 columnas (la nueva primero). Sin el dato,
+    # la hoja de siempre, byte a byte.
+    con_oi = any(a.otros_ingresos_mxn is not None for a in req.utilidades_aviones)
     headers = [
         "PERIODO", "CHARTERS", "OTROS\nINGRESOS", "UTILIDAD ANTES\nGASTOS",
         "OTROS\nGASTOS", "COMBUSTIBLE\nDEL MES",
     ]
     for a in req.utilidades_aviones:
+        if con_oi:
+            headers.append(f"OTROS\nINGRESOS\n{a.matricula}")
         headers += [
             f"GASTOS\nINDIRECTOS\n{a.matricula}",
             f"OTROS GASTOS\n{a.matricula}",
@@ -616,6 +673,8 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
         req.utilidades_combustible_mxn,
     ]
     for a in req.utilidades_aviones:
+        if con_oi:
+            vals.append(a.otros_ingresos_mxn)
         vals += [a.gastos_indirectos_mxn, a.otros_gastos_mxn, a.permisos_mxn,
                  a.combustible_mxn]
     vals += [None, req.utilidades_tc, None]
@@ -687,6 +746,10 @@ def _hoja_utilidades(ws: Worksheet, req: DineroXlsxRequest) -> None:
         "comisión bancaria: ver hoja 'Otros ingresos'." + nota_provision
         + nota_pagada
     )
+    # Ingresos ING-n asignados a un avión (13-oct-2026): no están en OTROS
+    # INGRESOS de VuelaTour; la fila 9 dice dónde van (solo con la columna).
+    if con_oi:
+        fila9 += _UTILIDADES_NOTA_OTROS_INGRESOS_AVION
     ws.cell(row=9, column=1, value=fila9).font = Font(
         italic=True, size=9, color="5B6470"
     )

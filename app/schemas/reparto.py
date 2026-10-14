@@ -93,6 +93,35 @@ class RepartoGastoCategoriaLinea(BaseModel):
     tc_oficial_mxn: float = 0.0
 
 
+class RepartoOtroIngresoLinea(BaseModel):
+    """Un ingreso registrado en Ingresos (clave ING-n) y ASIGNADO a este avión
+    (13-oct-2026, API 0.0.75, invariante «INGRESO ASIGNADO A UN AVIÓN» del
+    API): reembolso de su servicio, venta de una pieza suya, intereses…
+    `usd` = lo que SUMÓ al saldo (neto de la comisión bancaria; MXN con su
+    T.C. propio o el oficial del día del ingreso); None = MXN sin ningún
+    T.C. (no entró al saldo). Solo detalle informativo: el total que suma es
+    `RepartoAvion.otros_ingresos_avion_usd`."""
+
+    clave: str = ""
+    fecha: str | None = None
+    categoria: str | None = None  # etiqueta amable
+    concepto: str | None = None  # descripción · cliente|pagador
+    monto: float | None = None  # BRUTO en su moneda
+    moneda: str | None = None
+    comision: float | None = None
+    usd: float | None = None
+
+    @field_validator("clave", mode="before")
+    @classmethod
+    def _clave_liberal(cls, v: Any) -> Any:
+        """Texto de una celda: null ⇒ '' (jamás un 422 por una etiqueta)."""
+        if v is None:
+            return ""
+        if isinstance(v, int | float) and not isinstance(v, bool):
+            return str(v)
+        return v
+
+
 class RepartoAvion(BaseModel):
     matricula: str
     modelo: str
@@ -151,6 +180,30 @@ class RepartoAvion(BaseModel):
     # día (ya dentro de los montos; solo nota). None/0 = nada que anotar.
     gastos_tc_oficial: RepartoTcOficialGastos | None = None
     cobros_tc_oficial_count: int = 0
+    # ADITIVOS (13-oct-2026, API 0.0.75, invariante «INGRESO ASIGNADO A UN
+    # AVIÓN» del API): otros ingresos registrados en Ingresos con ESTE avión,
+    # netos de comisión bancaria. `otros_ingresos_avion_usd` SUMA al saldo
+    # (`saldo_usd` del API YA lo incluye: aquí jamás se vuelve a sumar);
+    # `otros_ingresos_avion_sin_tc_mxn` = los MXN sin ningún T.C. (NO
+    # entraron al saldo: se avisa); `otros_ingresos_avion` = el detalle por
+    # ingreso. Defaults (API ≤ 0.0.74) ⇒ el PDF y el Excel de siempre.
+    otros_ingresos_avion_usd: float = 0.0
+    otros_ingresos_avion_sin_tc_mxn: float = 0.0
+    otros_ingresos_avion: list[RepartoOtroIngresoLinea] = Field(default_factory=list)
+
+    @field_validator(
+        "otros_ingresos_avion_usd", "otros_ingresos_avion_sin_tc_mxn", mode="before"
+    )
+    @classmethod
+    def _monto_o_cero(cls, v: Any) -> Any:
+        """null ⇒ 0 (el API manda número; jamás un 422 por un null)."""
+        return 0.0 if v is None else v
+
+    @field_validator("otros_ingresos_avion", mode="before")
+    @classmethod
+    def _lineas_liberal(cls, v: Any) -> Any:
+        """NestJS puede mandar null en una lista vacía: jamás un 422."""
+        return [] if v is None else v
 
 
 class RepartoPdfRequest(BaseModel):

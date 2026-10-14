@@ -1148,6 +1148,16 @@ class BalanceAvionBalanceBloque(BaseModel):
     # las ignora: ahí ya restan, por vuelo, en su columna COMISIONES.
     comisiones_usd: float | None = None
     utilidad_antes_comisiones_usd: float | None = None
+    # ADITIVO (13-oct-2026, API 0.0.75, invariante «INGRESO ASIGNADO A UN
+    # AVIÓN» del API): TOTAL USD de la hoja «Otros ingresos» de ESTE
+    # avión (= `otros_ingresos_avion.usd`). La cascada lo SUMA en la línea
+    # «(+) OTROS INGRESOS USD», entre «(−) PERMISOS USD» y «UTILIDAD DESPUÉS
+    # DE GASTOS USD»; `utilidad_despues_usd` del API YA lo incluye. Viaja
+    # junto con la hoja: sin `otros_ingresos_avion` (API ≤ 0.0.74) no hay
+    # línea. None con la hoja presente = algún ingreso USD sin T.C. ⇒ celda
+    # vacía (y la utilidad también, el null se propaga en el API). OJO: NO es
+    # `otros_ingresos_usd` de los vuelos/totales (TUAs/extras de VuelaTour).
+    otros_ingresos_avion_usd: float | None = None
 
 
 class BalanceOtroMovimientoFila(BaseModel):
@@ -1285,6 +1295,74 @@ class BalanceHojaOtrosMovimientos(BaseModel):
     # `_EMPRESA_*_AFAC` y `_EMPRESA_AFAC_EN_FILAS`. None/False = API previo ⇒
     # libro de siempre, byte a byte.
     afac_en_filas: bool | None = None
+    # ADITIVO (13-oct-2026, API 0.0.75, invariante «INGRESO ASIGNADO A UN
+    # AVIÓN» del API): `true` = los otros ingresos registrados en Ingresos y
+    # ASIGNADOS a un avión ya no viajan en `filas_sueltas` (cuentan en la
+    # hoja «Otros ingresos» del libro de ese avión, en su cascada y en su
+    # reparto). Viaja SIEMPRE desde el 0.0.75; aquí SOLO agrega
+    # `_OM_OTROS_INGRESOS_POR_AVION` al final de la fila 2. None/False (API ≤
+    # 0.0.74) ⇒ la pestaña de siempre, byte a byte.
+    otros_ingresos_por_avion: bool | None = None
+
+
+class BalanceAvionOtroIngresoFila(BaseModel):
+    """Fila de la hoja «Otros ingresos» de un avión (13-oct-2026, API 0.0.75,
+    invariante «INGRESO ASIGNADO A UN AVIÓN» del API): un ingreso registrado
+    en Ingresos (clave ING-n) y ASIGNADO a ese avión (reembolso de su
+    servicio, venta de una pieza suya, intereses…). Todo llega YA calculado
+    de la fuente única del API (`filaLibroDeIngreso`): bruto, comisión y
+    neto en pesos con el T.C. PROPIO del ingreso; aquí solo se pinta
+    (fórmulas que reproducen esos números). None = celda vacía, nunca un 0
+    falso."""
+
+    # Id del ingreso: viaja para el futuro vínculo celda → registro (no se
+    # pinta todavía).
+    ingreso_id: str | None = None
+    clave: str = ""  # 'ING-4'
+    fecha: str | None = None  # 'YYYY-MM-DD' (día Cancún)
+    # Etiqueta amable de la categoría ('Reembolsos y devoluciones recibidos').
+    categoria: str | None = None
+    detalle: str | None = None  # 'ING-4 · TRANSF INTERBANCARIA SPEI · angel alvarez'
+    moneda_original: str | None = None  # 'MXN' | 'USD'
+    monto_original: float | None = None  # BRUTO en su moneda
+    # USD: el `tc_usd_mxn` EXACTO del ingreso (sin redondear); MXN: None.
+    tc_aplicado: float | None = None
+    ingreso_mxn: float | None = None
+    comision_mxn: float | None = None  # None = sin comisión bancaria
+    neto_mxn: float | None = None  # ingreso − comisión
+    cuenta: str | None = None  # 'EJE SCOTIA · Scotiabank' | 'Efectivo / caja'
+    notas: str | None = None
+    # Solo en el consolidado FLOTA del Balance general (hoja «otros ingresos
+    # aviones»): el DETALLE ya llega con «MATRÍCULA · » al frente.
+    avion_color: str | None = None
+    matricula: str | None = None
+
+    @field_validator("clave", mode="before")
+    @classmethod
+    def _clave_liberal(cls, v: Any) -> Any:
+        """Texto de una celda: null ⇒ '' (jamás un 422 por una etiqueta)."""
+        if v is None:
+            return ""
+        if isinstance(v, int | float) and not isinstance(v, bool):
+            return str(v)
+        return v
+
+
+class BalanceAvionHojaOtrosIngresos(BaseModel):
+    """Hoja «Otros ingresos» del libro de un avión (y, en el Balance general,
+    la consolidada «otros ingresos aviones»). `total_mxn` = Σ NETO MXN; `usd`
+    = TOTAL USD que SUMA en la cascada (None = algún ingreso USD sin T.C.;
+    en el general, None si algún libro trajo None)."""
+
+    filas: list[BalanceAvionOtroIngresoFila] = Field(default_factory=list)
+    total_mxn: float | None = None
+    usd: float | None = None
+
+    @field_validator("filas", mode="before")
+    @classmethod
+    def _filas_liberal(cls, v: Any) -> Any:
+        """NestJS puede mandar null en una lista vacía: jamás un 422."""
+        return [] if v is None else v
 
 
 class BalanceAvionRequest(BaseModel):
@@ -1357,6 +1435,17 @@ class BalanceAvionRequest(BaseModel):
     # general, cascada); manda sobre `sin_provision_vendedor`. None/False
     # (API ≤ 0.0.73) ⇒ libro byte a byte.
     comision_vendedor_solo_gasto_real: bool | None = None
+    # ADITIVO (13-oct-2026, API 0.0.75, invariante «INGRESO ASIGNADO A UN
+    # AVIÓN» del API): la hoja «Otros ingresos» del avión — ingresos de
+    # RESULTADO registrados en Ingresos con este avión, en el mes de su
+    # `fecha`. Su PRESENCIA manda: el libro individual gana la pestaña «Otros
+    # ingresos» (entre 'permisos' y 'balance') y la cascada de 'balance' la
+    # línea «(+) OTROS INGRESOS USD» (también en cada bloque del Balance
+    # general). El API la manda SIEMPRE en los libros de avión (vacía:
+    # `{filas: [], total_mxn: 0, usd: 0}`) y en el `consolidado` FLOTA SOLO
+    # con filas (hoja «otros ingresos aviones»). None (API ≤ 0.0.74) ⇒ ni
+    # pestaña ni línea: libro byte a byte.
+    otros_ingresos_avion: BalanceAvionHojaOtrosIngresos | None = None
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod
@@ -1834,6 +1923,12 @@ class DineroOtroIngresoFila(BaseModel):
     # «factura vuelatour» de 'Otros ingresos': misma etiqueta que la hoja 1
     # (invariante 60 del API: «Pendiente de factura» / «No lleva factura»).
     factura: str | None = None
+    # ADITIVOS (13-oct-2026, API 0.0.75, invariante «INGRESO ASIGNADO A UN
+    # AVIÓN» del API): SOLO en las filas de `otros_ingresos_avion` (ingresos
+    # ING-n asignados a un avión). La CLAVE se tiñe con `avion_color`; la
+    # matrícula ya viene dentro del concepto del API.
+    matricula: str | None = None
+    avion_color: str | None = None
 
 
 class DineroOtroGastoFila(BaseModel):
@@ -1854,6 +1949,13 @@ class DineroUtilidadAvion(BaseModel):
     permisos_mxn: float | None = None
     # "Gasto de combustible" del mes del avión (pestaña Combustible).
     combustible_mxn: float | None = None
+    # ADITIVO (13-oct-2026, API 0.0.75, invariante «INGRESO ASIGNADO A UN
+    # AVIÓN» del API): Σ NETO MXN (remanente) de los ingresos ING-n
+    # asignados a este avión. El API la manda SOLO con dato; si ALGÚN avión
+    # la trae, la hoja 'utilidades' gana la columna «OTROS INGRESOS
+    # <matrícula>» por avión (vacía en los que no la traen). None en todos
+    # (API ≤ 0.0.74 o sin ingresos de avión) ⇒ la hoja de siempre.
+    otros_ingresos_mxn: float | None = None
 
 
 class DineroCombustibleFila(BaseModel):
@@ -1879,6 +1981,14 @@ class DineroXlsxRequest(BaseModel):
     leyenda_colores: list[dict] = Field(default_factory=list)
     vuelos: list[DineroVueloFila] = Field(default_factory=list)
     otros_ingresos: list[DineroOtroIngresoFila] = Field(default_factory=list)
+    # ADITIVO (13-oct-2026, API 0.0.75, invariante «INGRESO ASIGNADO A UN
+    # AVIÓN» del API): los ingresos ING-n ASIGNADOS a un avión (la misma
+    # fila de `filaLibroDeIngreso` + `matricula`/`avion_color`). Cuentan en
+    # el balance y el reparto de SU avión: se pintan al final de 'Otros
+    # ingresos', en una sección APARTE y FUERA de TOTALES (los TOTALES y
+    # `utilidades_otros_ingresos_mxn` ya los excluyen en el API). El API la
+    # manda SOLO con filas; vacía ⇒ la hoja de siempre, byte a byte.
+    otros_ingresos_avion: list[DineroOtroIngresoFila] = Field(default_factory=list)
     otros_gastos: list[DineroOtroGastoFila] = Field(default_factory=list)
     # Pestaña "Combustible" (26-ago-2026); defaults = skew tolerante.
     combustible: list[DineroCombustibleFila] = Field(default_factory=list)
@@ -1922,6 +2032,12 @@ class DineroXlsxRequest(BaseModel):
     # `utilidades_comision_vendedor_pagada_mxn`; None/False (API ≤ 0.0.73) ⇒
     # libro byte a byte.
     comision_vendedor_solo_gasto_real: bool | None = None
+
+    @field_validator("otros_ingresos_avion", mode="before")
+    @classmethod
+    def _otros_ingresos_avion_liberal(cls, v: Any) -> Any:
+        """NestJS puede mandar null en una lista vacía: jamás un 422."""
+        return [] if v is None else v
 
 
 # ================= Caja chica: Excel de la REPOSICIÓN (24-sep-2026) =================

@@ -1445,6 +1445,85 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   la marca «sin TC»; esquemas, JSON del 0.0.74 y
   mixto, rutas xlsx y libro JSON; huellas de valores, layout y bytes con la
   llave ausente/null/false; variante general idéntica).
+- **Otros ingresos del avión: pestaña 'Otros ingresos', línea «(+) OTROS
+  INGRESOS USD», hoja consolidada, Libro Dinero y reparto** (13-oct-2026,
+  API 0.0.75; invariante «INGRESO ASIGNADO A UN AVIÓN» del API, migración
+  del API 20261013000005). Pedido: un ingreso registrado en Ingresos con
+  avión (caso real ING-4 de N990GG, $46,550.80 MXN, «reembolso del pago del
+  serv de 50 hrs en toledo») cuenta UNA vez, en el mes de su fecha, para ESE
+  avión y deja de ser ingreso de VuelaTour. **El cambio de dinero es del
+  API** (fuente única `filaLibroDeIngreso` / `partirIngresosPorAvion`); aquí
+  se pinta y NO se convierte nada. (1) **La PRESENCIA de
+  `BalanceAvionRequest.otros_ingresos_avion` manda** (`BalanceAvionHojaOtros
+  Ingresos`: `filas` de `BalanceAvionOtroIngresoFila`, `total_mxn`, `usd`):
+  el libro INDIVIDUAL gana la pestaña «Otros ingresos» entre 'permisos' y
+  'balance' (el API 0.0.75 la manda SIEMPRE, vacía = «Sin otros ingresos
+  asignados a este avión en el periodo.») y la cascada la línea `_FILA_OTROS
+  _INGRESOS` entre «(−) PERMISOS USD» y «UTILIDAD DESPUÉS DE GASTOS USD» —se
+  pinta aunque `balance.otros_ingresos_avion_usd` venga None (celda vacía:
+  un ingreso USD sin T.C. deja la hoja y la utilidad en null)—, con nota
+  `_NOTA_CASCADA_OTROS_INGRESOS` solo con valor. Índices desde UTILIDAD ANTES
+  (`k`): 5 otros ingresos (SUMA), 6 DESPUÉS = `ROUND(B{k}-B{k+1}-B{k+2}-
+  B{k+3}-B{k+4}+B{k+5},2)`, 7 pendiente, 8 COBRADA = `ROUND(B{k+6}-
+  B{k+7},2)`; los socios citan `$B${k+8}` (en el general, `k` ya incluye las
+  dos previas de comisiones). Individual: la línea cita `'Otros
+  ingresos'!$C$5` (`_refs_balance_individual(..., con_otros_ingresos)` y
+  `_CASCADA_REFS`); GENERAL: valor, como el resto del bloque. (2)
+  `_hoja_otros_ingresos_avion` (modelada en `_hoja_gastos`, 11 columnas
+  `_ENCABEZADOS_OTROS_INGRESOS`, anchos `[12, 22, 50, 15, 9, 11, 15, 14, 15,
+  22, 36]`, panel fijo A8, DETALLE y NOTAS envueltos con alto estimado):
+  INGRESO MXN G = `ROUND(D*F,2)` en USD con `tc_aplicado` (el T.C. EXACTO
+  del ingreso) y `ROUND(D,2)` en MXN (otra cosa: valor); COMISIÓN H = valor;
+  NETO I = `ROUND(G-H,2)` (sin comisión, `ROUND(G,2)`); A5 = `ROUND(SUM(I8:
+  In),2)`, B5 cita el TC PROMEDIO de la maestra y C5 = `ROUND(A5/AVERAGE(T.C.
+  de costos de la maestra),2)` (`_USD_TC_LIBRO`, el `tcHojas` del API; sin
+  vuelos, valor: el oficial del cierre). Todas con ROUND (nada nuevo en
+  `ENCABEZADOS_SIN_ROUND`) y verificadas: una que no reproduzca el centavo
+  vuelve a valor. Nota al pie `_NOTA_OTROS_INGRESOS_AVION` envuelta. (3)
+  GENERAL: hoja **'otros ingresos aviones'** después de 'repartidos a
+  aviones' y antes de 'inventario', SOLO si `consolidado.otros_ingresos
+  _avion` trae filas (el API la manda solo así), título
+  `_TITULO_OTROS_INGRESOS_GENERAL`, resumen «TOTAL NETO MXN | TOTAL USD (suma
+  de los aviones)» con B5 como VALOR (cada libro convirtió con su T.C.), el
+  DETALLE ya llega con «MATRÍCULA · » y se tiñe con `avion_color`; nota
+  `_NOTA_OTROS_INGRESOS_AVIONES_GENERAL`. Bandera ADITIVA
+  `BalanceHojaOtrosMovimientos.otros_ingresos_por_avion` (`is True`; el API
+  0.0.75 la manda SIEMPRE): la fila 2 de 'otros movimientos' suma
+  `_OM_OTROS_INGRESOS_POR_AVION` AL FINAL (después de `_OM_AFAC_EN_FILAS`).
+  (4) **Libro Dinero**: `DineroXlsxRequest.otros_ingresos_avion` (solo con
+  filas; `DineroOtroIngresoFila` gana `matricula`/`avion_color`) se pinta al
+  final de 'Otros ingresos' tras TOTALES, una fila en blanco y el encabezado
+  `_SECCION_OTROS_INGRESOS_AVION` (A:J, negrita NAVY, relleno LIGHT), con el
+  MISMO pintado de las filas de arriba (helper `pinta`) y la CLAVE teñida;
+  **NO suman a TOTALES** (el API ya los excluye de `otros_ingresos` y de
+  `utilidades_otros_ingresos_mxn`); la fila 2 suma
+  `_LEYENDA_OTROS_INGRESOS_AVION`. 'utilidades': con ALGÚN
+  `utilidades_aviones[].otros_ingresos_mxn` cada avión aporta 5 columnas
+  («OTROS\nINGRESOS\n<mat>» primero; vacía sin dato) y la fila 9 suma
+  `_UTILIDADES_NOTA_OTROS_INGRESOS_AVION`. (5) **Reparto**: `RepartoAvion`
+  gana `otros_ingresos_avion_usd` (SUMA; `saldo_usd` del API YA lo incluye),
+  `otros_ingresos_avion_sin_tc_mxn` y `otros_ingresos_avion`
+  (`RepartoOtroIngresoLinea`); null ⇒ 0/[]. PDF (`_filas_otros_ingresos
+  _avion`): fila `FILA_OTROS_INGRESOS_AVION` (no gris) antes de las
+  deducciones solo con monto ≠ 0, hasta 5 renglones grises «   ING-4 ·
+  categoría · concepto» con lo que sumó o «sin T.C.» (recortados con «...»
+  al ancho de la celda de 120 mm) y «   y N más», y el gris
+  `LINEA_OTROS_INGRESOS_SIN_TC` con los MXN que no entraron; resumen de 5
+  columnas (`ENCABEZADOS_RESUMEN_CON_OTROS_INGRESOS`, 5 × 34 mm, el gris de
+  «Otros ingresos VuelaTour» pasa a la columna 2) para que venta + otros −
+  gastos = saldo. XLSX: columna 15 `ENCABEZADO_OTROS_INGRESOS_AVION` (MONEY,
+  borde, total en negrita, ancho 18, FUERA de `money_cols`) y la nota
+  `NOTA_OTROS_INGRESOS_AVION` tras la de la tabla, SOLO con dato. **Payload
+  viejo (sin las llaves, o en null/vacías/0) ⇒ libros byte a byte**:
+  huellas de miembros (balance individual y general, Libro Dinero, Excel del
+  reparto) y de los flujos de contenido del PDF calculadas con el código de
+  HEAD d58faa1 antes del cambio. Orden de deploy: pyservices ANTES del API
+  0.0.75 (con el API primero el libro sale sin pestaña ni línea y la
+  utilidad después sube sin explicación). Tests:
+  `tests/test_balance_otros_ingresos_avion.py`,
+  `tests/test_dinero_otros_ingresos_avion.py`,
+  `tests/test_reparto_otros_ingresos_avion.py` y
+  `tests/test_libro_json.py` (la pestaña y sus fórmulas en pantalla).
 
 ## Conciliación
 

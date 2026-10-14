@@ -6,6 +6,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import (
     KeepTogether,
     Paragraph,
@@ -18,6 +19,7 @@ from reportlab.platypus import (
 from app.schemas.reparto import (
     RepartoAvion,
     RepartoGastoCategoriaLinea,
+    RepartoOtroIngresoLinea,
     RepartoOtrosIngresosDesglose,
     RepartoPdfRequest,
     RepartoVueloLinea,
@@ -35,6 +37,32 @@ from app.services.reparto_comisiones import (
 BRAND = colors.HexColor("#0F4C81")
 LIGHT = colors.HexColor("#EEF2F7")
 MUTED = colors.HexColor("#5B6470")
+
+# ===== Otros ingresos ASIGNADOS a un avión (13-oct-2026, API 0.0.75) =====
+# Invariante «INGRESO ASIGNADO A UN AVIÓN» del API: los ingresos registrados
+# en Ingresos con ese avión (reembolso de su servicio, venta de una pieza
+# suya…), netos de comisión bancaria, SUMAN a su saldo (`saldo_usd` ya los
+# trae: aquí jamás se vuelven a sumar). Textos EXACTOS del contrato (es-MX).
+FILA_OTROS_INGRESOS_AVION = (
+    "(+) Otros ingresos del avión (registrados en Ingresos, netos de comisión)"
+)
+LINEA_OTROS_INGRESOS_SIN_TC = (
+    "Otros ingresos del avión en MXN sin tipo de cambio — no entraron al saldo"
+)
+# Detalle gris bajo la fila (+): hasta 5 ingresos y «y N más».
+MAX_LINEAS_OTROS_INGRESOS = 5
+ENCABEZADOS_RESUMEN_CON_OTROS_INGRESOS = [
+    "Venta del avión cobrada",
+    "Otros ingresos de aviones",
+    "Otros ingresos VuelaTour",
+    "Gastos del periodo",
+    "Saldo a repartir",
+]
+# Ancho útil de la columna de etiquetas de la cascada (120 mm − relleno) y
+# letra de las filas grises: el detalle de un ingreso se RECORTA a ese ancho
+# (un concepto largo se encimaría con el monto).
+_ANCHO_ETIQUETA_PT = 120 * mm - 12
+_FUENTE_GRIS = ("Helvetica-Oblique", 7.5)
 
 
 def _nota_tc_oficial(avion) -> str | None:
@@ -212,6 +240,54 @@ def _filas_gastos_categoria(
     ]
 
 
+def _recortar(texto: str, ancho_pt: float, fuente: str, tamano: float) -> str:
+    """`texto` recortado (con «...») para que quepa en `ancho_pt` con esa
+    letra: Helvetica no envuelve dentro de una celda de tabla."""
+    if stringWidth(texto, fuente, tamano) <= ancho_pt:
+        return texto
+    while texto and stringWidth(texto + "...", fuente, tamano) > ancho_pt:
+        texto = texto[:-1]
+    return texto.rstrip(" ·") + "..."
+
+
+def _linea_otro_ingreso(linea: RepartoOtroIngresoLinea) -> list[str]:
+    """Renglón gris del detalle: «   ING-4 · Reembolsos… · concepto» y lo que
+    sumó en dólares (o «sin T.C.» si no entró al saldo). Las partes vacías se
+    omiten y «→» (Helvetica no lo dibuja) se vuelve «-»."""
+    partes = [x.strip() for x in (linea.clave, linea.categoria, linea.concepto) if x and x.strip()]
+    texto = "   " + " · ".join(partes).replace("→", "-")
+    return [
+        _recortar(texto, _ANCHO_ETIQUETA_PT, *_FUENTE_GRIS),
+        _usd(linea.usd) if linea.usd is not None else "sin T.C.",
+    ]
+
+
+def _filas_otros_ingresos_avion(avion: RepartoAvion) -> tuple[list[list[str]], list[int]]:
+    """Filas de la cascada del avión con sus otros ingresos asignados
+    (13-oct-2026) y, aparte, los índices (relativos) de las filas GRISES. La
+    fila (+) SUMA (no es gris) y solo sale con monto ≠ 0; después, hasta
+    `MAX_LINEAS_OTROS_INGRESOS` ingresos y «y N más»; al final, los MXN sin
+    tipo de cambio (no entraron al saldo). Sin nada de eso (API ≤ 0.0.74),
+    ninguna fila: el PDF de siempre."""
+    filas: list[list[str]] = []
+    grises: list[int] = []
+    if avion.otros_ingresos_avion_usd:
+        filas.append([FILA_OTROS_INGRESOS_AVION, _usd(avion.otros_ingresos_avion_usd)])
+    lineas = avion.otros_ingresos_avion
+    for linea in lineas[:MAX_LINEAS_OTROS_INGRESOS]:
+        grises.append(len(filas))
+        filas.append(_linea_otro_ingreso(linea))
+    if len(lineas) > MAX_LINEAS_OTROS_INGRESOS:
+        grises.append(len(filas))
+        filas.append([f"   y {len(lineas) - MAX_LINEAS_OTROS_INGRESOS} más", ""])
+    if avion.otros_ingresos_avion_sin_tc_mxn:
+        grises.append(len(filas))
+        filas.append(
+            [LINEA_OTROS_INGRESOS_SIN_TC, f"${avion.otros_ingresos_avion_sin_tc_mxn:,.2f} MXN"]
+        )
+    return filas, grises
+
+
 def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
     """Genera el PDF del reparto de utilidades y devuelve los bytes."""
     buffer = BytesIO()
@@ -295,37 +371,63 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
     total_otros = req.otros_ingresos_vuelatour_total_usd or sum(
         a.otros_ingresos_vuelatour_usd for a in req.aviones
     )
-    resumen = Table(
-        [
+    # Otros ingresos ASIGNADOS a los aviones (13-oct-2026, API 0.0.75): ya
+    # van dentro de cada `saldo_usd`; con ellos el resumen gana su columna
+    # para que venta + otros ingresos de aviones − gastos = saldo. Sin ellos
+    # (0), las 4 columnas de siempre, byte a byte.
+    total_oi = sum(a.otros_ingresos_avion_usd for a in req.aviones)
+    if total_oi:
+        resumen = Table(
             [
-                "Venta del avión cobrada",
-                "Otros ingresos VuelaTour",
-                "Gastos del periodo",
-                "Saldo a repartir",
+                list(ENCABEZADOS_RESUMEN_CON_OTROS_INGRESOS),
+                [
+                    _usd(total_ingresos),
+                    _usd(total_oi),
+                    _usd(total_otros),
+                    _usd(total_gastos),
+                    _usd(total_saldo),
+                ],
             ],
-            [_usd(total_ingresos), _usd(total_otros), _usd(total_gastos), _usd(total_saldo)],
-        ],
-        colWidths=[42.5 * mm, 42.5 * mm, 42.5 * mm, 42.5 * mm],
-    )
-    resumen.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
-                ("TEXTCOLOR", (0, 0), (-1, 0), MUTED),
-                ("FONTSIZE", (0, 0), (-1, 0), 8),
-                ("FONTSIZE", (0, 1), (-1, 1), 13),
-                ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
-                ("TEXTCOLOR", (0, 1), (-1, 1), BRAND),
-                # Otros ingresos VuelaTour: informativo (gris), no se reparte.
-                ("TEXTCOLOR", (1, 1), (1, 1), MUTED),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                ("BOX", (0, 0), (-1, -1), 0.5, LIGHT),
-                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.white),
-            ]
+            colWidths=[34 * mm] * 5,
         )
-    )
+        gris_otros = 2
+    else:
+        resumen = Table(
+            [
+                [
+                    "Venta del avión cobrada",
+                    "Otros ingresos VuelaTour",
+                    "Gastos del periodo",
+                    "Saldo a repartir",
+                ],
+                [_usd(total_ingresos), _usd(total_otros), _usd(total_gastos), _usd(total_saldo)],
+            ],
+            colWidths=[42.5 * mm, 42.5 * mm, 42.5 * mm, 42.5 * mm],
+        )
+        gris_otros = 1
+    estilo_resumen: list = [
+        ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
+        ("TEXTCOLOR", (0, 0), (-1, 0), MUTED),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("FONTSIZE", (0, 1), (-1, 1), 13),
+        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+        ("TEXTCOLOR", (0, 1), (-1, 1), BRAND),
+        # Otros ingresos VuelaTour: informativo (gris), no se reparte.
+        ("TEXTCOLOR", (gris_otros, 1), (gris_otros, 1), MUTED),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("BOX", (0, 0), (-1, -1), 0.5, LIGHT),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.white),
+    ]
+    if total_oi:
+        # 5 columnas de 34 mm: los encabezados de 8 pt («Otros ingresos de
+        # aviones» mide 93 pt) caben con menos relleno lateral.
+        estilo_resumen += [
+            ("LEFTPADDING", (0, 0), (-1, -1), 2),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+        ]
+    resumen.setStyle(TableStyle(estilo_resumen))
     story.append(resumen)
     # Composición cotizada de "Otros ingresos VuelaTour" (regla A: incluye la
     # comisión del vendedor) — solo si el API manda el desglose.
@@ -456,6 +558,12 @@ def _bloque_avion(
             texto = f"Pendiente de cobro (parte avión) — deuda total del cliente {_usd(bruto)}"
         info_rows.append(len(filas))
         filas.append([texto, _usd(pendiente)])
+    # Otros ingresos ASIGNADOS al avión (13-oct-2026, API 0.0.75): la fila (+)
+    # SUMA (ya dentro de `saldo_usd`) y su detalle va en gris; sin ellos,
+    # ninguna fila (el PDF de siempre).
+    filas_oi, grises_oi = _filas_otros_ingresos_avion(avion)
+    info_rows += [len(filas) + i for i in grises_oi]
+    filas += filas_oi
     filas += [
         # Comisiones que absorbe el avión: desde la regla de septiembre 2026
         # (API 0.0.65) la parte del avión de la comisión bancaria + lo del

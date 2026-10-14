@@ -141,6 +141,19 @@ _NOTA_FIN = (
 )
 
 
+# Otros ingresos ASIGNADOS a un avión (13-oct-2026, API 0.0.75, invariante
+# «INGRESO ASIGNADO A UN AVIÓN» del API): SUMAN al saldo (ya dentro de
+# `saldo_usd`). Columna 15 y su nota SOLO con dato; sin él, las 14 columnas
+# de siempre. Textos EXACTOS del contrato (es-MX).
+ENCABEZADO_OTROS_INGRESOS_AVION = "Otros ingresos del avión (suman al saldo)"
+NOTA_OTROS_INGRESOS_AVION = (
+    "Otros ingresos del avión = reembolsos, ventas e intereses registrados en "
+    "Ingresos con ese avión, netos de comisión bancaria; SUMAN al saldo (Saldo "
+    "disponible = venta cobrada − comisiones − gastos − fijos − reserva + otros "
+    "ingresos del avión)."
+)
+
+
 def _nota_tabla(req: RepartoPdfRequest) -> str:
     """Nota bajo la tabla. Con comisiones a cargo del avión (regla de
     septiembre 2026) ya no dice que el pago de la comisión «no es del avión»:
@@ -197,7 +210,11 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     ws = wb.active
     ws.title = "Resumen por avión"
 
-    n_cols = 14
+    # Columna 15 «Otros ingresos del avión» (13-oct-2026): solo si algún
+    # avión trae otros ingresos asignados. NO entra a `money_cols` (D..L
+    # intactas); el saldo del API ya los incluye.
+    con_oi = any(a.otros_ingresos_avion_usd for a in req.aviones)
+    n_cols = 15 if con_oi else 14
     _title(ws, "VuelaTour — Reporte mensual por avión", 1, n_cols, size=16)
     sub = ws.cell(row=2, column=1, value=f"Periodo: {req.periodo_desde} a {req.periodo_hasta}  ·  Generado: {req.generado}")
     sub.font = Font(italic=True, size=10, color="5B6470")
@@ -212,6 +229,7 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         # COMPLETA del cliente cuando es mayor a la parte del avión.
         "Otros ingr. VuelaTour (informativo)",
         "Deuda total del cliente (informativo)",
+        *([ENCABEZADO_OTROS_INGRESOS_AVION] if con_oi else []),
     ]
     # Columna E con las comisiones que absorbe el avión (regla de septiembre
     # 2026: banco + lo del vendedor —su provisión hasta el API 0.0.73, el
@@ -229,6 +247,9 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     # N: deuda total del cliente — solo cuando supera la parte del avión
     # (pendiente_bruto_usd > pendiente_cobro_usd); en gris, sin total.
     deuda_col = 14
+    # O: otros ingresos del avión (13-oct-2026) — SUMAN al saldo; total propio.
+    oi_col = 15
+    total_oi = 0.0
 
     r = hrow + 1
     for a in req.aviones:
@@ -260,6 +281,11 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         dc.number_format = MONEY
         dc.font = Font(italic=True, color="5B6470")
         dc.border = _border
+        if con_oi:
+            oc = ws.cell(row=r, column=oi_col, value=a.otros_ingresos_avion_usd)
+            oc.number_format = MONEY
+            oc.border = _border
+            total_oi += float(a.otros_ingresos_avion_usd or 0)
         r += 1
 
     # Fila de totales.
@@ -282,6 +308,12 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     cd = ws.cell(row=r, column=deuda_col)
     cd.fill = PatternFill("solid", fgColor=LIGHT)
     cd.border = _border
+    if con_oi:
+        co = ws.cell(row=r, column=oi_col, value=total_oi)
+        co.font = Font(bold=True)
+        co.fill = PatternFill("solid", fgColor=LIGHT)
+        co.number_format = MONEY
+        co.border = _border
     r += 1
     # Columna E (comisiones que restan al avión): con la regla A del
     # 28-ago-2026 el API mandó 0 y desde la regla de septiembre 2026 trae lo
@@ -293,6 +325,11 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     nota = ws.cell(row=r, column=1, value=_nota_tabla(req))
     nota.font = Font(italic=True, size=9, color="5B6470")
     ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
+    if con_oi:
+        r += 1
+        no = ws.cell(row=r, column=1, value=NOTA_OTROS_INGRESOS_AVION)
+        no.font = Font(italic=True, size=9, color="5B6470")
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
     # Composición cotizada de "Otros ingr. VuelaTour" (regla A: incluye la
     # comisión del vendedor) — global y por avión, solo si el API la manda.
     desglose_txt = _desglose_txt(req.otros_ingresos_vuelatour_desglose)
@@ -328,6 +365,8 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
 
     # Anchos de columna.
     widths = [12, 16, 13, 16, 16, 17, 15, 16, 12, 16, 16, 16, 18, 18]
+    if con_oi:
+        widths.append(18)
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 

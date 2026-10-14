@@ -27,6 +27,7 @@ from app.services.balance_avion_xlsx import (
     render_balance_general_xlsx,
 )
 from tests import test_balance_formulas as t_formulas
+from tests import test_balance_otros_ingresos_avion as t_oi
 
 # ---------------------------------------------------------------------------
 # Formato de número «como Excel»
@@ -256,8 +257,18 @@ def test_balance_general_json_es_el_mismo_libro_que_el_xlsx():
     json.dumps(libro)
 
 
-def test_balance_avion_json_es_el_mismo_libro_que_el_xlsx():
-    req = BalanceAvionRequest.model_validate(t_formulas._payload_tst())
+def _payload_con_otros_ingresos() -> dict:
+    """XA-TST con la hoja «Otros ingresos» del API 0.0.75 (13-oct-2026)."""
+    return t_oi._con_otros_ingresos(t_formulas._payload_tst(), [t_oi._FILA_MXN, t_oi._FILA_USD])
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [t_formulas._payload_tst, _payload_con_otros_ingresos],
+    ids=["hoy", "otros ingresos del avión"],
+)
+def test_balance_avion_json_es_el_mismo_libro_que_el_xlsx(payload):
+    req = BalanceAvionRequest.model_validate(payload())
     libro = libro_balance_avion(req)
     xlsx = render_balance_avion_xlsx(req)
     formulas = _comparar_con_xlsx(libro, xlsx)
@@ -265,6 +276,29 @@ def test_balance_avion_json_es_el_mismo_libro_que_el_xlsx():
     assert libro["titulo"].startswith("Balance ")
     # Una nota de celda del libro real viaja al JSON (las notas de cobros).
     assert any("n" in x for h in libro["hojas"] for x in h["celdas"])
+    nombres = [h["nombre"] for h in libro["hojas"]]
+    if req.otros_ingresos_avion is None:
+        assert "Otros ingresos" not in nombres
+        return
+    # La pestaña sale sola en pantalla, con sus fórmulas y la línea de la
+    # cascada (13-oct-2026, API 0.0.75).
+    assert nombres.index("Otros ingresos") == nombres.index("balance") - 1
+    hojas = {h["nombre"]: h for h in libro["hojas"]}
+    oi = {(c["r"], c["c"]): c for c in hojas["Otros ingresos"]["celdas"]}
+    assert oi[(8, 7)]["f"] == "=ROUND(D8,2)"
+    assert oi[(9, 7)]["f"] == "=ROUND(D9*F9,2)"
+    assert oi[(9, 9)]["f"] == "=ROUND(G9-H9,2)"
+    assert oi[(5, 1)]["f"] == "=ROUND(SUM(I8:I9),2)"
+    assert oi[(5, 3)]["f"].startswith("=ROUND(A5/AVERAGE(")
+    assert oi[(5, 3)]["v"] == req.otros_ingresos_avion.usd
+    balance = {(c["r"], c["c"]): c for c in hojas["balance"]["celdas"]}
+    linea = next(
+        c for (r, col), c in balance.items() if col == 1 and c["v"] == "(+) OTROS INGRESOS USD"
+    )
+    celda = balance[(linea["r"], 2)]
+    assert celda["f"] == "='Otros ingresos'!$C$5"
+    assert celda["v"] == req.balance.otros_ingresos_avion_usd
+    assert "n" in celda
 
 
 def test_balance_avion_json_con_tc_por_fila_en_permisos():
