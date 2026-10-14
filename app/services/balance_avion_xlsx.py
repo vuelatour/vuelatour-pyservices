@@ -1954,8 +1954,10 @@ def _afac_en_filas(om: BalanceHojaOtrosMovimientos | None) -> bool:
     """True solo si el API 0.0.74+ marcó la hoja con `afac_en_filas: true`
     (13-oct-2026, invariante 62 del API): las filas «AFAC · matrícula»
     (`seccion == 'AFAC'`) ya viajan al final de `filas` y SUMAN en TOTALES y
-    en el bloque VUELATOUR. Con ella: encabezado de sección, leyenda de la
-    fila 2, textos del bloque VUELATOUR y SIN bloque informativo `afac`.
+    en el bloque VUELATOUR (la provisión como ingreso; los permisos pagados
+    con egreso $0.00 «a cargo del avión»). Con ella: encabezado de sección,
+    leyenda de la fila 2, textos del bloque VUELATOUR y SIN bloque
+    informativo `afac`.
     None/False/ausente ⇒ libro de siempre (con un API 0.0.69–0.0.73, el
     bloque informativo)."""
     return om is not None and om.afac_en_filas is True
@@ -3760,18 +3762,19 @@ _EMPRESA_PAGOS = (
     "(−) EGRESOS PROPIOS USD (pago al vendedor, TUAs, extensión, comisión bancaria, sueltos)"
 )
 # PERMISOS AFAC como filas que SUMAN (13-oct-2026, API 0.0.74, invariante 62
-# del API; bandera `afac_en_filas` de 'otros movimientos'): las dos filas ya
-# incluyen la provisión AFAC del periodo de cada avión (ingreso) y los
-# permisos pagados (egreso), y el número sube de golpe con la provisión: la
-# etiqueta lo dice. Sin la bandera, `_EMPRESA_INGRESOS` / `_EMPRESA_PAGOS`
-# byte a byte.
+# del API; bandera `afac_en_filas` de 'otros movimientos'): los ingresos ya
+# incluyen la provisión AFAC del periodo de cada avión y el número sube de
+# golpe con ella: la etiqueta lo dice. Los permisos PAGADOS van en su fila
+# con egreso $0.00 (revisión del 13-oct-2026: ya restan en la cascada de su
+# avión; egresarlos aquí los contaba dos veces): la etiqueta de egresos lo
+# dice. Sin la bandera, `_EMPRESA_INGRESOS` / `_EMPRESA_PAGOS` byte a byte.
 _EMPRESA_INGRESOS_AFAC = (
     "(+) INGRESOS PROPIOS USD (TUAs, extras, pernocta, comisión — cotizado del "
     "periodo; provisión AFAC de los aviones)"
 )
 _EMPRESA_PAGOS_AFAC = (
     "(−) EGRESOS PROPIOS USD (pago al vendedor, TUAs, extensión, comisión "
-    "bancaria, permisos AFAC, sueltos)"
+    "bancaria, sueltos; permisos AFAC: $0.00, los carga su avión)"
 )
 _EMPRESA_OTROS = "(−) OTROS GASTOS DE LA EMPRESA USD"
 _EMPRESA_TIENDA = "(+) UTILIDAD TIENDA (INVENTARIO) USD"
@@ -3822,9 +3825,10 @@ _NOTA_EMPRESA_BASE_DOS_CATEGORIAS = (
 _EMPRESA_AFAC_EN_FILAS = (
     " Incluyen las filas «AFAC · matrícula» de 'otros movimientos': la "
     "provisión AFAC del periodo de cada avión como ingreso (la que ese avión "
-    "ya carga como costo en su columna PERMISO AFAC) y los permisos AFAC "
-    "pagados como egreso, a USD con el T.C. promedio de costos del libro de "
-    "su avión."
+    "ya carga como costo en su columna PERMISO AFAC), a USD con el T.C. "
+    "promedio de costos del libro de su avión; los permisos AFAC pagados van "
+    "ahí con egreso $0.00 porque ya restan en el balance de su avión (hoja "
+    "'permisos')."
 )
 # Pie de RESPALDO para un payload sin `nota` (con ella, el API ya explica
 # participación, otros gastos, tienda y gastos personales: repetirlo era
@@ -3896,10 +3900,11 @@ def _bloque_empresa(
     `sin_provision` (API 0.0.73) `_NOTA_EMPRESA_BASE_SIN_PROVISION` —sin «o
     provisionado»—; sin ninguna, `_NOTA_EMPRESA_BASE`.
     Con el API 0.0.74 (`afac_en_filas`, 13-oct-2026, invariante 62 del API)
-    los ingresos y egresos propios ya traen las filas «AFAC · matrícula»: las
-    etiquetas son `_EMPRESA_INGRESOS_AFAC` / `_EMPRESA_PAGOS_AFAC` y la base
-    del pie suma `_EMPRESA_AFAC_EN_FILAS` (antes de la regla); los números
-    los trae el API igual que siempre.
+    los ingresos y egresos propios ya traen las filas «AFAC · matrícula» (la
+    provisión como ingreso; los permisos pagados con egreso $0.00: ya restan
+    en la cascada de su avión): las etiquetas son `_EMPRESA_INGRESOS_AFAC` /
+    `_EMPRESA_PAGOS_AFAC` y la base del pie suma `_EMPRESA_AFAC_EN_FILAS`
+    (antes de la regla); los números los trae el API igual que siempre.
     Devuelve la siguiente fila libre."""
     t = ws.cell(row=row, column=1, value=_EMPRESA_TITULO)
     t.font = Font(bold=True, size=12, color="FFFFFF")
@@ -5313,10 +5318,13 @@ _TITULO_AFAC_OM = "PERMISOS AFAC · provisión vs pagado (informativo)"
 # PERMISOS AFAC como FILAS que SUMAN (13-oct-2026, API 0.0.74, invariante 62
 # del API; solo con `afac_en_filas`): encabezado de la sección (antes de la
 # primera fila AFAC) y la leyenda que se concatena AL FINAL de la fila 2.
-# Ninguno lleva la marca «· PROVISIÓN (» del amarillo.
+# Ninguno lleva la marca «· PROVISIÓN (» del amarillo. Revisión del
+# 13-oct-2026 (antes del deploy): los permisos PAGADOS llegan con egreso
+# $0.00 «a cargo del avión» (ya restan en la cascada de su avión; egresarlos
+# aquí los contaba dos veces) y los textos lo dicen.
 _OM_SECCION_AFAC = (
     "PERMISOS AFAC POR AVIÓN · provisión del periodo (ingreso de VuelaTour) "
-    "vs permisos pagados (egreso)"
+    "y permisos pagados (a cargo de su avión: egreso $0.00)"
 )
 _OM_AFAC_EN_FILAS = (
     " PERMISOS AFAC POR AVIÓN: al final de las filas por vuelo hay una fila "
@@ -5324,11 +5332,12 @@ _OM_AFAC_EN_FILAS = (
     "VUELATOUR (empresa) de 'balance'. Su INGRESO es la provisión AFAC del "
     "periodo que ese avión ya carga como costo en la columna PERMISO AFAC "
     "(PROVISIÓN) de la hoja de vuelos (tarifa AFAC USD/hr del avión × tipo de "
-    "cambio de costos × horas cobradas); su EGRESO son TODOS los gastos "
-    "«Permiso» de ese avión en el periodo (los de la hoja 'permisos' de su "
-    "libro individual, sean o no de AFAC); remanente = provisión − pagado. "
-    "Los permisos de vuelos EXTERNOS no entran (se quedan en el libro "
-    "EXTERNOS)."
+    "cambio de costos × horas cobradas). En su EGRESO se citan TODOS los "
+    "gastos «Permiso» de ese avión en el periodo (los de la hoja 'permisos' "
+    "de su libro individual, sean o no de AFAC) con egreso $0.00 «a cargo del "
+    "avión»: ya restan en la cascada de ese avión y en el reparto a sus "
+    "socios, y aquí se contarían dos veces; remanente = provisión. Los "
+    "permisos de vuelos EXTERNOS no entran (se quedan en el libro EXTERNOS)."
 )
 _LEYENDA_AFAC_OM = (
     "La provisión AFAC de cada vuelo ya está cargada a su avión en la columna "

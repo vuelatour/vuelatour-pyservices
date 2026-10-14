@@ -1187,9 +1187,10 @@ class BalanceOtroMovimientoFila(BaseModel):
     nota_ingreso: str | None = None
     nota_egreso: str | None = None
     # ADITIVO (13-oct-2026, API 0.0.74, invariante 62 del API): 'AFAC' = fila
-    # por avión de PERMISOS AFAC (ingreso: provisión del periodo; egreso:
-    # permisos pagados), al final de `filas`; con `afac_en_filas` se pinta un
-    # encabezado de sección antes de la primera. None = fila de vuelo o
+    # por avión de PERMISOS AFAC (ingreso: provisión del periodo; egreso: los
+    # permisos pagados CITADOS con $0.00 «a cargo del avión» —ya restan en la
+    # cascada de su avión—), al final de `filas`; con `afac_en_filas` se pinta
+    # un encabezado de sección antes de la primera. None = fila de vuelo o
     # suelta, o API previo.
     seccion: str | None = None
 

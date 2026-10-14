@@ -1364,9 +1364,21 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   por avión; cada permiso pagado = egreso), ya no bloque informativo bajo
   totales»). **El cambio es del API**: anexa AL FINAL de `filas` (tras la
   última fila por vuelo) UNA fila «AFAC · matrícula» por avión —INGRESO = la
-  provisión AFAC del periodo de su libro (Σ de su columna T), EGRESO = TODOS
-  los gastos «Permiso» de su hoja 'permisos' (sean o no de AFAC), remanente
-  = provisión − pagado— y deja de mandar `afac`. **Aquí no se calcula
+  provisión AFAC del periodo de su libro (Σ de su columna T); en el EGRESO
+  se CITAN todos los gastos «Permiso» de su hoja 'permisos' (sean o no de
+  AFAC) con egreso **$0.00** «· a cargo del avión X ($… en su hoja
+  «permisos»)»; remanente = provisión— y deja de mandar `afac`. **Revisión
+  del 13-oct-2026, antes del deploy (invariante 62 del API)**: el permiso
+  pagado YA resta en la cascada de su avión (hoja 'permisos') y en el
+  reparto; egresarlo también aquí lo contaba DOS veces en el grupo. Mientras
+  el cliente no diga si el permiso sale del avión, la fila lo cita sin
+  egresarlo (mismo patrón que la «Comisión del vendedor (avión)»); la misma
+  bandera `afac_en_filas` trae los textos que lo dicen (`_OM_SECCION_AFAC`,
+  `_OM_AFAC_EN_FILAS`, `_EMPRESA_PAGOS_AFAC`, `_EMPRESA_AFAC_EN_FILAS`,
+  reescritos EN SU LUGAR: ningún API desplegado mandó la bandera con la
+  semántica anterior). Si responde «sale del avión», el API cambia la
+  cascada y el egreso JUNTOS y estos cuatro textos vuelven a decir «egreso».
+  **Aquí no se calcula
   nada**: montos, notas y remanente llegan hechos; cada fila pasa por
   `pinta()` de siempre (swatch del avión en A, `ROUND(G{r}-D{r},2)`, notas
   como comentario, rojo si negativo) y SUMA en TOTALES con las MISMAS
@@ -1377,7 +1389,8 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   se CONSERVA en el esquema y se pinta SOLO sin la bandera (un API
   0.0.69–0.0.73). Con la bandera, y SOLO con ella: (1) encabezado de sección
   `_OM_SECCION_AFAC` («PERMISOS AFAC POR AVIÓN · provisión del periodo
-  (ingreso de VuelaTour) vs permisos pagados (egreso)») justo antes de la
+  (ingreso de VuelaTour) y permisos pagados (a cargo de su avión: egreso
+  $0.00)») justo antes de la
   PRIMERA fila `seccion == 'AFAC'`: en A, negrita NAVY tamaño 10, relleno
   LIGHT en A:J, sin montos (SUM lo ignora), SIN merge y SIN fila en blanco;
   (2) la fila 2 suma `_OM_AFAC_EN_FILAS` AL FINAL (después del texto que
@@ -1416,7 +1429,8 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   bandera el bloque informativo y filas sin encabezado; fila 2 con y sin
   bandera sobre cada texto base, también con la regla del API 0.0.74;
   bloque VUELATOUR con y sin bandera, con `sin_provision`, con regla y pie
-  fijo; sin amarillo; parcial USD sin T.C.; esquemas, JSON del 0.0.74 y
+  fijo; sin amarillo; permisos USD sin T.C. citados con egreso $0.00 y sin
+  la marca «sin TC»; esquemas, JSON del 0.0.74 y
   mixto, rutas xlsx y libro JSON; huellas de valores, layout y bytes con la
   llave ausente/null/false; variante general idéntica).
 

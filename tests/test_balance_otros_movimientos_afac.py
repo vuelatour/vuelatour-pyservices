@@ -16,6 +16,12 @@ al final de la fila 2, las etiquetas `_EMPRESA_*_AFAC` del bloque VUELATOUR,
 el fragmento `_EMPRESA_AFAC_EN_FILAS` en su pie y SIN el bloque informativo
 `afac` aunque llegara (nunca doble). Sin la bandera, el libro de siempre byte
 a byte (un API 0.0.69–0.0.73 sigue viendo su bloque informativo).
+
+Revisión del 13-oct-2026 (antes del deploy): los permisos PAGADOS llegan del
+API con egreso $0.00 «· a cargo del avión X ($… en su hoja «permisos»)» —ya
+restan en la cascada de su avión y en el reparto; egresarlos aquí los contaba
+dos veces— y los textos de la fila 2, del encabezado y del bloque VUELATOUR
+lo dicen. La provisión sigue sumando como ingreso.
 """
 
 from __future__ import annotations
@@ -97,13 +103,16 @@ FILA_AFAC_TST = {
     "clave": "AFAC · XA-TST",
     "avion_color": "#1F77B4",
     "fecha_vuelo": None,
-    "concepto_egreso": "permiso AFAC pagado · AFAC anual",
-    "egreso_mxn": 2500.0,
+    "concepto_egreso": (
+        "permiso AFAC pagado · AFAC anual · a cargo del avión XA-TST "
+        "($2,500.00 en su hoja «permisos»)"
+    ),
+    "egreso_mxn": 0.0,
     "fecha_egreso": "2026-09-05",
     "concepto_ingreso": "provisión AFAC del periodo · 3 vuelos · tarifa 25.00 USD/hr",
     "ingreso_mxn": 3465.0,
     "fecha_ingreso": None,
-    "remanente_mxn": 965.0,
+    "remanente_mxn": 3465.0,
     "factura": None,
     "nota_ingreso": NOTA_INGRESO_TST,
     "seccion": "AFAC",
@@ -112,13 +121,16 @@ FILA_AFAC_DOS = {
     "clave": "AFAC · XB-DOS",
     "avion_color": "#2CA02C",
     "fecha_vuelo": None,
-    "concepto_egreso": "permisos AFAC pagados · 2 conceptos (ver nota)",
-    "egreso_mxn": 1200.0,
+    "concepto_egreso": (
+        "permisos AFAC pagados · 2 conceptos (ver nota) · a cargo del avión XB-DOS "
+        "($1,200.00 en su hoja «permisos»)"
+    ),
+    "egreso_mxn": 0.0,
     "fecha_egreso": "2026-09-02",
     "concepto_ingreso": None,
     "ingreso_mxn": None,
     "fecha_ingreso": None,
-    "remanente_mxn": -1200.0,
+    "remanente_mxn": 0.0,
     "factura": None,
     "nota_egreso": NOTA_EGRESO_DOS,
     "seccion": "AFAC",
@@ -182,19 +194,20 @@ def _textos(ws) -> list[str]:
 
 def test_textos_son_los_del_contrato() -> None:
     assert _OM_SECCION_AFAC == (
-        "PERMISOS AFAC POR AVIÓN · provisión del periodo (ingreso de VuelaTour) vs "
-        "permisos pagados (egreso)"
+        "PERMISOS AFAC POR AVIÓN · provisión del periodo (ingreso de VuelaTour) y "
+        "permisos pagados (a cargo de su avión: egreso $0.00)"
     )
     assert _OM_AFAC_EN_FILAS == (
         " PERMISOS AFAC POR AVIÓN: al final de las filas por vuelo hay una fila «AFAC · "
         "matrícula» por avión que SÍ suma en TOTALES y en el bloque VUELATOUR (empresa) "
         "de 'balance'. Su INGRESO es la provisión AFAC del periodo que ese avión ya "
         "carga como costo en la columna PERMISO AFAC (PROVISIÓN) de la hoja de vuelos "
-        "(tarifa AFAC USD/hr del avión × tipo de cambio de costos × horas cobradas); su "
-        "EGRESO son TODOS los gastos «Permiso» de ese avión en el periodo (los de la "
-        "hoja 'permisos' de su libro individual, sean o no de AFAC); remanente = "
-        "provisión − pagado. Los permisos de vuelos EXTERNOS no entran (se quedan en el "
-        "libro EXTERNOS)."
+        "(tarifa AFAC USD/hr del avión × tipo de cambio de costos × horas cobradas). En "
+        "su EGRESO se citan TODOS los gastos «Permiso» de ese avión en el periodo (los "
+        "de la hoja 'permisos' de su libro individual, sean o no de AFAC) con egreso "
+        "$0.00 «a cargo del avión»: ya restan en la cascada de ese avión y en el reparto "
+        "a sus socios, y aquí se contarían dos veces; remanente = provisión. Los "
+        "permisos de vuelos EXTERNOS no entran (se quedan en el libro EXTERNOS)."
     )
     assert _EMPRESA_INGRESOS_AFAC == (
         "(+) INGRESOS PROPIOS USD (TUAs, extras, pernocta, comisión — cotizado del "
@@ -202,13 +215,14 @@ def test_textos_son_los_del_contrato() -> None:
     )
     assert _EMPRESA_PAGOS_AFAC == (
         "(−) EGRESOS PROPIOS USD (pago al vendedor, TUAs, extensión, comisión bancaria, "
-        "permisos AFAC, sueltos)"
+        "sueltos; permisos AFAC: $0.00, los carga su avión)"
     )
     assert _EMPRESA_AFAC_EN_FILAS == (
         " Incluyen las filas «AFAC · matrícula» de 'otros movimientos': la provisión "
         "AFAC del periodo de cada avión como ingreso (la que ese avión ya carga como "
-        "costo en su columna PERMISO AFAC) y los permisos AFAC pagados como egreso, a "
-        "USD con el T.C. promedio de costos del libro de su avión."
+        "costo en su columna PERMISO AFAC), a USD con el T.C. promedio de costos del "
+        "libro de su avión; los permisos AFAC pagados van ahí con egreso $0.00 porque "
+        "ya restan en el balance de su avión (hoja 'permisos')."
     )
     # El encabezado NO empieza como el título del bloque informativo (que
     # conserva «(informativo)» como discriminador) y ningún texto AFAC lleva
@@ -251,44 +265,47 @@ def test_encabezado_filas_afac_y_totales_que_las_suman() -> None:
         if col > 1:
             assert celda.value is None
     assert not any(r.min_row <= enc <= r.max_row for r in om.merged_cells.ranges)
-    # Fila del XA-TST: swatch del avión, sin sufijo de estado, sus montos,
-    # remanente con la fórmula de siempre y las notas como comentario.
+    # Fila del XA-TST: swatch del avión, sin sufijo de estado, sus montos
+    # (el permiso pagado CITADO con egreso $0.00), remanente con la fórmula
+    # de siempre y las notas como comentario.
     assert om.cell(row=tst, column=1).fill.fgColor.rgb == "001F77B4"
     assert [om.cell(row=tst, column=c).value for c in (2, 3, 4, 5, 6, 7, 8)] == [
         None,
-        "permiso AFAC pagado · AFAC anual",
-        2500.0,
+        FILA_AFAC_TST["concepto_egreso"],
+        0.0,
         "05/09/2026",
         "provisión AFAC del periodo · 3 vuelos · tarifa 25.00 USD/hr",
         3465.0,
         None,
     ]
     assert om.cell(row=tst, column=9).value == f"=ROUND(G{tst}-D{tst},2)"
-    assert omv.cell(row=tst, column=9).value == 965.0
+    assert omv.cell(row=tst, column=9).value == 3465.0
     assert om.cell(row=tst, column=10).value is None
     assert om.cell(row=tst, column=7).comment.text == NOTA_INGRESO_TST
     assert om.cell(row=tst, column=4).comment is None
-    # Fila del XB-DOS: solo egreso, remanente negativo en rojo, nota del
-    # egreso con un renglón por permiso.
+    # Fila del XB-DOS: solo los permisos citados (egreso $0.00, remanente 0,
+    # sin rojo) con la nota del egreso de un renglón por permiso.
     assert [om.cell(row=dos, column=c).value for c in (3, 4, 5, 6, 7)] == [
-        "permisos AFAC pagados · 2 conceptos (ver nota)",
-        1200.0,
+        FILA_AFAC_DOS["concepto_egreso"],
+        0.0,
         "02/09/2026",
         None,
         None,
     ]
     assert om.cell(row=dos, column=9).value == f"=ROUND(G{dos}-D{dos},2)"
-    assert omv.cell(row=dos, column=9).value == -1200.0
-    assert om.cell(row=dos, column=9).font.color.rgb == f"00{RED}"
+    assert omv.cell(row=dos, column=9).value == 0.0
+    color_dos = om.cell(row=dos, column=9).font.color
+    assert color_dos is None or color_dos.rgb != f"00{RED}"
     assert om.cell(row=dos, column=4).comment.text == NOTA_EGRESO_DOS
     assert om.cell(row=dos, column=10).value is None
     # TOTALES: las MISMAS fórmulas de siempre; las filas AFAC suman (el
     # encabezado no trae montos: SUM lo ignora). Ingresos: #401, #402, AFAC
-    # XA-TST y la suelta ING-3.
+    # XA-TST y la suelta ING-3. Egresos: los permisos pagados NO (ya restan
+    # en la cascada de su avión: un gasto, una vez).
     assert om[f"D{tot}"].value == f"=ROUND(SUM(D4:D{tot - 1}),2)"
     assert om[f"G{tot}"].value == f"=ROUND(SUM(G4:G{tot - 1}),2)"
     assert om[f"I{tot}"].value == f"=ROUND(G{tot}-D{tot},2)"
-    egresos = r2(1100.25 + 2500 + 1200)
+    egresos = r2(1100.25 + 0 + 0)
     ingresos = r2(1250.5 + 3000 + 3465 + 85.33)
     assert omv[f"D{tot}"].value == egresos
     assert omv[f"G{tot}"].value == ingresos
@@ -341,7 +358,7 @@ def test_sin_bandera_filas_con_seccion_sin_encabezado_y_bloque_viejo(bandera) ->
     ultimo_vuelo = _fila_de(om, "#402 · Cliente Dos")
     assert _fila_de(om, "AFAC · XA-TST") == ultimo_vuelo + 1
     tot = _fila_de(om, "TOTALES")
-    assert wv["otros movimientos"][f"D{tot}"].value == r2(1100.25 + 2500 + 1200)
+    assert wv["otros movimientos"][f"D{tot}"].value == r2(1100.25 + 0 + 0)
     # El bloque informativo del API previo, debajo de TOTALES.
     titulo = _fila_de(om, _TITULO_AFAC_OM)
     assert titulo > tot
@@ -496,14 +513,18 @@ def test_filas_afac_sin_amarillo_ni_leyenda_de_provision() -> None:
 
 
 # ---------------------------------------------------------------------------
-# (g) USD sin T.C.: la fila se pinta tal cual y TOTALES suma lo convertido.
+# (g) USD sin T.C.: el API ya no egresa permisos (los cita con $0.00 y sin la
+#     marca «sin TC»); la fila se pinta tal cual y TOTALES no la suma.
 # ---------------------------------------------------------------------------
 
 
-def test_fila_afac_parcial_usd_sin_tc_suma_solo_lo_convertido() -> None:
+def test_fila_afac_con_permisos_usd_sin_tc_egresa_cero_y_no_suma() -> None:
     parcial = {
         **FILA_AFAC_TST,
-        "concepto_egreso": "permisos AFAC pagados · 2 conceptos (ver nota) (parcial: USD sin TC)",
+        "concepto_egreso": (
+            "permisos AFAC pagados · 2 conceptos (ver nota) · a cargo del avión XA-TST "
+            "($2,500.00 en su hoja «permisos»; 1 en USD sin T.C.)"
+        ),
         "nota_egreso": "permiso AFAC pagado · AFAC anual = $2,500.00 · 05/09/2026\n"
         "permiso AFAC pagado · Permiso USD = — · 07/09/2026",
     }
@@ -511,10 +532,11 @@ def test_fila_afac_parcial_usd_sin_tc_suma_solo_lo_convertido() -> None:
     wb, wv = _libros(data)
     om = wb["otros movimientos"]
     fila = _fila_de(om, "AFAC · XA-TST")
-    assert om.cell(row=fila, column=3).value.endswith("(parcial: USD sin TC)")
-    assert om.cell(row=fila, column=4).value == 2500.0
+    assert om.cell(row=fila, column=3).value == parcial["concepto_egreso"]
+    assert "sin TC" not in om.cell(row=fila, column=3).value
+    assert om.cell(row=fila, column=4).value == 0.0
     tot = _fila_de(om, "TOTALES")
-    assert wv["otros movimientos"][f"D{tot}"].value == r2(1100.25 + 2500)
+    assert wv["otros movimientos"][f"D{tot}"].value == r2(1100.25)
     assert verificar_libro(data)
 
 
