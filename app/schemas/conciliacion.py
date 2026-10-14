@@ -111,7 +111,9 @@ class GastoCandidato(BaseModel):
     # ADITIVOS (15-sep-2026): el API ya tiene todo esto; antes se tiraba al
     # serializar y el modelo elegía a ciegas.
     moneda: str | None = Field(default=None, description="Moneda del gasto (MXN/USD)")
-    medio_pago: str | None = Field(default=None, description="TARJETA_CORP/TRANSFERENCIA/…")
+    medio_pago: str | None = Field(
+        default=None, description="TARJETA_CORP/TRANSFERENCIA/PAYWISE/DOMICILIADO/…"
+    )
     tarjeta_terminacion: str | None = Field(
         default=None, description="Terminación de la tarjeta con la que se pagó"
     )

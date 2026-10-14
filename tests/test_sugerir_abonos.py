@@ -232,7 +232,9 @@ def test_payload_para_el_modelo_y_system_con_dominio(claude_fake) -> None:
 
 
 def test_dominio_trae_los_alias_nuevos_y_conserva_los_viejos() -> None:
-    assert DOMINIO_VERSION == "2026-09-24"
+    # 13-oct-2026: la versión subió con los alias del pago domiciliado (los
+    # de este test, del 24-sep, se conservan).
+    assert DOMINIO_VERSION == "2026-10-13"
     assert "POCKET DE LATINOAMERICA = BillPocket: depósito AGRUPADO" in BLOQUE_DOMINIO
     assert "REV = reverso: el banco devolvió un cargo anterior" in BLOQUE_DOMINIO
     assert "SPEI = transferencia interbancaria" in BLOQUE_DOMINIO

@@ -1701,6 +1701,27 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `tests/test_vision_validaciones.py` (el texto vive en el SYSTEM: se lee
   con `cliente.texto_system()`).
 
+- **Pago domiciliado (13-oct-2026, API 0.0.75, migración `20261013000009`;
+  el diseño la numeraba 000004).** Medio de pago nuevo `DOMICILIADO`
+  («Pago domiciliado»: cargo AUTOMÁTICO a la cuenta —seguros, servicios,
+  suscripciones—; bancario, solo oficina, se concilia como una
+  transferencia y nunca lleva tarjeta). Aquí NO cambia ningún esquema:
+  `medio_pago` es `str` en `GastoCandidato` (conciliación; su `description`
+  ya lo nombra) y en `FilaCombustible` (combustible masivo: el catálogo del
+  dropdown lo manda el API en `medios_pago`), y la columna PAGO del balance
+  llega etiquetada del API. La visión de tickets NO lo sugiere (`medio_pago`
+  de ticket y de combustible sigue `Literal[EFECTIVO, TARJETA_CORP,
+  TRANSFERENCIA]`: un domiciliado no tiene ticket). Único cambio:
+  `_dominio.py` (v2026-10-13) explica las leyendas REALES del estado de
+  cuenta «03 POR COBRANZA DOMICILIADA» y «…Carg Recur.» (`COBRANZA
+  DOMICILIADA`, `CARG RECUR` en `ALIAS_BANCO`) para la sugerencia de
+  conciliación; un candidato DOMICILIADO (sin tarjeta) no recibe el castigo
+  «otra tarjeta» aunque la referencia del cargo traiga 20 dígitos. Deploy en
+  cualquier orden. Tests: `test_dominio_explica_los_cargos_domiciliados` y
+  `test_candidato_domiciliado_viaja_tal_cual_y_sin_castigo_de_tarjeta`
+  (`tests/test_sugerir_conciliacion.py`) y la versión del dominio en
+  `tests/test_sugerir_abonos.py`.
+
 - **Folio anti-duplicados de tickets de ESTANCIA del aeropuerto (2-oct-2026).**
   ASUR imprime «COBRO ESTANCIA · Boleto FBOE7»: el «Boleto» es la TARJETA de
   acceso y se repite en cada visita; la IA lo tomaba como `folio` y el candado

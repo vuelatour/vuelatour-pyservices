@@ -23,7 +23,7 @@ from __future__ import annotations
 
 # Fecha de la última revisión del contenido (viaja en el prompt: si un día
 # una respuesta rara huele a contexto viejo, aquí se ve de qué fecha es).
-DOMINIO_VERSION = "2026-09-24"
+DOMINIO_VERSION = "2026-10-13"
 
 # Flota conocida (aviones chárter). Referencia para advertir matrículas
 # alucinadas; NO es un filtro que borre datos.
@@ -85,6 +85,19 @@ ALIAS_BANCO: tuple[tuple[str, str], ...] = (
     # 24-sep-2026 (conciliación de INGRESOS): lo que se ve en los ABONOS.
     ("REV", "reverso: el banco devolvió un cargo anterior (NO es ingreso ni gasto nuevo)"),
     ("SPEI", "transferencia interbancaria: suele traer el nombre del ordenante"),
+    # 13-oct-2026 (medio de pago DOMICILIADO «Pago domiciliado», API 0.0.75):
+    # cargos AUTOMÁTICOS a la cuenta. El medio es bancario y se concilia como
+    # una transferencia (sin tarjeta); la IA de tickets NO lo sugiere.
+    (
+        "COBRANZA DOMICILIADA",
+        "cargo domiciliado recurrente (seguro, servicio, suscripción): el gasto "
+        "capturado suele tener medio DOMICILIADO = «Pago domiciliado»",
+    ),
+    (
+        "CARG RECUR",
+        "cargo recurrente de una suscripción (Starlink, Amazon…): gasto con medio "
+        "DOMICILIADO o tarjeta",
+    ),
 )
 
 IVA_PCT = 16.0

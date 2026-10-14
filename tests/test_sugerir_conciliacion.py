@@ -234,3 +234,58 @@ def test_payload_real_del_api_no_revienta_por_el_folio_numerico() -> None:
         }
     )
     assert req.candidatos[0].vuelo_folio == "1234"
+
+
+# ---------------------------------------------------------------------------
+# Pago domiciliado (13-oct-2026, API 0.0.75): medio DOMICILIADO
+# ---------------------------------------------------------------------------
+
+
+def test_dominio_explica_los_cargos_domiciliados() -> None:
+    """Las leyendas reales de prod («03 POR COBRANZA DOMICILIADA», «…Carg
+    Recur.») tienen su alias en el contexto de dominio: el gasto capturado
+    suele traer medio DOMICILIADO = «Pago domiciliado»."""
+    from app.services._dominio import BLOQUE_DOMINIO, DOMINIO_VERSION
+
+    assert DOMINIO_VERSION == "2026-10-13"
+    assert "(v2026-10-13)" in BLOQUE_DOMINIO
+    assert "COBRANZA DOMICILIADA = cargo domiciliado recurrente" in BLOQUE_DOMINIO
+    assert "medio DOMICILIADO = «Pago domiciliado»" in BLOQUE_DOMINIO
+    assert "CARG RECUR = cargo recurrente de una suscripción" in BLOQUE_DOMINIO
+
+
+def test_candidato_domiciliado_viaja_tal_cual_y_sin_castigo_de_tarjeta(claude_fake) -> None:
+    """Un gasto DOMICILIADO no lleva tarjeta (CHECK del API): su medio viaja
+    tal cual al modelo y la referencia larga del cargo domiciliado (20
+    dígitos) NO lo castiga como «otra tarjeta»."""
+    mov = MovimientoSinConciliar(
+        fecha="2026-09-03",
+        monto=1499.0,
+        descripcion="03 POR COBRANZA DOMICILIADA",
+        tipo="CARGO",
+        referencia="00000000000241579048",
+        cuenta_alias="EJE SCOTIA",
+        cuenta_moneda="MXN",
+    )
+    gasto = GastoCandidato(
+        id="g-dom",
+        fecha="2026-09-03",
+        monto=1499.0,
+        proveedor="Seguros Inbursa",
+        moneda="MXN",
+        medio_pago="DOMICILIADO",
+        categoria="FIJO",
+    )
+    cliente = claude_fake(
+        estado_cuenta,
+        {"gasto_id_sugerido": "g-dom", "confianza": 0.9, "razon": "cargo domiciliado"},
+    )
+    res = sugerir_conciliacion(_pedir([gasto], mov))
+    texto = cliente.texto_usuario()
+    payload = json.loads(texto[texto.index("{") : texto.rindex("}") + 1])
+    cand = payload["candidatos"][0]
+    assert cand["medio_pago"] == "DOMICILIADO"
+    assert "tarjeta_terminacion" not in cand
+    assert res.gasto_id_sugerido == "g-dom"
+    assert res.confianza == 0.9
+    assert not any("otra tarjeta" in e for e in res.evidencias)
