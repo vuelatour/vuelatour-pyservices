@@ -321,10 +321,18 @@ def _payload_con_otros_ingresos() -> dict:
     return t_oi._con_otros_ingresos(t_formulas._payload_tst(), [t_oi._FILA_MXN, t_oi._FILA_USD])
 
 
+def _payload_por_ingreso() -> dict:
+    """XA-TST con la hoja «Otros ingresos» del API 0.0.77 (14-oct-2026,
+    conversión ÚNICA por ingreso: bandera `usd_por_ingreso`)."""
+    return t_oi._con_otros_ingresos(
+        t_formulas._payload_tst(), [t_oi._FILA_MXN, t_oi._FILA_USD], por_ingreso=True
+    )
+
+
 @pytest.mark.parametrize(
     "payload",
-    [t_formulas._payload_tst, _payload_con_otros_ingresos],
-    ids=["hoy", "otros ingresos del avión"],
+    [t_formulas._payload_tst, _payload_con_otros_ingresos, _payload_por_ingreso],
+    ids=["hoy", "otros ingresos del avión", "por ingreso"],
 )
 def test_balance_avion_json_es_el_mismo_libro_que_el_xlsx(payload):
     req = BalanceAvionRequest.model_validate(payload())
@@ -348,7 +356,13 @@ def test_balance_avion_json_es_el_mismo_libro_que_el_xlsx(payload):
     assert oi[(9, 7)]["f"] == "=ROUND(D9*F9,2)"
     assert oi[(9, 9)]["f"] == "=ROUND(G9-H9,2)"
     assert oi[(5, 1)]["f"] == "=ROUND(SUM(I8:I9),2)"
-    assert oi[(5, 3)]["f"].startswith("=ROUND(A5/AVERAGE(")
+    if req.otros_ingresos_avion.usd_por_ingreso is True:
+        # API 0.0.77: TOTAL USD = Σ NETO USD y NETO USD = NETO MXN ÷ T.C. A USD.
+        assert oi[(5, 3)]["f"] == "=ROUND(SUM(K8:K9),2)"
+        assert oi[(8, 11)]["f"] == "=ROUND(I8/J8,2)"
+        assert oi[(8, 11)]["v"] == 2746.7
+    else:
+        assert oi[(5, 3)]["f"].startswith("=ROUND(A5/AVERAGE(")
     assert oi[(5, 3)]["v"] == req.otros_ingresos_avion.usd
     balance = {(c["r"], c["c"]): c for c in hojas["balance"]["celdas"]}
     linea = next(

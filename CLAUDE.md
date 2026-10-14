@@ -14,6 +14,23 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   sentidos).
 - Toda ruta funcional exige `X-Internal-Token` == `INTERNAL_SHARED_TOKEN`
   (mismo valor que en el API). Nada de este servicio se expone a clientes.
+  Sin token solo `/`, `/health` y `GET /version` (14-oct-2026, API 0.0.77:
+  `{commit, servicio}`, con `commit` = `RAILWAY_GIT_COMMIT_SHA` del
+  deployment o null fuera de Railway): es la COMPUERTA verificable con curl
+  de los despliegues «pyservices antes del API» (invariante 49 del API).
+- **Orden de despliegue del lote 0.0.77 (14-oct-2026; decisiones del cliente
+  del 14-oct: anticipo devuelto sin CFDI y conversión ÚNICA del ingreso de un
+  avión)**: pyservices (banderas `usd_por_ingreso` y
+  `factura_vuelatour_devolucion`; sin ellas, libros byte a byte) ⇒
+  **COMPUERTA**: `curl …/version` (o el deployment ACTIVO en Railway) = el
+  commit nuevo ⇒ API 0.0.77 (`GET /v1/version`) ⇒ panel. Al revés no hay
+  error que avise: el API nuevo con un pyservices viejo publica la hoja
+  «Otros ingresos» con los números buenos (la C5 vieja no reproduce y
+  `finalizar` la deja como VALOR) pero con B5 = TC PROMEDIO y TRES notas
+  falsas (`_NOTA_OTROS_INGRESOS_AVION`, `_NOTA_CASCADA_OTROS_INGRESOS`,
+  `_NOTA_OTROS_INGRESOS_AVIONES_GENERAL`) y la nota de FACTURA VUELATOUR
+  sin el anticipo devuelto. Rollback: PRIMERO el API a 0.0.76 y solo
+  después pyservices (nunca pyservices solo con el 0.0.77 arriba).
 - **Orden de despliegue del lote 0.0.75 (CONSOLIDADO en la revisión del
   14-oct-2026; manda sobre lo que diga cada entrada del lote)**: hasta la
   revisión este archivo pedía dos órdenes incompatibles para el MISMO push
@@ -952,7 +969,27 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   lleva factura» como texto en la maestra individual y FLOTA, en col J de
   'otros movimientos' y en el Libro Dinero (hoja 1 y 'Otros ingresos');
   rutas con el JSON del 0.0.74 —raíz, `aviones[]` y `consolidado`— y del
-  0.0.73).
+  0.0.73). **ANTICIPO DEVUELTO (14-oct-2026, API 0.0.77, invariante 60 del
+  API; decisión del cliente: «¿Un anticipo devuelto lleva CFDI? eso no»)**:
+  el dinero devuelto COMPLETO no exige factura salga por donde salga (lo
+  decide el API por dinero; lo retenido de una devolución parcial sí exige
+  si quedó en una cuenta que la exige) y la columna llega hecha como
+  siempre. Aquí SOLO la nota al pie, con la bandera raíz ADITIVA
+  `BalanceAvionRequest.factura_vuelatour_devolucion` (`is True`; el API la
+  manda justo después de `factura_vuelatour_segun_cobros` en el individual,
+  en cada `aviones[]` y en el `consolidado`): `_nota_factura_vuelatour` la
+  elige PRIMERO ⇒ `_NOTA_FACTURA_VUELATOUR_DEVOLUCION` («… «Pendiente de
+  factura» cuando quedó dinero de algún cobro que entró a HSBC o Scotiabank
+  … «No lleva factura» cuando ningún cobro la exige o el dinero se devolvió
+  completo (un anticipo devuelto no lleva factura) …»); sin ella
+  (None/False/ausente) las DOS notas de siempre, literales y byte a byte
+  (`_FIRMA_*_SIN_BANDERA` y las huellas de forma real del 0.0.76 de
+  `test_balance_otros_ingresos_avion`). Tests:
+  `tests/test_balance_factura_vuelatour.py` (texto literal; manda con o sin
+  `segun_cobros`; una sola vez y en la MISMA fila en el individual, FLOTA
+  mensual y variante general; contra el libro del 0.0.74 la ÚNICA celda que
+  cambia es la de la nota; huellas sin la bandera; ruta con el JSON del
+  0.0.77).
 - **COMISIÓN DEL VENDEDOR SOLO COMO GASTO REAL, EN DOS CATEGORÍAS**
   (13-oct-2026, API 0.0.74, invariante 61 del API; decisión 3 del lote del
   cliente —«comisión del vendedor SOLO como gasto real en todos lados»— y su
@@ -1497,16 +1534,18 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   se CITAN todos los gastos «Permiso» de su hoja 'permisos' (sean o no de
   AFAC) con egreso **$0.00** «· a cargo del avión X ($… en su hoja
   «permisos»)»; remanente = provisión— y deja de mandar `afac`. **Revisión
-  del 13-oct-2026, antes del deploy (invariante 62 del API)**: el permiso
-  pagado YA resta en la cascada de su avión (hoja 'permisos') y en el
-  reparto; egresarlo también aquí lo contaba DOS veces en el grupo. Mientras
-  el cliente no diga si el permiso sale del avión, la fila lo cita sin
-  egresarlo (mismo patrón que la «Comisión del vendedor (avión)»); la misma
-  bandera `afac_en_filas` trae los textos que lo dicen (`_OM_SECCION_AFAC`,
-  `_OM_AFAC_EN_FILAS`, `_EMPRESA_PAGOS_AFAC`, `_EMPRESA_AFAC_EN_FILAS`,
-  reescritos EN SU LUGAR: ningún API desplegado mandó la bandera con la
-  semántica anterior). Si responde «sale del avión», el API cambia la
-  cascada y el egreso JUNTOS y estos cuatro textos vuelven a decir «egreso».
+  del 13-oct-2026 (invariante 62 del API), CONFIRMADA por el cliente el
+  14-oct-2026 («el AFAC lo cargan al Avión»)**: el permiso pagado resta en
+  la cascada de su avión (hoja 'permisos') y en el reparto; egresarlo aquí
+  lo contaría DOS veces, así que la fila lo cita sin egresarlo (patrón de
+  la «Comisión del vendedor (avión)»); la bandera `afac_en_filas` trae los
+  textos que lo dicen (`_OM_SECCION_AFAC`, `_OM_AFAC_EN_FILAS`,
+  `_EMPRESA_PAGOS_AFAC`, `_EMPRESA_AFAC_EN_FILAS`, reescritos EN SU LUGAR).
+  No hay alternativa pendiente: estos textos NO vuelven a decir «egreso».
+  (El candado de un PERMISO sin avión es del API: pre-cierre
+  `permisos_sin_avion`, 0.0.77. `_NOTA_PERMISOS_TC` NO se tocó en ese lote:
+  es texto impreso que el API ≥ 0.0.74 activa siempre con `tc_por_fila` y
+  cambiarlo sin bandera nueva rompería el libro de un API ≤ 0.0.76.)
   **Aquí no se calcula
   nada**: montos, notas y remanente llegan hechos; cada fila pasa por
   `pinta()` de siempre (swatch del avión en A, `ROUND(G{r}-D{r},2)`, notas
@@ -1651,6 +1690,72 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `tests/test_dinero_otros_ingresos_avion.py`,
   `tests/test_reparto_otros_ingresos_avion.py` y
   `tests/test_libro_json.py` (la pestaña y sus fórmulas en pantalla).
+  **SUPERSEDIDO con el API 0.0.77** (entrada siguiente): esa nota y la
+  división entre el T.C. promedio quedan solo para un API ≤ 0.0.76.
+- **Conversión ÚNICA del ingreso de un avión: «Otros ingresos» por ingreso**
+  (14-oct-2026, API 0.0.77; invariante 67 del API; decisión del cliente:
+  «unificar la conversión del ingreso de un avión entre balance y reparto
+  (ING-4 2,710.47 vs 2,746.70): hazlo, si es lo mejor»). **El cambio de
+  dinero es del API**: balance, reparto y tablero convierten CADA ingreso con
+  la MISMA función pura (`usdDeIngresoAvion`): USD ⇒ su neto (monto −
+  comisión) tal cual; MXN ⇒ NETO ÷ (T.C. propio ?? T.C. del gasto LIGADO ??
+  oficial del día de su `fecha`); un REEMBOLSO ligado a un gasto en pesos que
+  ESE libro cuenta usa el T.C. con que ese libro convierte su gasto (se
+  anulan exactos). ING-4 = 2,746.70 USD en los tres (antes 2,710.47 aquí,
+  ÷ el promedio 17.17442). Aquí NO se convierte nada. Contrato ADITIVO:
+  `BalanceAvionOtroIngresoFila` gana `tc_usd` (MXN: el T.C. EXACTO, sin
+  redondear; USD: null), `neto_usd`, `tc_usd_origen` ('PROPIO' |
+  'GASTO_LIGADO' | 'OFICIAL_DEL_DIA' | null) y `tc_usd_nota` (nota armada por
+  el API; null con T.C. propio o en dólares) —origen y nota con validador
+  liberal: no-texto o vacío ⇒ None—, AL FINAL (antes de `matricula` /
+  `avion_color` del consolidado); `BalanceAvionHojaOtrosIngresos` gana
+  `usd_por_ingreso` (el API la manda SIEMPRE como ÚLTIMA llave: individual,
+  `aviones[]` y consolidado FLOTA; `usd` = round2(Σ `neto_usd`), null si a
+  alguna fila le falta, vacía = 0). **Solo con `usd_por_ingreso is True`**
+  (`_usd_por_ingreso`): 13 columnas `_ENCABEZADOS_OTROS_INGRESOS_POR_INGRESO`
+  (… NETO MXN (I), **T.C. A USD (J)**, **NETO USD (K)**, CUENTA (L), NOTAS
+  (M)), anchos `[12, 22, 50, 15, 9, 11, 15, 14, 15, 11, 14, 22, 36]`, nota
+  combinada A:M. J = `tc_usd` (formato TC; en dólares, vacía), relleno
+  `TC_OFICIAL_FILL` SOLO con `tc_usd_origen == 'OFICIAL_DEL_DIA'` y nota de
+  la celda = `tc_usd_nota` (el reembolso ligado: sin azul, con la nota del
+  gasto). K (`_celdas_usd_por_ingreso`): pesos ⇒ `ROUND(I/J,2)`; dólares con
+  T.C. ⇒ `ROUND(I/F,2)` (reproduce monto − comisión: el error es ≤ 0.01 ÷
+  T.C.); otro caso ⇒ el `neto_usd` como valor; sin `neto_usd` ⇒ vacía (jamás
+  un 0 falso); todo por `_formula` (si no reproduce el centavo del API,
+  `finalizar` la vuelve valor). Resumen individual «TOTAL NETO MXN | T.C. |
+  TOTAL USD»: A5 igual, B5 = texto «por ingreso (col. J)» (cursiva MUTED) y
+  **C5 = `ROUND(SUM(K8:Kn),2)`** con `hoja.usd` (sin filas, valor 0): la
+  cascada SIGUE citando `'Otros ingresos'!$C$5`. General («otros ingresos
+  aviones»): mismas 13 columnas y **B5 = `ROUND(SUM(K8:Kn),2)`** (antes
+  valor). Notas nuevas, SOLO con la bandera (las de siempre se quedan para
+  un API ≤ 0.0.76): `_NOTA_OTROS_INGRESOS_AVION_POR_INGRESO`,
+  `_NOTA_OTROS_INGRESOS_AVIONES_GENERAL_POR_INGRESO` y
+  `_NOTA_CASCADA_OTROS_INGRESOS_POR_INGRESO` (la de la línea de la cascada
+  la elige la hoja del MISMO libro, `_nota_cascada_otros_ingresos`:
+  individual y cada bloque del general). Las hojas de GASTOS siguen al T.C.
+  promedio del libro (dos T.C. por diseño, réplica del Excel del cliente).
+  Reparto: cada línea del detalle gana `tc_origen` (ADITIVO); aquí se
+  ignora y el PDF/Excel no cambian. **Sin la bandera, byte a byte**: las
+  cuatro llaves de fila sin `usd_por_ingreso` (o en null/false) no mueven
+  nada (la bandera manda, no la presencia de llaves) y la huella F12 de la
+  revisión se toma con un payload de FORMA REAL del API de producción 0.0.76
+  (regla de comisiones con las llaves del 0.0.66, 'permisos' con
+  `tc_por_fila`, las tres banderas raíz, socio `es_empresa`, bloque
+  VUELATOUR y filas sin las llaves nuevas; NO con `tf._payload_tst()`, que
+  no trae `tc_por_fila`): `_HUELLAS_FORMA_REAL_0076` (individual y las dos
+  variantes del general, .xlsx y JSON de la vista con `vinculos_gasto`)
+  calculadas con el código de HEAD b66df98 antes del cambio. Con la forma
+  real del 0.0.77 SOLO cambian «Otros ingresos», los números de la cascada
+  que la suman y la nota al pie de FACTURA VUELATOUR (las demás hojas, misma
+  huella de layout). Orden de deploy y COMPUERTA: «Principios» (lote
+  0.0.77). Tests: `tests/test_balance_otros_ingresos_avion.py` (secciones
+  5–7: huellas de forma real, columnas y fórmulas verificadas con
+  `verificar_libro` —K8 `=ROUND(I8/J8,2)` = 2,746.70, K9 `=ROUND(I9/F9,2)` =
+  95.00, C5 = 2,841.70—, azul y nota por origen, ligado, propio, pesos sin
+  T.C., USD sin T.C., neto inconsistente degradado a valor, hoja vacía,
+  general, payload mixto, vista en pantalla y rutas con el JSON del 0.0.77),
+  `tests/test_libro_json.py` (parametrización «por ingreso») y
+  `tests/test_reparto_otros_ingresos_avion.py` (`tc_origen` ignorado).
 
 ## Conciliación
 

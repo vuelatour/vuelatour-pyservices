@@ -30,7 +30,9 @@ Ocho hojas en el orden del libro:
      cual; desde el 13-oct-2026 (API 0.0.74) «Pendiente de factura» / «No
      lleva factura» llegan hechos del API y vacía = sin cobros, con la
      bandera `factura_vuelatour_segun_cobros` que solo cambia la nota al
-     pie).
+     pie; desde el 14-oct-2026 (API 0.0.77) un anticipo devuelto completo
+     no lleva factura y la bandera `factura_vuelatour_devolucion` elige la
+     nota que lo dice).
   2. cobranza — estatus de cobro por vuelo: venta avión prorrateada, total
      cotización (c/extras), depósitos reales (netos con la regla de
      septiembre 2026), comisión y cuenta del banco.
@@ -48,6 +50,9 @@ Ocho hojas en el orden del libro:
      `otros_ingresos_avion`) — ingresos ING-n registrados en Ingresos y
      ASIGNADOS a este avión (reembolso de su servicio, venta de una pieza
      suya…), netos de comisión bancaria; su TOTAL USD SUMA en la cascada.
+     Desde el 14-oct-2026 (API 0.0.77, bandera `usd_por_ingreso`) cada
+     ingreso pasa a USD con SU T.C. —la conversión del reparto a socios—
+     en las columnas T.C. A USD y NETO USD, y TOTAL USD = Σ NETO USD.
   7. balance — cascada (− combustible − GASTOS INDIRECTOS [una sola fila =
      gastos_indirectos_usd + otros_usd] − refacciones − permisos [+ otros
      ingresos del avión, con 6b]) + reparto real de socios. La cascada la
@@ -122,6 +127,7 @@ from app.schemas.reportes import (
     BalanceAvionHojaCombustible,
     BalanceAvionHojaGastos,
     BalanceAvionHojaOtrosIngresos,
+    BalanceAvionOtroIngresoFila,
     BalanceAvionRequest,
     BalanceAvionTotales,
     BalanceAvionVuelo,
@@ -1904,11 +1910,34 @@ _NOTA_FACTURA_VUELATOUR_SEGUN_COBROS = (
 )
 
 
+# Misma nota con la bandera `factura_vuelatour_devolucion` del API 0.0.77
+# (14-oct-2026, invariante 60 del API; decisión del cliente: «¿Un anticipo
+# devuelto lleva CFDI? eso no»): «Pendiente de factura» solo si QUEDÓ dinero
+# de un cobro que la exige y «No lleva factura» también cuando el dinero se
+# devolvió completo. Manda sobre `factura_vuelatour_segun_cobros`; las dos
+# notas de arriba NO se tocan (sin la bandera, el libro byte a byte).
+_NOTA_FACTURA_VUELATOUR_DEVOLUCION = (
+    "FACTURA VUELATOUR = folio de la factura del servicio emitida al cliente "
+    "(timbrada, registrada en Facturas emitidas o capturada en el vuelo); sin "
+    "folio registrado dice el estatus del vuelo («Facturado» / «Factura "
+    "elaborada y enviada»); sin factura registrada dice «Pendiente de factura» "
+    "cuando quedó dinero de algún cobro que entró a HSBC o Scotiabank (o por "
+    "transferencia, link de pago HSBC o cheque sin cuenta capturada) o se pidió "
+    "factura desde el vuelo, «No lleva factura» cuando ningún cobro la exige o "
+    "el dinero se devolvió completo (un anticipo devuelto no lleva factura), y "
+    "vacía = vuelo sin cobros. Es la factura del VUELO completo: en un vuelo "
+    "multi-avión todas sus filas traen la misma."
+)
+
+
 def _nota_factura_vuelatour(req: BalanceAvionRequest) -> str:
-    """Nota al pie de FACTURA VUELATOUR: la del API 0.0.74 SOLO con la
-    bandera raíz `factura_vuelatour_segun_cobros` en `True` (individual: el
-    payload raíz; «reporte horas FLOTA»: el `consolidado`); si no, la de
-    siempre."""
+    """Nota al pie de FACTURA VUELATOUR (individual: el payload raíz;
+    «reporte horas FLOTA»: el `consolidado`): la del API 0.0.77 con la bandera
+    raíz `factura_vuelatour_devolucion` en `True` (la elige PRIMERO); si no,
+    la del API 0.0.74 con `factura_vuelatour_segun_cobros` en `True`; si no,
+    la de siempre."""
+    if req.factura_vuelatour_devolucion is True:
+        return _NOTA_FACTURA_VUELATOUR_DEVOLUCION
     if req.factura_vuelatour_segun_cobros is True:
         return _NOTA_FACTURA_VUELATOUR_SEGUN_COBROS
     return _NOTA_FACTURA_VUELATOUR
@@ -3198,6 +3227,91 @@ _NOTA_CASCADA_OTROS_INGRESOS = (
     "libro. Suman a la utilidad del avión y a su reparto a socios; no cuentan "
     "como ingreso de VuelaTour."
 )
+
+# ===== Conversión ÚNICA del ingreso de un avión (14-oct-2026, API 0.0.77) =====
+# Decisión del cliente («unificar la conversión del ingreso de un avión entre
+# balance y reparto (ING-4 2,710.47 vs 2,746.70): hazlo, si es lo mejor»): el
+# API convierte CADA ingreso con la MISMA función del reparto a socios y del
+# tablero (`usdDeIngresoAvion`: en dólares su neto tal cual; en pesos, NETO ÷
+# su T.C. propio, el del gasto que reembolsa o el oficial del día de su
+# fecha) y manda por fila `tc_usd`/`neto_usd`, con la bandera de la hoja
+# `usd_por_ingreso`. Con ella —y SOLO con ella— la hoja gana T.C. A USD (J)
+# y NETO USD (K) y su TOTAL USD es la suma de NETO USD; las notas de abajo
+# reemplazan a las de siempre. Sin la bandera (API ≤ 0.0.76) la hoja, la
+# cascada y sus notas son las de siempre, byte a byte. Aquí no se convierte
+# nada: las fórmulas citan los T.C. del API y se degradan a valor si no
+# reproducen su centavo.
+_ENCABEZADOS_OTROS_INGRESOS_POR_INGRESO = [
+    "FECHA",
+    "CATEGORÍA",
+    "DETALLE",
+    "MONTO ORIGINAL",
+    "MONEDA",
+    "T.C.",
+    "INGRESO MXN",
+    "COMISIÓN MXN",
+    "NETO MXN",
+    "T.C. A USD",
+    "NETO USD",
+    "CUENTA",
+    "NOTAS",
+]
+_ANCHOS_OTROS_INGRESOS_POR_INGRESO = [12, 22, 50, 15, 9, 11, 15, 14, 15, 11, 14, 22, 36]
+# B5 del resumen individual con la bandera: ya no hay UN T.C. de la hoja.
+_TC_POR_INGRESO = "por ingreso (col. J)"
+# Origen del T.C. que pinta la celda T.C. A USD de azul (el mismo azul del
+# T.C. oficial de la hoja de vuelos, `TC_OFICIAL_FILL`).
+_ORIGEN_TC_OFICIAL_DEL_DIA = "OFICIAL_DEL_DIA"
+_NOTA_OTROS_INGRESOS_AVION_POR_INGRESO = (
+    "Ingresos registrados en Ingresos (clave ING-n) y asignados a este avión: "
+    "reembolsos de su servicio o de su aseguradora, ventas de piezas o "
+    "activos, intereses… NETO MXN = ingreso − comisión del banco (en dólares, "
+    "con el T.C. propio del ingreso). Cada ingreso pasa a USD por separado, "
+    "con la MISMA regla del reparto a socios: en dólares cuenta su neto tal "
+    "cual; en pesos, NETO USD = NETO MXN ÷ su T.C. propio o, si no lo trae, el "
+    "T.C. oficial del día del ingreso (celda azul). Un reembolso ligado a un "
+    "gasto que este libro cuenta usa el T.C. con el que el libro convierte ese "
+    "gasto (nota en la celda), para que reembolso y gasto se anulen. TOTAL USD "
+    "= suma de NETO USD: SUMA en la hoja 'balance' («(+) OTROS INGRESOS USD») "
+    "y en el reparto a socios. No cuentan como ingreso de VuelaTour: no están "
+    "en 'otros movimientos' del Balance general ni en el total de 'Otros "
+    "ingresos' del Libro Dinero. Los anticipos y las aportaciones nunca llevan "
+    "avión."
+)
+_NOTA_OTROS_INGRESOS_AVIONES_GENERAL_POR_INGRESO = (
+    "Ingresos registrados en Ingresos y asignados a un avión (clave ING-n), "
+    "netos de comisión bancaria. Cada uno YA SUMA en el bloque de su avión en "
+    "'balance' («(+) OTROS INGRESOS USD») y en su reparto a socios; por eso no "
+    "están en 'otros movimientos' ni en el bloque VUELATOUR (empresa). Cada "
+    "ingreso pasa a USD con su T.C. propio o el oficial de su día (en dólares, "
+    "su neto tal cual; un reembolso ligado a un gasto de su libro, con el T.C. "
+    "de ese gasto), como en el reparto; TOTAL USD = suma de NETO USD."
+)
+_NOTA_CASCADA_OTROS_INGRESOS_POR_INGRESO = (
+    "Ingresos registrados en Ingresos y asignados a este avión (hoja 'Otros "
+    "ingresos' de su libro), netos de comisión bancaria, cada uno a USD con su "
+    "T.C. propio o el oficial de su día, como en el reparto a socios (un "
+    "reembolso ligado a un gasto de este libro usa el T.C. de ese gasto para "
+    "anularse con él). Suman a la utilidad del avión y a su reparto; no "
+    "cuentan como ingreso de VuelaTour."
+)
+
+
+def _usd_por_ingreso(hoja: BalanceAvionHojaOtrosIngresos | None) -> bool:
+    """¿La hoja «Otros ingresos» viene con la conversión ÚNICA por ingreso
+    del API 0.0.77? Solo con la bandera en `True` (None/False/ausente = la
+    hoja de siempre)."""
+    return hoja is not None and hoja.usd_por_ingreso is True
+
+
+def _nota_cascada_otros_ingresos(req: BalanceAvionRequest) -> str:
+    """Nota de la línea «(+) OTROS INGRESOS USD» de la cascada: la elige la
+    hoja «Otros ingresos» del MISMO libro (en el general, la de cada avión)."""
+    if _usd_por_ingreso(req.otros_ingresos_avion):
+        return _NOTA_CASCADA_OTROS_INGRESOS_POR_INGRESO
+    return _NOTA_CASCADA_OTROS_INGRESOS
+
+
 # Cola de la fila 2 de 'otros movimientos' con la bandera
 # `otros_ingresos_por_avion` (empieza con espacio: se pega al texto de
 # siempre).
@@ -3240,13 +3354,27 @@ def _hoja_otros_ingresos_avion(
     reproduce el centavo del API vuelve a VALOR): INGRESO MXN =
     ROUND(MONTO ORIGINAL × T.C., 2) en dólares y ROUND(MONTO ORIGINAL, 2) en
     pesos; NETO MXN = ROUND(INGRESO − COMISIÓN, 2) (sin comisión,
-    ROUND(INGRESO, 2)); TOTAL NETO MXN = Σ de NETO MXN. Individual: TC
-    PROMEDIO cita la fila TOTALES de la hoja maestra y TOTAL USD = TOTAL NETO
-    MXN ÷ el T.C. promedio CRUDO del libro (`_USD_TC_LIBRO`, el mismo de las
-    hojas de gastos; sin vuelos, valor del API: el oficial del cierre).
-    General: TOTAL USD = VALOR (Σ de lo que suma cada avión, cada libro con
-    su T.C.: no hay fórmula que lo reproduzca). Aquí no se convierte nada."""
-    n_cols = len(_ENCABEZADOS_OTROS_INGRESOS)
+    ROUND(INGRESO, 2)); TOTAL NETO MXN = Σ de NETO MXN.
+    Sin `usd_por_ingreso` (API ≤ 0.0.76; 11 columnas, byte a byte la de
+    siempre): individual, TC PROMEDIO cita la fila TOTALES de la hoja maestra
+    y TOTAL USD = TOTAL NETO MXN ÷ el T.C. promedio CRUDO del libro
+    (`_USD_TC_LIBRO`, el mismo de las hojas de gastos; sin vuelos, valor del
+    API: el oficial del cierre); general, TOTAL USD = VALOR (Σ de lo que suma
+    cada avión, cada libro con su T.C.).
+    Con `usd_por_ingreso` (API 0.0.77, conversión ÚNICA por ingreso, la del
+    reparto a socios; 13 columnas): T.C. A USD (J) = el `tc_usd` del API
+    (azul si es el oficial del día; nota de la celda = `tc_usd_nota`; en
+    dólares, vacía) y NETO USD (K) = ROUND(NETO MXN ÷ T.C. A USD, 2) en
+    pesos, ROUND(NETO MXN ÷ T.C., 2) en dólares (reproduce su neto: el error
+    es ≤ 0.01 ÷ T.C.) y, si no, el `neto_usd` como valor; TOTAL USD =
+    ROUND(SUM(K8:Kn), 2) en el individual (C5, la que cita la cascada; B5 =
+    «por ingreso (col. J)») y en el general (B5). Aquí no se convierte nada."""
+    por_ingreso = _usd_por_ingreso(hoja)
+    encabezados = (
+        _ENCABEZADOS_OTROS_INGRESOS_POR_INGRESO if por_ingreso else _ENCABEZADOS_OTROS_INGRESOS
+    )
+    anchos = _ANCHOS_OTROS_INGRESOS_POR_INGRESO if por_ingreso else _ANCHOS_OTROS_INGRESOS
+    n_cols = len(encabezados)
     titulo = (
         _TITULO_OTROS_INGRESOS_GENERAL
         if general
@@ -3258,11 +3386,22 @@ def _hoja_otros_ingresos_avion(
 
     ultima = 7 + len(hoja.filas)
     suma_neto = f"ROUND(SUM(I8:I{ultima}),2)" if hoja.filas else None
+    # TOTAL USD por ingreso = Σ de NETO USD (col. K); sin filas, el valor del
+    # API (0).
+    suma_usd = f"ROUND(SUM(K8:K{ultima}),2)" if por_ingreso and hoja.filas else None
     if general:
         _header_row(ws, 4, ["TOTAL NETO MXN", "TOTAL USD (suma de los aviones)"])
         _formula(ws, 5, 1, suma_neto, hoja.total_mxn, MONEY, bold=True)
-        _formula(ws, 5, 2, None, hoja.usd, MONEY, bold=True)
+        _formula(ws, 5, 2, suma_usd, hoja.usd, MONEY, bold=True)
         resumen = 2
+    elif por_ingreso:
+        _header_row(ws, 4, ["TOTAL NETO MXN", "T.C.", "TOTAL USD"])
+        _formula(ws, 5, 1, suma_neto, hoja.total_mxn, MONEY, bold=True)
+        tc_txt = ws.cell(row=5, column=2, value=_TC_POR_INGRESO)
+        tc_txt.font = Font(italic=True, color=MUTED)
+        tc_txt.alignment = Alignment(horizontal="center")
+        _formula(ws, 5, 3, suma_usd, hoja.usd, MONEY, bold=True)
+        resumen = 3
     else:
         _header_row(ws, 4, ["TOTAL NETO MXN", "TC PROMEDIO", "TOTAL USD"])
         _formula(ws, 5, 1, suma_neto, hoja.total_mxn, MONEY, bold=True)
@@ -3273,7 +3412,7 @@ def _hoja_otros_ingresos_avion(
         ws.cell(row=5, column=c).border = _border
     ws.row_dimensions[4].height = 30
 
-    _header_row(ws, 7, _ENCABEZADOS_OTROS_INGRESOS)
+    _header_row(ws, 7, encabezados)
     row = 8
     if hoja.filas:
         for f in hoja.filas:
@@ -3303,8 +3442,12 @@ def _hoja_otros_ingresos_avion(
                 f"ROUND(G{row}-H{row},2)" if f.comision_mxn is not None else f"ROUND(G{row},2)"
             )
             _formula(ws, row, 9, formula_neto, f.neto_mxn).border = _border
-            ws.cell(row=row, column=10, value=f.cuenta).border = _border
-            nc = ws.cell(row=row, column=11, value=f.notas)
+            col_cuenta = 10
+            if por_ingreso:
+                _celdas_usd_por_ingreso(ws, row, f, moneda)
+                col_cuenta = 12
+            ws.cell(row=row, column=col_cuenta, value=f.cuenta).border = _border
+            nc = ws.cell(row=row, column=col_cuenta + 1, value=f.notas)
             nc.border = _border
             nc.alignment = Alignment(wrap_text=True, vertical="top")
             # Alto de fila = renglones REALES del texto más alto (DETALLE o
@@ -3322,16 +3465,50 @@ def _hoja_otros_ingresos_avion(
         row += 1
 
     row += 1
-    _pinta_nota_envuelta(
-        ws,
-        row,
-        _NOTA_OTROS_INGRESOS_AVIONES_GENERAL if general else _NOTA_OTROS_INGRESOS_AVION,
-        n_cols,
-        sum(_ANCHOS_OTROS_INGRESOS),
-    )
-    for i, w in enumerate(_ANCHOS_OTROS_INGRESOS, start=1):
+    if por_ingreso:
+        nota = (
+            _NOTA_OTROS_INGRESOS_AVIONES_GENERAL_POR_INGRESO
+            if general
+            else _NOTA_OTROS_INGRESOS_AVION_POR_INGRESO
+        )
+    else:
+        nota = _NOTA_OTROS_INGRESOS_AVIONES_GENERAL if general else _NOTA_OTROS_INGRESOS_AVION
+    _pinta_nota_envuelta(ws, row, nota, n_cols, sum(anchos))
+    for i, w in enumerate(anchos, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A8"
+
+
+def _celdas_usd_por_ingreso(
+    ws: Worksheet, row: int, f: BalanceAvionOtroIngresoFila, moneda: str
+) -> None:
+    """T.C. A USD (J) y NETO USD (K) de una fila con la conversión ÚNICA por
+    ingreso (API 0.0.77, bandera `usd_por_ingreso`). Aquí NO se convierte
+    nada: J es el T.C. EXACTO con que el API pasó el ingreso a USD y K cita
+    las celdas de la fila; `xlsx_formulas` la degrada al `neto_usd` del API si
+    no reproduce su centavo.
+    - Pesos: J = `tc_usd` (formato TC; azul SOLO si es el T.C. oficial del día
+      del ingreso; nota = `tc_usd_nota`, p. ej. el gasto que reembolsa) y K =
+      ROUND(NETO MXN ÷ J, 2).
+    - Dólares: J vacía (cuenta su neto tal cual) y K = ROUND(NETO MXN ÷ T.C.,
+      2) con el T.C. propio de la columna F (reproduce monto − comisión: el
+      error es ≤ 0.01 ÷ T.C.).
+    - Sin `neto_usd` (pesos sin ningún T.C.): K vacía, jamás un 0 falso; sin
+      con qué citar (dólares sin T.C.): K = el valor del API."""
+    tc_usd = None if moneda == "USD" else f.tc_usd
+    jc = _num(ws, row, 10, tc_usd, TC)
+    jc.border = _border
+    if tc_usd is not None and f.tc_usd_origen == _ORIGEN_TC_OFICIAL_DEL_DIA:
+        jc.fill = PatternFill("solid", fgColor=TC_OFICIAL_FILL)
+    if f.tc_usd_nota:
+        jc.comment = _comentario_cobro(f.tc_usd_nota)
+    formula: str | None = None
+    if f.neto_mxn is not None:
+        if moneda == "MXN" and tc_usd is not None:
+            formula = f"ROUND(I{row}/J{row},2)"
+        elif moneda == "USD" and f.tc_aplicado is not None:
+            formula = f"ROUND(I{row}/F{row},2)"
+    _formula(ws, row, 11, formula, f.neto_usd).border = _border
 
 
 # Cobranza con la regla de septiembre 2026 (6-oct-2026, API 0.0.65): COBRADO
@@ -4084,7 +4261,7 @@ def _bloque_balance(
         if label in notas_previas and val is not None:
             cell.comment = _comentario_cobro(notas_previas[label])
         if label == _FILA_OTROS_INGRESOS and val is not None:
-            cell.comment = _comentario_cobro(_NOTA_CASCADA_OTROS_INGRESOS)
+            cell.comment = _comentario_cobro(_nota_cascada_otros_ingresos(req))
         row += 1
 
     row += 1
@@ -4145,7 +4322,8 @@ _EMPRESA_PAGOS = (
 # del API; bandera `afac_en_filas` de 'otros movimientos'): los ingresos ya
 # incluyen la provisión AFAC del periodo de cada avión y el número sube de
 # golpe con ella: la etiqueta lo dice. Los permisos PAGADOS van en su fila
-# con egreso $0.00 (revisión del 13-oct-2026: ya restan en la cascada de su
+# con egreso $0.00 (revisión del 13-oct-2026, confirmada por el cliente el
+# 14-oct-2026: «el AFAC lo cargan al Avión»; ya restan en la cascada de su
 # avión; egresarlos aquí los contaba dos veces): la etiqueta de egresos lo
 # dice. Sin la bandera, `_EMPRESA_INGRESOS` / `_EMPRESA_PAGOS` byte a byte.
 _EMPRESA_INGRESOS_AFAC = (
@@ -5745,9 +5923,10 @@ _TITULO_AFAC_OM = "PERMISOS AFAC · provisión vs pagado (informativo)"
 # del API; solo con `afac_en_filas`): encabezado de la sección (antes de la
 # primera fila AFAC) y la leyenda que se concatena AL FINAL de la fila 2.
 # Ninguno lleva la marca «· PROVISIÓN (» del amarillo. Revisión del
-# 13-oct-2026 (antes del deploy): los permisos PAGADOS llegan con egreso
-# $0.00 «a cargo del avión» (ya restan en la cascada de su avión; egresarlos
-# aquí los contaba dos veces) y los textos lo dicen.
+# 13-oct-2026 (antes del deploy; confirmada por el cliente el 14-oct-2026: «el
+# AFAC lo cargan al Avión»): los permisos PAGADOS llegan con egreso $0.00 «a
+# cargo del avión» (ya restan en la cascada de su avión; egresarlos aquí los
+# contaba dos veces) y los textos lo dicen.
 _OM_SECCION_AFAC = (
     "PERMISOS AFAC POR AVIÓN · provisión del periodo (ingreso de VuelaTour) "
     "y permisos pagados (a cargo de su avión: egreso $0.00)"

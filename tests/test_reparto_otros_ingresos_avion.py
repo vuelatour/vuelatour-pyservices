@@ -320,6 +320,22 @@ def test_xlsx_sin_dato_catorce_columnas_de_siempre() -> None:
 
 
 # ---------------------------------------------------------------------------
+# API 0.0.77 (14-oct-2026, conversión ÚNICA del ingreso de un avión): cada
+# línea del detalle gana `tc_origen` AL FINAL (ADITIVO). El reparto no cambia
+# ni un número y pyservices ignora la llave: PDF y Excel idénticos.
+# ---------------------------------------------------------------------------
+
+
+def test_tc_origen_del_api_0077_se_ignora() -> None:
+    sin = _req(lineas=[_ING_4, _linea(5)])
+    con = _req(
+        lineas=[{**_ING_4, "tc_origen": "OFICIAL_DEL_DIA"}, {**_linea(5), "tc_origen": None}]
+    )
+    assert _flujos_pdf(render_reparto_pdf(con)) == _flujos_pdf(render_reparto_pdf(sin))
+    assert _miembros(render_reparto_xlsx(con)) == _miembros(render_reparto_xlsx(sin))
+
+
+# ---------------------------------------------------------------------------
 # Rutas con el JSON del API 0.0.75
 # ---------------------------------------------------------------------------
 

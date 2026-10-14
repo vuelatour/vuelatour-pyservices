@@ -26,6 +26,13 @@ La bandera raíz ADITIVA `factura_vuelatour_segun_cobros` (individual,
 maestra; sin ella (None/False/ausente) el libro es byte a byte el de antes
 (huellas `_firma_hoja` congeladas con el código de HEAD 12b5e86, que para
 esta hoja es el mismo que 4d206ab).
+
+14-oct-2026 (API 0.0.77, invariante 60 del API; decisión del cliente: «¿Un
+anticipo devuelto lleva CFDI? eso no»): el dinero devuelto completo no exige
+factura (lo decide el API; la columna llega hecha). La bandera raíz ADITIVA
+`factura_vuelatour_devolucion` (individual, `aviones[]` y `consolidado`) elige
+PRIMERO la nota `_NOTA_FACTURA_VUELATOUR_DEVOLUCION`; sin ella, las dos notas
+de siempre, literales y byte a byte.
 """
 
 import hashlib
@@ -51,6 +58,7 @@ from app.services.balance_avion_xlsx import (
     _COLS_FLOTA,
     _DISP_MENSUAL,
     _NOTA_FACTURA_VUELATOUR,
+    _NOTA_FACTURA_VUELATOUR_DEVOLUCION,
     _NOTA_FACTURA_VUELATOUR_SEGUN_COBROS,
     FILL_COBROS,
     LIGHT,
@@ -104,22 +112,28 @@ _TOTALES = {"cobrado_real_mxn": 150000.0, "por_cobrar_usd": 0.0}
 _AUSENTE = object()
 
 
-def _bandera(bandera) -> dict:
-    return {} if bandera is _AUSENTE else {"factura_vuelatour_segun_cobros": bandera}
+def _bandera(bandera, devolucion=_AUSENTE) -> dict:
+    banderas = {} if bandera is _AUSENTE else {"factura_vuelatour_segun_cobros": bandera}
+    # API 0.0.77: la bandera del anticipo devuelto (14-oct-2026).
+    if devolucion is not _AUSENTE:
+        banderas["factura_vuelatour_devolucion"] = devolucion
+    return banderas
 
 
-def _individual(vuelos=None, bandera=_AUSENTE) -> BalanceAvionRequest:
+def _individual(vuelos=None, bandera=_AUSENTE, devolucion=_AUSENTE) -> BalanceAvionRequest:
     return BalanceAvionRequest(
         matricula="XA-VGV",
         periodo_desde="2026-09-01",
         periodo_hasta="2026-09-30",
         vuelos=_VUELOS if vuelos is None else vuelos,
         totales=_TOTALES,
-        **_bandera(bandera),
+        **_bandera(bandera, devolucion),
     )
 
 
-def _general(vuelos=None, bandera=_AUSENTE, variante=None) -> BalanceGeneralRequest:
+def _general(
+    vuelos=None, bandera=_AUSENTE, variante=None, devolucion=_AUSENTE
+) -> BalanceGeneralRequest:
     return BalanceGeneralRequest(
         periodo_desde="2026-09-01",
         periodo_hasta="2026-09-30",
@@ -130,7 +144,7 @@ def _general(vuelos=None, bandera=_AUSENTE, variante=None) -> BalanceGeneralRequ
             periodo_hasta="2026-09-30",
             vuelos=_VUELOS if vuelos is None else vuelos,
             totales=_TOTALES,
-            **_bandera(bandera),
+            **_bandera(bandera, devolucion),
         ),
         **({} if variante is None else {"variante": variante}),
     )
@@ -373,6 +387,85 @@ def test_nota_al_pie_explica_la_columna(hoja, bandera, esperada) -> None:
     assert ws.cell(row=fila - 1, column=1).value.startswith("El ESTATUS DE COBRO por vuelo")
 
 
+def _maestra_devolucion(hoja: str, bandera, devolucion):
+    if hoja == "individual":
+        return _maestra_individual(_individual(bandera=bandera, devolucion=devolucion))
+    variante = "general" if hoja == "general-variante-general" else None
+    return _maestra_general(_general(bandera=bandera, devolucion=devolucion, variante=variante))
+
+
+@pytest.mark.parametrize("hoja", ["individual", "general", "general-variante-general"])
+@pytest.mark.parametrize(
+    ("devolucion", "esperada"),
+    [
+        pytest.param(True, _NOTA_FACTURA_VUELATOUR_DEVOLUCION, id="True"),
+        pytest.param(None, _NOTA_FACTURA_VUELATOUR_SEGUN_COBROS, id="None"),
+        pytest.param(False, _NOTA_FACTURA_VUELATOUR_SEGUN_COBROS, id="False"),
+    ],
+)
+def test_nota_al_pie_con_la_bandera_del_anticipo_devuelto(hoja, devolucion, esperada) -> None:
+    """API 0.0.77: con `factura_vuelatour_devolucion` en `True` la nota que
+    explica que un anticipo devuelto no lleva factura —una sola vez, en la
+    MISMA fila— en el libro individual, en «reporte horas FLOTA» mensual y en
+    la variante general (la recibe del `consolidado`); con None/False, la del
+    0.0.74 tal cual."""
+    ws = _maestra_devolucion(hoja, True, devolucion)
+    notas = [
+        (c.row, c.value)
+        for c in ws["A"]
+        if isinstance(c.value, str) and c.value.startswith("FACTURA VUELATOUR =")
+    ]
+    assert [v for _, v in notas] == [esperada]
+    fila_0074 = next(
+        c.row for c in _maestra(hoja, True)["A"] if c.value == _NOTA_FACTURA_VUELATOUR_SEGUN_COBROS
+    )
+    assert notas[0][0] == fila_0074
+
+
+@pytest.mark.parametrize("hoja", ["individual", "general"])
+def test_con_la_bandera_del_anticipo_devuelto_solo_cambia_la_nota(hoja) -> None:
+    """Contra el libro del API 0.0.74/0.0.76 (solo `segun_cobros`), la ÚNICA
+    celda que cambia es la de la nota al pie."""
+    a = _maestra_devolucion(hoja, True, _AUSENTE)
+    b = _maestra_devolucion(hoja, True, True)
+    assert (a.max_row, a.max_column) == (b.max_row, b.max_column)
+    diferencias = []
+    for fila in range(1, a.max_row + 1):
+        for col in range(1, a.max_column + 1):
+            ca, cb = a.cell(row=fila, column=col), b.cell(row=fila, column=col)
+            if (ca.value, ca.number_format, ca.fill.fgColor.rgb) != (
+                cb.value,
+                cb.number_format,
+                cb.fill.fgColor.rgb,
+            ):
+                diferencias.append((ca.coordinate, ca.value, cb.value))
+    assert len(diferencias) == 1, diferencias
+    coord, antes, despues = diferencias[0]
+    assert coord.startswith("A")
+    assert (antes, despues) == (
+        _NOTA_FACTURA_VUELATOUR_SEGUN_COBROS,
+        _NOTA_FACTURA_VUELATOUR_DEVOLUCION,
+    )
+
+
+@pytest.mark.parametrize("devolucion", [_AUSENTE, None, False], ids=["ausente", "None", "False"])
+def test_sin_la_bandera_del_anticipo_devuelto_huellas_de_siempre(devolucion) -> None:
+    """Sin `factura_vuelatour_devolucion` (o en None/False) las dos hojas
+    maestras SIN bandera siguen byte a byte (huellas de HEAD 12b5e86)."""
+    assert (
+        _firma_hoja(
+            render_balance_avion_xlsx(_individual(devolucion=devolucion)), "reporte horas XA-VGV"
+        )
+        == _FIRMA_INDIVIDUAL_SIN_BANDERA
+    )
+    assert (
+        _firma_hoja(
+            render_balance_general_xlsx(_general(devolucion=devolucion)), "reporte horas FLOTA"
+        )
+        == _FIRMA_GENERAL_SIN_BANDERA
+    )
+
+
 def test_nota_factura_vuelatour_exige_true_y_la_de_siempre_no_cambio() -> None:
     assert _nota_factura_vuelatour(_individual()) == _NOTA_FACTURA_VUELATOUR
     assert _nota_factura_vuelatour(_individual(bandera=None)) == _NOTA_FACTURA_VUELATOUR
@@ -399,6 +492,40 @@ def test_nota_factura_vuelatour_exige_true_y_la_de_siempre_no_cambio() -> None:
         "vacía = sin factura. Es la factura del VUELO completo: en un vuelo "
         "multi-avión todas sus filas traen la misma."
     )
+
+
+# Texto EXACTO del contrato (API 0.0.77, decisión del cliente del 14-oct-2026:
+# «¿Un anticipo devuelto lleva CFDI? eso no»).
+NOTA_DEVOLUCION = (
+    "FACTURA VUELATOUR = folio de la factura del servicio emitida al cliente "
+    "(timbrada, registrada en Facturas emitidas o capturada en el vuelo); sin "
+    "folio registrado dice el estatus del vuelo («Facturado» / «Factura "
+    "elaborada y enviada»); sin factura registrada dice «Pendiente de factura» "
+    "cuando quedó dinero de algún cobro que entró a HSBC o Scotiabank (o por "
+    "transferencia, link de pago HSBC o cheque sin cuenta capturada) o se pidió "
+    "factura desde el vuelo, «No lleva factura» cuando ningún cobro la exige o "
+    "el dinero se devolvió completo (un anticipo devuelto no lleva factura), y "
+    "vacía = vuelo sin cobros. Es la factura del VUELO completo: en un vuelo "
+    "multi-avión todas sus filas traen la misma."
+)
+
+
+def test_nota_factura_vuelatour_devolucion_manda_y_las_de_siempre_no_cambian() -> None:
+    assert _NOTA_FACTURA_VUELATOUR_DEVOLUCION == NOTA_DEVOLUCION
+    # Con la bandera del 0.0.77 en `True` manda ella (con o sin la del 0.0.74).
+    for bandera in (_AUSENTE, None, False, True):
+        req = _individual(bandera=bandera, devolucion=True)
+        assert _nota_factura_vuelatour(req) == NOTA_DEVOLUCION
+    # Sin ella (ausente/None/False): las dos notas de siempre, literales.
+    for devolucion in (_AUSENTE, None, False):
+        assert _nota_factura_vuelatour(_individual(devolucion=devolucion)) == (
+            _NOTA_FACTURA_VUELATOUR
+        )
+        assert _nota_factura_vuelatour(_individual(bandera=True, devolucion=devolucion)) == (
+            _NOTA_FACTURA_VUELATOUR_SEGUN_COBROS
+        )
+    assert BalanceAvionRequest().factura_vuelatour_devolucion is None
+    assert "un anticipo devuelto no lleva factura" in NOTA_DEVOLUCION
 
 
 # ---------------------------------------------------------------------------
@@ -739,3 +866,54 @@ def test_rutas_aceptan_la_bandera_del_api_0_0_74(monkeypatch, request) -> None:
         ws = load_workbook(BytesIO(res.content), data_only=True)["reporte horas FLOTA"]
         assert _columna(ws, len(vuelos)) == _ESPERADO_COBROS
         assert notas_de(ws) == [esperada]
+
+
+def test_rutas_aceptan_la_bandera_del_api_0_0_77(monkeypatch, request) -> None:
+    """JSON como lo manda el API 0.0.77: `factura_vuelatour_devolucion` justo
+    después de `factura_vuelatour_segun_cobros` en la raíz del individual, en
+    cada `aviones[]` y en el `consolidado`: la nota nueva en las dos maestras."""
+    monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    request.addfinalizer(get_settings.cache_clear)
+    headers = {"X-Internal-Token": TOKEN}
+    banderas = {"factura_vuelatour_segun_cobros": True, "factura_vuelatour_devolucion": True}
+    libro = {
+        "matricula": "XA-VGV",
+        "periodo_desde": "2026-09-01",
+        "periodo_hasta": "2026-09-30",
+        "vuelos": _VUELOS_COBROS,
+        "totales": _TOTALES,
+        "sin_provision_vendedor": True,
+        **banderas,
+    }
+
+    def notas_de(ws) -> list:
+        return [
+            c.value
+            for c in ws["A"]
+            if isinstance(c.value, str) and c.value.startswith("FACTURA VUELATOUR =")
+        ]
+
+    res = client.post("/pdf/balance-avion-xlsx", json=libro, headers=headers)
+    assert res.status_code == 200, res.text
+    ws = load_workbook(BytesIO(res.content), data_only=True)["reporte horas XA-VGV"]
+    assert notas_de(ws) == [_NOTA_FACTURA_VUELATOUR_DEVOLUCION]
+    res = client.post(
+        "/pdf/balance-general-xlsx",
+        json={
+            "periodo_desde": "2026-09-01",
+            "periodo_hasta": "2026-09-30",
+            "resumen": [{"matricula": "XA-VGV", "color": "#FF0000", "vuelos": 3}],
+            "aviones": [libro],
+            "consolidado": {
+                "matricula": "FLOTA",
+                "vuelos": _VUELOS_COBROS,
+                "totales": _TOTALES,
+                **banderas,
+            },
+        },
+        headers=headers,
+    )
+    assert res.status_code == 200, res.text
+    ws = load_workbook(BytesIO(res.content), data_only=True)["reporte horas FLOTA"]
+    assert notas_de(ws) == [_NOTA_FACTURA_VUELATOUR_DEVOLUCION]

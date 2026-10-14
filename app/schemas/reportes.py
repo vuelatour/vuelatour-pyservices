@@ -1480,6 +1480,23 @@ class BalanceAvionOtroIngresoFila(BaseModel):
     neto_mxn: float | None = None  # ingreso − comisión
     cuenta: str | None = None  # 'EJE SCOTIA · Scotiabank' | 'Efectivo / caja'
     notas: str | None = None
+    # ADITIVOS (14-oct-2026, API 0.0.77; decisión del cliente: «unificar la
+    # conversión del ingreso de un avión entre balance y reparto… hazlo, si es
+    # lo mejor»): la conversión ÚNICA por ingreso del API (`usdDeIngresoAvion`,
+    # la MISMA del reparto a socios y del tablero). `tc_usd` = el T.C. con que
+    # el API pasó ESTE ingreso a USD — en pesos, su T.C. propio, el del gasto
+    # que reembolsa (reembolso LIGADO) o el oficial del día de su `fecha`,
+    # EXACTO (sin redondear: aquí se cita en ROUND(NETO MXN ÷ T.C., 2)); en
+    # dólares, None —; `neto_usd` = su NETO en USD (lo que SUMA; None = pesos
+    # sin ningún T.C.); `tc_usd_origen` = 'PROPIO' | 'GASTO_LIGADO' |
+    # 'OFICIAL_DEL_DIA' | None (solo el oficial pinta la celda de azul) y
+    # `tc_usd_nota` = la nota de la celda T.C. A USD (None con T.C. propio o
+    # en dólares). Solo se pintan con la bandera de la hoja
+    # `BalanceAvionHojaOtrosIngresos.usd_por_ingreso`; sin ella se ignoran.
+    tc_usd: float | None = None
+    neto_usd: float | None = None
+    tc_usd_origen: str | None = None
+    tc_usd_nota: str | None = None
     # Solo en el consolidado FLOTA del Balance general (hoja «otros ingresos
     # aviones»): el DETALLE ya llega con «MATRÍCULA · » al frente.
     avion_color: str | None = None
@@ -1495,16 +1512,36 @@ class BalanceAvionOtroIngresoFila(BaseModel):
             return str(v)
         return v
 
+    @field_validator("tc_usd_origen", "tc_usd_nota", mode="before")
+    @classmethod
+    def _texto_tc_usd_liberal(cls, v: Any) -> str | None:
+        """Origen y nota del T.C. A USD: texto recortado; vacío o algo que no
+        es texto ⇒ None (sin relleno ni nota). Jamás un 422 por una nota."""
+        if isinstance(v, str):
+            return v.strip() or None
+        return None
+
 
 class BalanceAvionHojaOtrosIngresos(BaseModel):
     """Hoja «Otros ingresos» del libro de un avión (y, en el Balance general,
     la consolidada «otros ingresos aviones»). `total_mxn` = Σ NETO MXN; `usd`
     = TOTAL USD que SUMA en la cascada (None = algún ingreso USD sin T.C.;
-    en el general, None si algún libro trajo None)."""
+    en el general, None si algún libro trajo None). Con `usd_por_ingreso`
+    (API 0.0.77) `usd` = Σ de los `neto_usd` de las filas (None = alguna fila
+    sin `neto_usd`: pesos sin ningún T.C.; vacía = 0)."""
 
     filas: list[BalanceAvionOtroIngresoFila] = Field(default_factory=list)
     total_mxn: float | None = None
     usd: float | None = None
+    # ADITIVA (14-oct-2026, API 0.0.77; decisión del cliente: conversión ÚNICA
+    # del ingreso de un avión, la del reparto a socios): `true` = cada ingreso
+    # viaja con su `tc_usd`/`neto_usd` y `usd` es su suma. El API la manda
+    # SIEMPRE como ÚLTIMA llave (libro individual, `aviones[]` y consolidado
+    # FLOTA). Con ella la hoja gana las columnas T.C. A USD (J) y NETO USD (K),
+    # TOTAL USD = ROUND(SUM(K8:Kn),2) (en el general también) y las notas
+    # `*_POR_INGRESO`. None/False (API ≤ 0.0.76) ⇒ la hoja y las notas de
+    # siempre, byte a byte (TOTAL USD = TOTAL NETO MXN ÷ TC PROMEDIO).
+    usd_por_ingreso: bool | None = None
 
     @field_validator("filas", mode="before")
     @classmethod
@@ -1570,6 +1607,15 @@ class BalanceAvionRequest(BaseModel):
     # general (que la recibe del `consolidado`). None/False/ausente (API
     # previo) ⇒ la nota de hoy, libro byte a byte.
     factura_vuelatour_segun_cobros: bool | None = None
+    # ADITIVO (14-oct-2026, API 0.0.77, invariante 60 del API; decisión del
+    # cliente «¿Un anticipo devuelto lleva CFDI? eso no»): el dinero devuelto
+    # COMPLETO no exige factura salga por donde salga; lo decide el API y la
+    # columna FACTURA VUELATOUR llega hecha. Aquí SOLO cambia la nota al pie de
+    # la hoja maestra (`_NOTA_FACTURA_VUELATOUR_DEVOLUCION`, que manda sobre
+    # `factura_vuelatour_segun_cobros`): libro individual, cada `aviones[]` y
+    # el `consolidado`. None/False/ausente (API ≤ 0.0.76) ⇒ las dos notas de
+    # siempre, byte a byte.
+    factura_vuelatour_devolucion: bool | None = None
     # ADITIVO (13-oct-2026, API 0.0.74, invariante 61 del API): la comisión
     # del vendedor resta SOLO como gasto real, en dos categorías (COMISIONES
     # = parte del avión de la comisión bancaria + los pagos «Comisión del
@@ -1590,8 +1636,9 @@ class BalanceAvionRequest(BaseModel):
     # ingresos» (entre 'permisos' y 'balance') y la cascada de 'balance' la
     # línea «(+) OTROS INGRESOS USD» (también en cada bloque del Balance
     # general). El API la manda SIEMPRE en los libros de avión (vacía:
-    # `{filas: [], total_mxn: 0, usd: 0}`) y en el `consolidado` FLOTA SOLO
-    # con filas (hoja «otros ingresos aviones»). None (API ≤ 0.0.74) ⇒ ni
+    # `{filas: [], total_mxn: 0, usd: 0}`; desde el 0.0.77 con
+    # `usd_por_ingreso: true` al final) y en el `consolidado` FLOTA SOLO con
+    # filas (hoja «otros ingresos aviones»). None (API ≤ 0.0.74) ⇒ ni
     # pestaña ni línea: libro byte a byte.
     otros_ingresos_avion: BalanceAvionHojaOtrosIngresos | None = None
     # ADITIVO (13-oct-2026, API 0.0.75, punto 5 del lote): `true` SOLO en la

@@ -17,7 +17,8 @@ el fragmento `_EMPRESA_AFAC_EN_FILAS` en su pie y SIN el bloque informativo
 `afac` aunque llegara (nunca doble). Sin la bandera, el libro de siempre byte
 a byte (un API 0.0.69–0.0.73 sigue viendo su bloque informativo).
 
-Revisión del 13-oct-2026 (antes del deploy): los permisos PAGADOS llegan del
+Revisión del 13-oct-2026 (antes del deploy; confirmada por el cliente el
+14-oct-2026: «el AFAC lo cargan al Avión»): los permisos PAGADOS llegan del
 API con egreso $0.00 «· a cargo del avión X ($… en su hoja «permisos»)» —ya
 restan en la cascada de su avión y en el reparto; egresarlos aquí los contaba
 dos veces— y los textos de la fila 2, del encabezado y del bloque VUELATOUR

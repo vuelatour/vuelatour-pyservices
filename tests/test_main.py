@@ -44,6 +44,24 @@ def test_root() -> None:
     assert res.json()["service"] == "vuelatour-pyservices"
 
 
+def test_version_fuera_de_railway(monkeypatch) -> None:
+    """GET /version (14-oct-2026, API 0.0.77): la compuerta del despliegue.
+    Sin la variable de Railway (local, tests) ⇒ commit null; sin token."""
+    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
+    res = client.get("/version")
+    assert res.status_code == 200
+    assert res.json() == {"commit": None, "servicio": "vuelatour-pyservices"}
+
+
+def test_version_con_el_commit_de_railway(monkeypatch) -> None:
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", " b66df98c0ffee ")
+    res = client.get("/version")
+    assert res.status_code == 200
+    assert res.json() == {"commit": "b66df98c0ffee", "servicio": "vuelatour-pyservices"}
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "   ")
+    assert client.get("/version").json()["commit"] is None
+
+
 def test_cotizacion_sin_token_rechazado(monkeypatch) -> None:
     monkeypatch.setenv("INTERNAL_SHARED_TOKEN", TOKEN)
     get_settings.cache_clear()
