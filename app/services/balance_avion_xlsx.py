@@ -135,7 +135,12 @@ from app.schemas.reportes import (
     TcHoy,
 )
 from app.services import libro_json, xlsx_formulas
-from app.services._formato import _tc_txt
+from app.services._formato import (
+    ANCHO_CLAVE_TOPE_BALANCE,
+    _tc_txt,
+    ancho_columna_clave,
+    hay_id_cliente,
+)
 from app.services.caja_chica_xlsx import _texto_literal
 from app.services.tabla_xlsx import sheet_title
 
@@ -2831,7 +2836,20 @@ def _hoja_maestra(
         row += 1
 
     # Anchos + paneles congelados (bajo el encabezado, a la derecha de RUTA).
-    anchos = {1: 16, 2: 12, 3: 34, 4: 12}
+    # CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75): la columna A
+    # se ensancha POR CONTENIDO (con tope) SOLO si alguna fila trae
+    # `clave_cliente`; sin él, los 16 de siempre (libro byte a byte).
+    anchos = {
+        1: ancho_columna_clave(
+            (v.clave for v in req.vuelos),
+            base=16,
+            tope=ANCHO_CLAVE_TOPE_BALANCE,
+            con_id_cliente=hay_id_cliente(req.vuelos),
+        ),
+        2: 12,
+        3: 34,
+        4: 12,
+    }
     for i, (grupo, _h, attr, _f) in enumerate(cols, start=1):
         if attr in ("cobrado_real_mxn", "cobrado_mxn"):
             anchos[i] = 17
@@ -3580,7 +3598,17 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
         row += 1
 
-    for i, w in enumerate([22, 11, 26, 12, 11, 16, 15, 15, 13, 16, 15, 14, ancho_detalle], start=1):
+    # CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75): la columna A
+    # va POR CONTENIDO (con tope) solo si alguna fila trae `clave_cliente`;
+    # sin él, los 22 de siempre.
+    ancho_clave = ancho_columna_clave(
+        (v.clave for v in req.vuelos),
+        base=22,
+        tope=ANCHO_CLAVE_TOPE_BALANCE,
+        con_id_cliente=hay_id_cliente(req.vuelos),
+    )
+    anchos_cobranza = [ancho_clave, 11, 26, 12, 11, 16, 15, 15, 13, 16, 15, 14, ancho_detalle]
+    for i, w in enumerate(anchos_cobranza, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A8"
 
@@ -5421,6 +5449,19 @@ def _hoja_resumen_general(
 # (los normales); cualquier otro (RESERVA, CANCELADO…) se marca.
 _ESTADOS_NORMALES = ("CONFIRMADO", "EN_VUELO", "COMPLETADO")
 
+
+def _clave_otro_movimiento(f: BalanceOtroMovimientoFila) -> str:
+    """Texto que se pinta en la columna CLAVE de 'otros movimientos': la clave
+    del API y, si el estado del vuelo NO es normal, « · ESTADO» (solo el
+    estado si no hay clave). Lo usan `pinta` y el ancho de la columna A (ID
+    de vuelo por cliente, 13-oct-2026): los dos miden el MISMO texto."""
+    estado = (f.estado or "").strip().upper()
+    clave = f.clave or ""
+    if estado and estado not in _ESTADOS_NORMALES:
+        clave = f"{clave} · {estado}" if clave else estado
+    return clave
+
+
 # PROVISIÓN en amarillo (6-oct-2026, pedido del cliente: «los que están
 # provisión podrían estar en amarillo por fi»). El API escribe la marca EN
 # MAYÚSCULAS como calificador del concepto del egreso, «· PROVISIÓN (»
@@ -5551,7 +5592,16 @@ def _hoja_otros_movimientos(
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = _border
         ws.column_dimensions[get_column_letter(i)].width = 15
-    ws.column_dimensions["A"].width = 18
+    # CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75): «#376 ·
+    # january02-211026» (+ « · CANCELADO»…) va POR CONTENIDO (con tope) solo
+    # si alguna fila trae `clave_cliente`; sin él, los 18 de siempre.
+    filas_om = (*hoja.filas, *hoja.filas_sueltas)
+    ws.column_dimensions["A"].width = ancho_columna_clave(
+        (_clave_otro_movimiento(f) for f in filas_om),
+        base=18,
+        tope=ANCHO_CLAVE_TOPE_BALANCE,
+        con_id_cliente=hay_id_cliente(filas_om),
+    )
     ws.column_dimensions["C"].width = 28
     ws.column_dimensions["F"].width = 32
     row = 4
@@ -5563,9 +5613,7 @@ def _hoja_otros_movimientos(
         # Estado del vuelo (API nuevo): se anota junto a la clave cuando NO
         # es normal; CANCELADO además en rojo (igual que la hoja maestra).
         estado = (f.estado or "").strip().upper()
-        clave = f.clave or ""
-        if estado and estado not in _ESTADOS_NORMALES:
-            clave = f"{clave} · {estado}" if clave else estado
+        clave = _clave_otro_movimiento(f)
         vals = [
             clave,
             _fecha(f.fecha_vuelo),

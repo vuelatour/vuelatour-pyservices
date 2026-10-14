@@ -1388,6 +1388,29 @@ Reglas de este microservicio (FastAPI, Python 3.12).
     bandera, el libro JSON es el de siempre (g). Pruebas:
     `tests/test_balance_vinculos.py` (a)–(h) y las dos de
     `tests/test_libro_json.py` (`vinculos` en lista y la bandera raíz).
+- **CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75, decisión 6
+  del lote).** El ID («january02-211026» = alias del cliente + número de
+  vuelo de ESE cliente + DDMMAA del día Cancún) va JUNTO al folio, que sigue
+  siendo la llave del dinero. El API manda la CLAVE YA armada y aquí se pinta
+  tal cual: «#364 · beh05-011026 · Beh Kay » en la hoja maestra y la
+  cobranza, «#364 · beh05-011026» en 'otros movimientos' (este módulo sigue
+  agregando « · CANCELADO» en estados no normales, `_clave_otro_movimiento`)
+  y «beh05-011026» en el Libro Dinero (+ « (50 % N4142R)» en multi-avión; un
+  vuelo de servicio siempre «vtservicio»). `clave_cliente` (ADITIVO, en
+  `BalanceAvionVuelo`, `BalanceOtroMovimientoFila`, `DineroVueloFila` y
+  `DineroOtroIngresoFila`; viaja SOLO con ID; validador liberal: no-texto o
+  vacío ⇒ None) **NO se pinta: solo decide el ancho de la columna A**, POR
+  CONTENIDO y con tope — `_formato.ancho_columna_clave(textos, base, tope,
+  con_id_cliente=hay_id_cliente(filas))` = `min(max(base, largo pintado + 2),
+  tope)`; topes `ANCHO_CLAVE_TOPE_BALANCE` = 48 (maestra base 16, cobranza 22,
+  'otros movimientos' 18) y `ANCHO_CLAVE_TOPE_DINERO` = 40 ('dinero-vlos'
+  14, 'Otros ingresos' 15, midiendo también las claves de la sección de
+  ingresos asignados a un avión). **Sin la llave, los libros son
+  byte-idénticos** (huellas congeladas con HEAD 462ce75 en
+  `tests/test_clave_cliente_xlsx.py`); con ella solo cambia ese ancho
+  (ningún valor, fórmula ni formato). `libro_json` hereda el ancho sin
+  tocarlo. Desplegar pyservices ANTES que el API para no ver la CLAVE larga
+  cortada en la columna de siempre.
 - **PERMISO AFAC con fórmula POR FILA en la hoja de la flota y bloque
   «PERMISOS AFAC» en 'otros movimientos' (12-oct-2026, API 0.0.69).** Pedido
   de Ale: «una de las columnas de Permisos de AFAC necesitamos que venga con

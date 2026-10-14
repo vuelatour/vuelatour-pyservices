@@ -47,6 +47,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.schemas.reportes import DineroOtroIngresoFila, DineroVueloFila, DineroXlsxRequest
+from app.services._formato import ANCHO_CLAVE_TOPE_DINERO, ancho_columna_clave, hay_id_cliente
 
 NAVY = "102A43"
 LIGHT = "EEF2F7"
@@ -231,7 +232,15 @@ def _hoja_vuelos(ws: Worksheet, req: DineroXlsxRequest) -> None:
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = _border
         ws.column_dimensions[get_column_letter(i)].width = 11
-    ws.column_dimensions["A"].width = 14
+    # CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75):
+    # «january02-211026 (50 % N4142R)» va POR CONTENIDO (con tope) solo si
+    # alguna fila trae `clave_cliente`; sin él, los 14 de siempre.
+    ws.column_dimensions["A"].width = ancho_columna_clave(
+        (v.clave for v in req.vuelos),
+        base=14,
+        tope=ANCHO_CLAVE_TOPE_DINERO,
+        con_id_cliente=hay_id_cliente(req.vuelos),
+    )
     ws.column_dimensions["C"].width = 20
     ws.row_dimensions[4].height = 34
 
@@ -474,6 +483,18 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
         ws.column_dimensions[get_column_letter(i)].width = 15
     ws.column_dimensions["C"].width = 26
     ws.column_dimensions["F"].width = 26
+    # CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75): las filas de
+    # un vuelo llevan su ID («january02-211026»); la columna A va POR
+    # CONTENIDO (con tope) solo si alguna fila trae `clave_cliente` — se miden
+    # todas las claves que se pintan en ella, también las ING-n de la sección
+    # de ingresos asignados a un avión. Sin él, los 15 de siempre.
+    filas_clave = (*req.otros_ingresos, *req.otros_ingresos_avion)
+    ws.column_dimensions["A"].width = ancho_columna_clave(
+        (f.clave for f in filas_clave),
+        base=15,
+        tope=ANCHO_CLAVE_TOPE_DINERO,
+        con_id_cliente=hay_id_cliente(filas_clave),
+    )
     row = 4
     tot_e = tot_i = 0.0
 

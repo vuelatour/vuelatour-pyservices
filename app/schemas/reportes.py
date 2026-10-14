@@ -770,6 +770,15 @@ class BalanceAvionCobro(BaseModel):
         return None
 
 
+def clave_cliente_liberal(v: Any) -> str | None:
+    """ID de vuelo por cliente (13-oct-2026, API 0.0.75): texto no vacío ⇒
+    recortado; vacío o no-texto ⇒ None. Es metadato (solo decide el ancho de
+    la columna CLAVE): jamás un 422 por él."""
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+    return None
+
+
 def _monto_vinculo_liberal(v: Any) -> float | None:
     """Monto de un metadato de vínculo: número finito o texto numérico ⇒
     float; bool, NaN/infinito, texto no numérico u otra cosa ⇒ None. Jamás
@@ -842,7 +851,14 @@ class BalanceAvionVuelo(BaseModel):
     # Llave interna de orden cronológico (el API ya manda las filas
     # ordenadas); NO se pinta.
     orden_ts: str | None = None
-    clave: str | None = None  # folio + clave del cliente (estilo "vt...")
+    # CLAVE armada por el API: '#<folio> · <ID del cliente> · <cliente>' (sin
+    # ID, '#<folio> · <cliente>'); se pinta tal cual.
+    clave: str | None = None
+    # ID de vuelo por cliente del API 0.0.75 (decisión 6 del lote del
+    # 13-oct-2026): NO se pinta (la CLAVE ya llega armada); solo decide el
+    # ancho de la columna A (`_formato.ancho_columna_clave`); None = API previo
+    # o migración sin aplicar ⇒ libro byte a byte el de antes.
+    clave_cliente: str | None = None
     fecha: str | None = None  # ISO date o texto libre (multi-día: "9-10 sep")
     ruta: str | None = None
     estado: str | None = None  # COMPLETADO / CANCELADO / ... (se pinta tal cual)
@@ -1066,6 +1082,11 @@ class BalanceAvionVuelo(BaseModel):
     def _vinculos_liberales(cls, v: Any) -> Any:
         return _vinculos_liberales(v)
 
+    @field_validator("clave_cliente", mode="before")
+    @classmethod
+    def _clave_cliente_liberal(cls, v: Any) -> str | None:
+        return clave_cliente_liberal(v)
+
 
 class BalanceAvionTotales(BaseModel):
     """Fila TOTALES de la hoja maestra: sumas y promedios YA calculados."""
@@ -1277,7 +1298,15 @@ class BalanceOtroMovimientoFila(BaseModel):
     comisión vendedor (X) · gasto real», con «· parcial: faltan $… MXN» o
     «· excede $… MXN») y aquí se pinta tal cual."""
 
+    # Con ID de vuelo por cliente (API 0.0.75): '#<folio> · <ID>'; sin él, la
+    # clave de siempre ('vt' + primera palabra + folio). ' · ESTADO' lo
+    # agrega este módulo en estados no normales.
     clave: str = ""
+    # ID de vuelo por cliente del API 0.0.75 (decisión 6 del lote del
+    # 13-oct-2026): NO se pinta (la CLAVE ya llega armada); solo decide el
+    # ancho de la columna A (`_formato.ancho_columna_clave`); None = API previo
+    # o migración sin aplicar ⇒ libro byte a byte el de antes.
+    clave_cliente: str | None = None
     avion_color: str | None = None
     # Estado del vuelo (COMPLETADO / CANCELADO / RESERVA…): el API lista
     # TODOS los estados del periodo (igual que la hoja maestra) y el Excel
@@ -1306,6 +1335,11 @@ class BalanceOtroMovimientoFila(BaseModel):
     # un encabezado de sección antes de la primera. None = fila de vuelo o
     # suelta, o API previo.
     seccion: str | None = None
+
+    @field_validator("clave_cliente", mode="before")
+    @classmethod
+    def _clave_cliente_liberal(cls, v: Any) -> str | None:
+        return clave_cliente_liberal(v)
 
 
 class BalanceAfacProvisionAvion(BaseModel):
@@ -1983,7 +2017,15 @@ class DineroVueloFila(BaseModel):
     ingresos', no en la fila del avión.
     """
 
+    # Con ID de vuelo por cliente (API 0.0.75): 'beh05-011026' (+ ' (50 %
+    # N4142R)' en multi-avión; un vuelo de servicio siempre 'vtservicio');
+    # sin él, la clave de siempre ('vtbeh').
     clave: str = ""
+    # ID de vuelo por cliente del API 0.0.75 (decisión 6 del lote del
+    # 13-oct-2026): NO se pinta (la CLAVE ya llega armada); solo decide el
+    # ancho de la columna A (`_formato.ancho_columna_clave`); None = API previo
+    # o migración sin aplicar ⇒ libro byte a byte el de antes.
+    clave_cliente: str | None = None
     matricula: str | None = None  # nota de la celda CLAVE
     color: str | None = None  # color de fila (hex del avión, #RRGGBB)
     fecha: str | None = None
@@ -2020,6 +2062,11 @@ class DineroVueloFila(BaseModel):
     participacion: float | None = None
     multi_avion: bool | None = None
 
+    @field_validator("clave_cliente", mode="before")
+    @classmethod
+    def _clave_cliente_liberal(cls, v: Any) -> str | None:
+        return clave_cliente_liberal(v)
+
 
 class DineroOtroIngresoFila(BaseModel):
     """Fila de la hoja 'Otros ingresos' (TUAs/extras/pernocta y comisión del
@@ -2029,7 +2076,14 @@ class DineroOtroIngresoFila(BaseModel):
     PROVISIÓN mientras no hubiera gasto real; desde el 0.0.74 solo el gasto
     real, sin él la fila no lleva egreso)."""
 
+    # Fila de un vuelo con ID de vuelo por cliente (API 0.0.75): la misma
+    # clave de 'dinero-vlos' ('beh05-011026'); ING-n sin cambio.
     clave: str = ""
+    # ID de vuelo por cliente del API 0.0.75 (decisión 6 del lote del
+    # 13-oct-2026): NO se pinta (la CLAVE ya llega armada); solo decide el
+    # ancho de la columna A (`_formato.ancho_columna_clave`); None = API previo
+    # o migración sin aplicar ⇒ libro byte a byte el de antes.
+    clave_cliente: str | None = None
     fecha_vuelo: str | None = None
     concepto_egreso: str | None = None
     egreso_mxn: float | None = None
@@ -2050,6 +2104,11 @@ class DineroOtroIngresoFila(BaseModel):
     # matrícula ya viene dentro del concepto del API.
     matricula: str | None = None
     avion_color: str | None = None
+
+    @field_validator("clave_cliente", mode="before")
+    @classmethod
+    def _clave_cliente_liberal(cls, v: Any) -> str | None:
+        return clave_cliente_liberal(v)
 
 
 class DineroOtroGastoFila(BaseModel):
