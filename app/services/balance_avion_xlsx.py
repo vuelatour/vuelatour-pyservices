@@ -104,6 +104,7 @@ centavo, la celda se queda como valor.
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -121,6 +122,7 @@ from app.schemas.reportes import (
     REGLA_COSTO_ULTIMO_PRECIO,
     VARIANTE_BALANCE_GENERAL,
     BalanceAfacOtrosMovimientos,
+    BalanceAfacResumen,
     BalanceAvionBalanceBloque,
     BalanceAvionCobro,
     BalanceAvionGastoFila,
@@ -152,6 +154,8 @@ from app.services._formato import (
 from app.services.caja_chica_xlsx import _texto_literal
 from app.services.tabla_xlsx import sheet_title
 
+logger = logging.getLogger(__name__)
+
 BRAND = "0F4C81"
 NAVY = "102A43"
 MUTED = "627D98"
@@ -166,6 +170,10 @@ TC_OFICIAL_FILL = "DCE9F8"
 FILL_VENTA = "E8F0FB"  # azul suave
 FILL_COSTOS = "FDF3E7"  # ámbar suave
 FILL_COBROS = "E9F6EC"  # verde suave
+# AFAC POR VUELO (16-oct-2026, API 0.0.89): la celda EGRESO (costo real) que
+# se captura en el Balance general en pantalla —solo si el API la manda
+# `editable`— lleva este verde suave: «aquí se escribe».
+FILL_AFAC_EDITABLE = "E9F6EC"
 
 MONEY = "#,##0.00"
 # Columna en DÓLARES de la hoja 'inventario' (22-sep-2026): lleva el "$"
@@ -2104,6 +2112,18 @@ def _afac_en_filas(om: BalanceHojaOtrosMovimientos | None) -> bool:
     None/False/ausente ⇒ libro de siempre (con un API 0.0.69–0.0.73, el
     bloque informativo)."""
     return om is not None and om.afac_en_filas is True
+
+
+def _afac_por_vuelo(om: BalanceHojaOtrosMovimientos | None) -> bool:
+    """True solo si el API 0.0.89 marcó la hoja con `afac_por_vuelo: true`
+    (16-oct-2026, invariante 90 del API): las filas AFAC POR VUELO
+    (`seccion == 'AFAC_VUELO'`; INGRESO = reservado, EGRESO = costo real)
+    viajan contiguas al final de `filas` y SUMAN en TOTALES y en el bloque
+    VUELATOUR como cualquier fila. Con ella: fila separadora, vínculo
+    editable `afac_real` en la celda EGRESO, leyenda de la fila 2 y textos
+    del bloque VUELATOUR; MANDA sobre `afac_en_filas`. None/False/ausente ⇒
+    libro de siempre."""
+    return om is not None and om.afac_por_vuelo is True
 
 
 def _fragmento_om_pago_vendedor(om: BalanceHojaOtrosMovimientos) -> str:
@@ -4629,6 +4649,28 @@ _EMPRESA_AFAC_EN_FILAS = (
     "ahí con egreso $0.00 porque ya restan en el balance de su avión (hoja "
     "'permisos')."
 )
+# AFAC POR VUELO (16-oct-2026, API 0.0.89, invariante 90 del API; decisiones
+# del cliente del 16-oct: el avión sigue pagando lo RESERVADO y el COSTO REAL
+# de cada vuelo es egreso de VuelaTour). Con `afac_por_vuelo` (MANDA sobre
+# `afac_en_filas`) las etiquetas de ingresos/egresos propios lo dicen y el pie
+# suma `_EMPRESA_AFAC_POR_VUELO` (antes de la regla). Ningún texto lleva «sin
+# TC» ni la marca «· PROVISIÓN (».
+_EMPRESA_INGRESOS_AFAC_VUELO = (
+    "(+) INGRESOS PROPIOS USD (TUAs, extras, pernocta, comisión — cotizado del "
+    "periodo; AFAC reservado por vuelo)"
+)
+_EMPRESA_PAGOS_AFAC_VUELO = (
+    "(−) EGRESOS PROPIOS USD (pago al vendedor, TUAs, extensión, comisión "
+    "bancaria, sueltos; costo real AFAC por vuelo)"
+)
+_EMPRESA_AFAC_POR_VUELO = (
+    " Incluyen las filas AFAC por vuelo de 'otros movimientos': el AFAC "
+    "RESERVADO de cada vuelo como ingreso (lo que su avión ya carga como costo "
+    "en su columna PERMISO AFAC) y su COSTO REAL capturado como egreso (lo "
+    "paga VuelaTour a AFAC), a USD con el T.C. promedio de costos del libro de "
+    "su avión; los gastos marcados «Pago de AFAC» no egresan aquí: son el "
+    "comprobante de esos costos."
+)
 # Pie de RESPALDO para un payload sin `nota` (con ella, el API ya explica
 # participación, otros gastos, tienda y gastos personales: repetirlo era
 # pintar dos párrafos casi iguales).
@@ -4673,6 +4715,7 @@ def _bloque_empresa(
     sin_provision: bool = False,
     solo_gasto_real: bool = False,
     afac_en_filas: bool = False,
+    afac_por_vuelo: bool = False,
 ) -> int:
     """Bloque «VUELATOUR (empresa)» de la hoja 'balance' del GENERAL, después
     del último bloque de avión (6-oct-2026). Mismo estilo que la cascada de
@@ -4704,6 +4747,11 @@ def _bloque_empresa(
     en la cascada de su avión): las etiquetas son `_EMPRESA_INGRESOS_AFAC` /
     `_EMPRESA_PAGOS_AFAC` y la base del pie suma `_EMPRESA_AFAC_EN_FILAS`
     (antes de la regla); los números los trae el API igual que siempre.
+    Con el API 0.0.89 (`afac_por_vuelo`, 16-oct-2026, invariante 90 del API;
+    MANDA sobre `afac_en_filas`) los ingresos propios traen el AFAC RESERVADO
+    de cada vuelo y los egresos propios su COSTO REAL: etiquetas
+    `_EMPRESA_INGRESOS_AFAC_VUELO` / `_EMPRESA_PAGOS_AFAC_VUELO` y la base
+    del pie suma `_EMPRESA_AFAC_POR_VUELO`.
     Devuelve la siguiente fila libre."""
     t = ws.cell(row=row, column=1, value=_EMPRESA_TITULO)
     t.font = Font(bold=True, size=12, color="FFFFFF")
@@ -4764,13 +4812,19 @@ def _bloque_empresa(
         ws.cell(row=row, column=2).border = _border
         row += 1
 
+    if afac_por_vuelo:
+        texto_ing, texto_pag = _EMPRESA_INGRESOS_AFAC_VUELO, _EMPRESA_PAGOS_AFAC_VUELO
+    elif afac_en_filas:
+        texto_ing, texto_pag = _EMPRESA_INGRESOS_AFAC, _EMPRESA_PAGOS_AFAC
+    else:
+        texto_ing, texto_pag = _EMPRESA_INGRESOS, _EMPRESA_PAGOS
     fila_ing = row
-    etiqueta(row, _EMPRESA_INGRESOS_AFAC if afac_en_filas else _EMPRESA_INGRESOS)
+    etiqueta(row, texto_ing)
     monto(row, None, emp.ingresos_propios_usd, nota=_NOTA_EMPRESA_OTROS_MOVIMIENTOS)
     row += 1
 
     fila_pag = row
-    etiqueta(row, _EMPRESA_PAGOS_AFAC if afac_en_filas else _EMPRESA_PAGOS)
+    etiqueta(row, texto_pag)
     monto(row, None, emp.pagos_vendedor_usd, nota=_NOTA_EMPRESA_OTROS_MOVIMIENTOS)
     row += 1
 
@@ -4822,14 +4876,18 @@ def _bloque_empresa(
     # al vendedor egresa aquí; con la del 0.0.73, ya no dice «o
     # provisionado» (los egresos propios no traen provisión del vendedor).
     # Con `afac_en_filas` (API 0.0.74) la base dice además que incluye las
-    # filas «AFAC · matrícula» (antes de la regla); sin ella, byte a byte.
+    # filas «AFAC · matrícula» (antes de la regla); con `afac_por_vuelo` (API
+    # 0.0.89, manda) las filas AFAC por vuelo; sin ellas, byte a byte.
     if solo_gasto_real:
         base_om = _NOTA_EMPRESA_BASE_DOS_CATEGORIAS
     elif sin_provision:
         base_om = _NOTA_EMPRESA_BASE_SIN_PROVISION
     else:
         base_om = _NOTA_EMPRESA_BASE
-    base_om += _EMPRESA_AFAC_EN_FILAS if afac_en_filas else ""
+    if afac_por_vuelo:
+        base_om += _EMPRESA_AFAC_POR_VUELO
+    elif afac_en_filas:
+        base_om += _EMPRESA_AFAC_EN_FILAS
     base = base_om + (regla_empresa.format(regla=regla_vigente) if regla_vigente else "")
     if emp.nota:
         for texto in (emp.nota, base):
@@ -5603,6 +5661,34 @@ def _hoja_inventario(
     ws.freeze_panes = "A5"
 
 
+def _linea_pagos_afac(ws: Worksheet, pagos: BalanceAvionHojaGastos) -> None:
+    """Fila 3 de 'permisos' del libro INDIVIDUAL (16-oct-2026, API 0.0.89,
+    invariante 90 del API): los gastos PERMISO de este avión marcados «Pago
+    de AFAC» los paga VuelaTour y ya NO restan aquí (ni en la cascada ni en
+    el reparto): una línea en cursiva lo dice, con el total del API
+    (`total_mxn`, nada se suma aquí) y el detalle de cada pago en su nota.
+    La fila 3 está vacía en esta hoja (título 1, periodo 2, resumen 4–5)."""
+    n = len(pagos.filas)
+    monto = f" (${pagos.total_mxn:,.2f})" if pagos.total_mxn is not None else ""
+    if n == 1:
+        texto = f"1 pago de AFAC{monto} lo paga VuelaTour: no resta aquí"
+    else:
+        texto = f"{n} pagos de AFAC{monto} los paga VuelaTour: no restan aquí"
+    texto += " (ver Balance general · otros movimientos, bloque AFAC DEL PERIODO)."
+    c = ws.cell(row=3, column=1, value=texto)
+    c.font = Font(italic=True, size=9, color=NAVY)
+    lineas = []
+    for f in pagos.filas:
+        importe = f"${f.monto_mxn:,.2f}" if f.monto_mxn is not None else "sin T.C."
+        if f.moneda_original and f.monto_original is not None:
+            importe += f" ({f.moneda_original} {f.monto_original:,.2f})"
+        lineas.append(f"{_fecha(f.fecha) or 's/f'} · {f.detalle or '—'} · {importe}")
+    com = Comment("\n".join(lineas), "VuelaTour")
+    com.width = 420
+    com.height = max(60, 18 * len(lineas) + 20)
+    c.comment = com
+
+
 def construir_balance_avion(req: BalanceAvionRequest) -> Workbook:
     """Libro INDIVIDUAL de un avión (openpyxl, sin guardar). Pestañas, en
     orden: reporte horas, cobranza, combustible, Gastos Indirectos,
@@ -5647,8 +5733,9 @@ def construir_balance_avion(req: BalanceAvionRequest) -> Workbook:
     # el API manda la bandera (13-oct-2026, API 0.0.74, invariante 59 del
     # API); sin ella (API ≤ 0.0.73) la hoja de siempre, byte a byte.
     con_tc_permisos = bool(req.permisos.tc_por_fila)
+    ws_permisos = wb.create_sheet("permisos")
     _hoja_gastos(
-        wb.create_sheet("permisos"),
+        ws_permisos,
         "Permisos",
         req.permisos,
         req,
@@ -5657,6 +5744,11 @@ def construir_balance_avion(req: BalanceAvionRequest) -> Workbook:
         usd=_USD_TC_LIBRO,
         con_tc=con_tc_permisos,
     )
+    # Pagos de AFAC que paga VuelaTour (16-oct-2026, API 0.0.89, invariante
+    # 90): ya NO están en esta hoja ni restan aquí; una línea lo dice. Sin la
+    # llave (o vacía), byte a byte.
+    if req.pagos_afac is not None and req.pagos_afac.filas:
+        _linea_pagos_afac(ws_permisos, req.pagos_afac)
     # Pestaña «Otros ingresos» (13-oct-2026, API 0.0.75, invariante «INGRESO
     # ASIGNADO A UN AVIÓN» del API): los ingresos ING-n asignados a ESTE avión,
     # entre 'permisos' y 'balance'; su TOTAL USD lo cita la línea «(+) OTROS
@@ -5977,8 +6069,20 @@ def _hoja_otros_movimientos(
     sección (`_OM_SECCION_AFAC`, sin montos, sin merge, sin fila en blanco)
     justo antes de la primera, la fila 2 suma `_OM_AFAC_EN_FILAS` al final y
     el bloque informativo `afac` (solo para un API 0.0.69–0.0.73) ya no se
-    pinta aunque llegara. Aquí no se calcula nada: montos, notas y remanente
-    llegan hechos."""
+    pinta aunque llegara. Con el API 0.0.89 (`hoja.afac_por_vuelo`,
+    16-oct-2026, invariante 90 del API; MANDA sobre `afac_en_filas`) las
+    filas AFAC POR VUELO (`seccion == 'AFAC_VUELO'`) llegan contiguas al
+    final de `filas` y se pintan como FILAS NORMALES (cambio del cliente del
+    16-oct: «la columna nueva […] mejor que sea en la columna de egreso»):
+    EGRESO (D) = COSTO REAL que VuelaTour paga a AFAC (vacío = por capturar),
+    INGRESO (G) = RESERVADO del vuelo, remanente `ROUND(G-D,2)`; antes de la
+    primera, la fila separadora `_OM_SECCION_AFAC_VUELO` (sin montos: SUM la
+    ignora), la fila 2 suma `_OM_AFAC_POR_VUELO` y la celda D de cada una
+    lleva el vínculo `afac_real` del libro JSON (`_vinculo_afac_real`; la
+    edita el panel) y, si el API la manda `editable`, el verde suave
+    `FILL_AFAC_EDITABLE`. Debajo de TOTALES, con `hoja.afac_resumen`, el
+    bloque «AFAC DEL PERIODO» (`_bloque_afac_periodo`). Aquí no se calcula
+    nada: montos, notas y remanente llegan hechos."""
     if cubre_avion and _solo_gasto_real_om(hoja):
         # API 0.0.74 (invariante 61): «a cargo del avión» con egreso $0.00.
         regla_om = _OM_REGLA_COMISIONES_GASTO_REAL
@@ -5993,7 +6097,15 @@ def _hoja_otros_movimientos(
     )
     # Filas AFAC que SUMAN (API 0.0.74, invariante 62): su leyenda va AL FINAL
     # de la fila 2, después del texto de siempre; sin la bandera, byte a byte.
-    leyenda_afac = _OM_AFAC_EN_FILAS if _afac_en_filas(hoja) else ""
+    # AFAC POR VUELO (API 0.0.89, invariante 90) MANDA: su leyenda en lugar de
+    # la de las filas por avión (el 0.0.89 ya no manda `afac_en_filas`).
+    por_vuelo = _afac_por_vuelo(hoja)
+    if por_vuelo:
+        leyenda_afac = _OM_AFAC_POR_VUELO
+    elif _afac_en_filas(hoja):
+        leyenda_afac = _OM_AFAC_EN_FILAS
+    else:
+        leyenda_afac = ""
     # Otros ingresos ASIGNADOS a un avión (13-oct-2026, API 0.0.75): ya no
     # viajan en las sueltas; la fila 2 dice dónde están (al final de todo).
     # Sin la bandera, byte a byte.
@@ -6120,7 +6232,21 @@ def _hoja_otros_movimientos(
     # de la PRIMERA fila `seccion == 'AFAC'`, dentro del rango de los SUM de
     # TOTALES (no trae montos: SUM lo ignora), sin merge y sin fila en blanco
     # antes. Solo con la bandera: un API previo nunca lo ve.
-    encabezado_afac_pendiente = _afac_en_filas(hoja)
+    encabezado_afac_pendiente = _afac_en_filas(hoja) and not por_vuelo
+    # AFAC POR VUELO (API 0.0.89, invariante 90): el API las manda CONTIGUAS
+    # al final de `filas`; si no lo fueran (defensa), se pintan como filas
+    # normales sin separador y el bloque del periodo va como valor (sus SUM
+    # citan el rango de esas filas).
+    idx_afac = [i for i, f in enumerate(hoja.filas) if f.seccion == "AFAC_VUELO"]
+    afac_contiguas = bool(idx_afac) and idx_afac == list(range(idx_afac[0], idx_afac[-1] + 1))
+    if por_vuelo and idx_afac and not afac_contiguas:
+        logger.warning(
+            "otros movimientos: filas AFAC_VUELO no contiguas (%s); se pintan sin "
+            "separador y el bloque AFAC DEL PERIODO va como valor",
+            idx_afac,
+        )
+    separador_afac_pendiente = por_vuelo and afac_contiguas
+    filas_afac_vuelo: list[int] = []
     for f in hoja.filas:
         if encabezado_afac_pendiente and f.seccion == "AFAC":
             t = ws.cell(row=row, column=1, value=_OM_SECCION_AFAC)
@@ -6129,7 +6255,22 @@ def _hoja_otros_movimientos(
                 ws.cell(row=row, column=i).fill = PatternFill("solid", fgColor=LIGHT)
             row += 1
             encabezado_afac_pendiente = False
+        if separador_afac_pendiente and f.seccion == "AFAC_VUELO":
+            # Misma forma que el encabezado de las filas por avión: negrita
+            # NAVY 10, relleno LIGHT A:J, sin montos (SUM la ignora), sin
+            # merge y sin fila en blanco antes.
+            t = ws.cell(row=row, column=1, value=_OM_SECCION_AFAC_VUELO)
+            t.font = Font(bold=True, size=10, color=NAVY)
+            for i in range(1, 11):
+                ws.cell(row=row, column=i).fill = PatternFill("solid", fgColor=LIGHT)
+            row += 1
+            separador_afac_pendiente = False
+        es_afac_vuelo = por_vuelo and f.seccion == "AFAC_VUELO"
+        if es_afac_vuelo:
+            filas_afac_vuelo.append(row)
         pinta(f)
+        if es_afac_vuelo:
+            _marca_afac_vuelo(ws.cell(row=row - 1, column=4), f)
     if not hoja.filas and not hoja.filas_sueltas:
         ws.cell(row=row, column=1, value="Sin otros movimientos en el periodo.").font = Font(
             color=MUTED, italic=True
@@ -6167,8 +6308,23 @@ def _hoja_otros_movimientos(
     # de TOTALES para que no entre en sus sumas. Solo para un API
     # 0.0.69–0.0.73: con `afac_en_filas` (API 0.0.74) las filas AFAC ya suman
     # en la tabla y el bloque NO se pinta aunque llegara (nunca doble).
-    if hoja.afac is not None and not _afac_en_filas(hoja):
+    if (
+        hoja.afac is not None
+        and not _afac_en_filas(hoja)
+        and not por_vuelo
+        and hoja.afac_resumen is None
+    ):
         row = _bloque_afac_otros_movimientos(ws, hoja.afac, row + 2)
+    # AFAC DEL PERIODO (API 0.0.89, invariante 90): reservado vs costo real vs
+    # pagado a AFAC (gastos marcados «Pago de AFAC»), DEBAJO de TOTALES para
+    # no entrar a sus sumas (las filas AFAC por vuelo ya suman arriba).
+    if hoja.afac_resumen is not None:
+        rango = (
+            (filas_afac_vuelo[0], filas_afac_vuelo[-1])
+            if filas_afac_vuelo and afac_contiguas
+            else None
+        )
+        row = _bloque_afac_periodo(ws, hoja.afac_resumen, row + 2, rango)
     # Leyenda del amarillo (solo si alguna fila lo trae: sin provisiones la
     # hoja es la de siempre).
     if hay_provision:
@@ -6302,6 +6458,245 @@ def _bloque_afac_otros_movimientos(
     )
     _rojo_si_negativo(ws, f"I{row}:I{row}")
     return row + 1
+
+
+# AFAC POR VUELO (16-oct-2026, API 0.0.89, invariante 90 del API). Pedido del
+# cliente: «debe aparecer en balance general en la hoja de Otros movimientos
+# para poder confirmar el monto […] 2 columnas juntas, una que sea lo
+# reservado de afac o cotizado y otra de lo que realmente costó y que en esa
+# celda poder poner el monto y se registre sin tenerte que ir a otro lado»;
+# después: «la columna nueva que te pedí mejor que sea en la columna de
+# egreso». Decisiones del cliente: UNA fila por vuelo; el avión sigue pagando
+# lo RESERVADO (su columna PERMISO AFAC (PROVISIÓN)) y VuelaTour paga a AFAC
+# el COSTO REAL; los gastos marcados «Pago de AFAC» dejan de restar al avión
+# y se comparan aquí. Solo con `afac_por_vuelo` (separador y fila 2) o
+# `afac_resumen` (bloque). Ningún texto lleva «sin TC» ni «· PROVISIÓN (».
+_OM_SECCION_AFAC_VUELO = (
+    "AFAC POR VUELO · RESERVADO (lo aporta el avión) vs COSTO REAL (lo paga "
+    "VuelaTour a AFAC; escríbelo en la columna egreso del Balance general en "
+    "pantalla)"
+)
+_OM_AFAC_POR_VUELO = (
+    " AFAC POR VUELO: al final de las filas por vuelo va una fila por cada "
+    "vuelo con AFAC, que SÍ suma en TOTALES y en el bloque VUELATOUR (empresa) "
+    "de 'balance'. Su INGRESO es el AFAC RESERVADO del vuelo (lo que su avión "
+    "ya carga como costo en la columna PERMISO AFAC (PROVISIÓN) de la hoja de "
+    "vuelos: tarifa AFAC USD/hr × T.C. de costos × horas cobradas) y su EGRESO "
+    "es el COSTO REAL que VuelaTour paga a AFAC por ese vuelo (vacío = por "
+    "capturar; se escribe en esa celda en el Balance general en pantalla); "
+    "remanente = reservado − costo real. Los gastos marcados «Pago de AFAC» no "
+    "restan a ningún avión: se comparan en el bloque AFAC DEL PERIODO, debajo "
+    "de TOTALES."
+)
+_TITULO_AFAC_PERIODO = "AFAC DEL PERIODO · reservado vs costo real vs pagado a AFAC"
+_LEYENDA_AFAC_PERIODO = (
+    "El avión paga lo RESERVADO (columna PERMISO AFAC (PROVISIÓN) de su hoja de "
+    "vuelos) y VuelaTour paga a AFAC el COSTO REAL de cada vuelo. Los gastos "
+    "marcados «Pago de AFAC» no restan a ningún avión: son el comprobante de "
+    "estos costos. Este bloque NO entra a TOTALES (las filas AFAC por vuelo de "
+    "arriba ya suman ahí)."
+)
+_AFAC_PERIODO_FILAS = "AFAC por vuelo"
+_AFAC_PERIODO_PAGO = "pago a AFAC"
+_AFAC_PERIODO_PAGADO = "PAGADO A AFAC"
+_AFAC_PERIODO_DIFERENCIA = "DIFERENCIA"
+_AFAC_PERIODO_FUERA = "fuera de libro"
+_AFAC_PERIODO_SIN_PAGOS = "Sin gastos marcados «Pago de AFAC» en el periodo."
+# Columna del vínculo de cada pago (franja del panel / Conciliación).
+_COLUMNA_PAGO_AFAC = "pagado a AFAC"
+
+
+def _vinculo_afac_real(f: BalanceOtroMovimientoFila) -> dict | None:
+    """Metadato de la celda EDITABLE del costo real (libro JSON de la vista
+    en pantalla; contrato del 16-oct-2026, §5.3 con el «CAMBIO DEL CLIENTE»:
+    va en la celda EGRESO (D) de cada fila AFAC_VUELO, nunca en la del
+    reservado). `valor` null = sin capturar. Función PURA: copia lo que el API
+    mandó en `f.afac`; sin `afac` o sin `vuelo_id` ⇒ None (celda de solo
+    lectura)."""
+    a = f.afac
+    if a is None or not a.vuelo_id:
+        return None
+    return {
+        "tipo": "afac_real",
+        "campo": "costo_real_mxn",
+        "vuelo_id": a.vuelo_id,
+        "clave": f.clave,
+        "matricula": a.matricula,
+        "valor": a.costo_real_mxn,
+        "reservado_mxn": a.reservado_mxn,
+        "editable": a.editable,
+        "motivo": a.motivo_no_editable,
+        "mes": a.mes_contable,
+        "capturado_por": a.capturado_por_nombre,
+        "capturado_at": a.capturado_at,
+    }
+
+
+def _marca_afac_vuelo(cell, f: BalanceOtroMovimientoFila) -> None:
+    """Celda EGRESO (D) de una fila AFAC_VUELO ya pintada por `pinta()`: el
+    vínculo `afac_real` (solo viaja al libro JSON; el .xlsx no lo ve) y, si
+    el API la manda `editable`, el verde suave «aquí se escribe». El valor,
+    la nota y el borde son los de `pinta()`: aquí no se toca el dinero."""
+    vinculo = _vinculo_afac_real(f)
+    if vinculo is None:
+        return
+    libro_json.vincular(cell, vinculo)
+    # Vacía (por capturar) también con el formato de dinero: lo que se teclee
+    # se ve como el resto de la columna.
+    cell.number_format = MONEY
+    if vinculo["editable"]:
+        cell.fill = PatternFill("solid", fgColor=FILL_AFAC_EDITABLE)
+
+
+def _texto_pagos_afac(n: int, sin_tc: int) -> str:
+    texto = f"{n} gasto{'s' if n != 1 else ''} marcado{'s' if n != 1 else ''} «Pago de AFAC»"
+    if sin_tc:
+        texto += f" · {sin_tc} en USD sin T.C. (no suma{'n' if sin_tc != 1 else ''})"
+    return texto
+
+
+def _bloque_afac_periodo(
+    ws: Worksheet,
+    res: BalanceAfacResumen,
+    row: int,
+    rango: tuple[int, int] | None,
+) -> int:
+    """Bloque «AFAC DEL PERIODO» al pie de 'otros movimientos' (16-oct-2026,
+    API 0.0.89, invariante 90 del API), DEBAJO de TOTALES (no entra a sus
+    sumas). Mismas columnas que la tabla: costo real / pagado en D (egreso),
+    reservado en G (ingreso), remanente en I.
+      AFAC por vuelo: D = ROUND(SUM(D a:b),2) (Σ costo real capturado),
+        G = ROUND(SUM(G a:b),2) (Σ reservado), I = ROUND(SUM(I a:b),2)
+        (remanente de VuelaTour). `rango` = (a, b), las filas AFAC_VUELO
+        contiguas de arriba; None (sin filas, o no contiguas) ⇒ valores.
+      Un renglón por pago marcado (fecha en E, detalle en C, monto en D con
+        su vínculo de gasto en el libro JSON: «Ver en balance general» de
+        Conciliación/Caja chica); USD sin T.C. ⇒ D vacía con nota.
+      PAGADO A AFAC: D = ROUND(SUM(D de los pagos),2).
+      DIFERENCIA: D = ROUND(D pagado − D costo real,2), en rojo si ≠ 0.
+      Fuera de libro (solo > 0): el costo real capturado en vuelos que no
+        aparecen en ningún libro del periodo (red del API), como valor.
+    Los números son los del API (`res`); cada fórmula se verifica y, si no
+    reproduce el centavo, la celda queda como VALOR. Devuelve la fila
+    siguiente al bloque."""
+    t = ws.cell(row=row, column=1, value=_TITULO_AFAC_PERIODO)
+    t.font = Font(bold=True, size=10, color=NAVY)
+    for i in range(1, 11):
+        ws.cell(row=row, column=i).fill = PatternFill("solid", fgColor=LIGHT)
+    row += 1
+    ley = ws.cell(row=row, column=1, value=_LEYENDA_AFAC_PERIODO)
+    ley.font = Font(italic=True, size=9, color=MUTED)
+    ley.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=10)
+    ws.row_dimensions[row].height = 36
+    row += 1
+
+    def celda(r: int, col: int, formula: str | None, valor: float | None, **font) -> None:
+        cell = _formula(ws, r, col, formula, valor, MONEY, **font)
+        cell.border = _border
+
+    def texto(r: int, col: int, valor: str | None, **font) -> None:
+        cell = ws.cell(row=r, column=col, value=valor)
+        cell.border = _border
+        if font:
+            cell.font = Font(**font)
+
+    # (1) AFAC por vuelo: Σ costo real · Σ reservado · remanente.
+    fila_sub = row
+    a, b = rango if rango is not None else (None, None)
+    texto(row, 1, _AFAC_PERIODO_FILAS, bold=True)
+    capturado = f"costo real capturado: {res.vuelos_con_real} de {res.vuelos} vuelo" + (
+        "s" if res.vuelos != 1 else ""
+    )
+    if res.vuelos_sin_real:
+        capturado += f" · {res.vuelos_sin_real} por capturar"
+    texto(row, 3, capturado)
+    texto(row, 6, f"reservado (lo aporta el avión) · {res.vuelos_con_reservado} vuelo"
+          + ("s" if res.vuelos_con_reservado != 1 else ""))  # fmt: skip
+    celda(row, 4, f"ROUND(SUM(D{a}:D{b}),2)" if a else None, res.costo_real_mxn, bold=True)
+    celda(row, 7, f"ROUND(SUM(G{a}:G{b}),2)" if a else None, res.reservado_mxn, bold=True)
+    celda(row, 9, f"ROUND(SUM(I{a}:I{b}),2)" if a else None, res.remanente_mxn, bold=True)
+    _rojo_si_negativo(ws, f"I{row}:I{row}")
+    row += 1
+
+    # (2) Pagos marcados «Pago de AFAC», uno por renglón.
+    inicio_pagos = row
+    for p in res.pagos:
+        texto(row, 1, _AFAC_PERIODO_PAGO)
+        dc = ws.cell(row=row, column=3, value=p.detalle or None)
+        dc.border = _border
+        celda(row, 4, None, p.monto_mxn)
+        texto(row, 5, _fecha(p.fecha))
+        d = ws.cell(row=row, column=4)
+        if p.monto_mxn is None and p.monto_original is not None:
+            moneda = p.moneda_original or "USD"
+            d.comment = _nota_celda(
+                f"Pago en {moneda} {p.monto_original:,.2f} sin T.C.: no suma en la "
+                "comparación hasta que tenga su tipo de cambio."
+            )
+        if p.gasto_id:
+            libro_json.vincular_lista(
+                d,
+                [
+                    {
+                        "tipo": "gasto",
+                        "id": p.gasto_id,
+                        "rol": "fila" if p.monto_mxn is not None else "sin_tc",
+                        "monto_mxn": p.monto_mxn,
+                        "columna": _COLUMNA_PAGO_AFAC,
+                    }
+                ],
+            )
+        row += 1
+    if not res.pagos:
+        texto(row, 1, _AFAC_PERIODO_PAGO)
+        texto(row, 3, _AFAC_PERIODO_SIN_PAGOS, italic=True, color=MUTED)
+        row += 1
+    fin_pagos = row - 1
+
+    # (3) PAGADO A AFAC: Σ de los pagos con pesos.
+    fila_pag = row
+    texto(row, 1, _AFAC_PERIODO_PAGADO, bold=True)
+    texto(row, 3, _texto_pagos_afac(len(res.pagos), res.pagos_sin_tc))
+    celda(
+        row,
+        4,
+        f"ROUND(SUM(D{inicio_pagos}:D{fin_pagos}),2)" if res.pagos else None,
+        res.pagado_mxn,
+        bold=True,
+    )
+    row += 1
+
+    # (4) DIFERENCIA: pagado a AFAC − costo real capturado (rojo si ≠ 0).
+    texto(row, 1, _AFAC_PERIODO_DIFERENCIA, bold=True)
+    texto(row, 3, "pagado a AFAC − costo real capturado")
+    dif = res.diferencia_pagado_mxn
+    distinto = dif is not None and abs(dif) >= 0.005
+    celda(
+        row,
+        4,
+        f"ROUND(D{fila_pag}-D{fila_sub},2)",
+        dif,
+        bold=True,
+        color=RED if distinto else "000000",
+    )
+    row += 1
+
+    # (5) Red de seguridad del API: costo real fuera de los libros (> 0).
+    fuera = res.reales_fuera_de_libro_mxn
+    if fuera is not None and fuera >= 0.005:
+        texto(row, 1, _AFAC_PERIODO_FUERA, italic=True, color=MUTED)
+        texto(
+            row,
+            3,
+            "costo real capturado en vuelos que no aparecen en ningún libro del "
+            "periodo (revisa su avión y su fecha; ver 'pendientes de captura')",
+            italic=True,
+            color=MUTED,
+        )
+        celda(row, 4, None, fuera, italic=True, color=MUTED)
+        row += 1
+    return row
 
 
 def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
@@ -6516,6 +6911,7 @@ def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
                 sin_provision=_sin_provision_vendedor(cons.otros_movimientos),
                 solo_gasto_real=_solo_gasto_real_om(cons.otros_movimientos),
                 afac_en_filas=_afac_en_filas(cons.otros_movimientos),
+                afac_por_vuelo=_afac_por_vuelo(cons.otros_movimientos),
             )
         for i, w in enumerate([46, 14, 16], start=1):
             ws_b.column_dimensions[get_column_letter(i)].width = w

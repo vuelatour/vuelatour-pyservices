@@ -203,6 +203,27 @@ def test_vinculo_de_fase_2_viaja_si_la_celda_lo_trae():
     }
 
 
+def test_vinculo_singular_en_celda_vacia_sin_estilo_viaja():
+    """AFAC POR VUELO (16-oct-2026, API 0.0.89): la celda EGRESO de un vuelo
+    SIN costo real capturado está vacía y aun así el panel necesita su
+    vínculo `afac_real` para editarla: una celda sin valor, estilo ni nota
+    pero CON `vinculo` viaja con `v` null y texto vacío."""
+    wb = Workbook()
+    ws = wb.active
+    vinculo = {"tipo": "afac_real", "campo": "costo_real_mxn", "vuelo_id": "v-1", "valor": None}
+    libro_json.vincular(ws["D7"], vinculo)
+    vinculo["vuelo_id"] = "mutado"  # copia: mutar el dict del llamador no viaja
+    d7 = _celda(libro_json.exportar_libro(wb, titulo="x")["hojas"][0], 7, 4)
+    assert d7 == {
+        "r": 7,
+        "c": 4,
+        "v": None,
+        "t": "",
+        "vinculo": {"tipo": "afac_real", "campo": "costo_real_mxn", "vuelo_id": "v-1",
+                    "valor": None},
+    }  # fmt: skip
+
+
 def test_vinculos_lista_viaja_y_convive_con_el_singular():
     """Vínculos en LISTA (13-oct-2026, punto 5): una celda puede sumar varios
     gastos. Conviven con el `vinculo` singular de la fase 2, una lista vacía

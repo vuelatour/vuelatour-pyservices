@@ -1319,6 +1319,156 @@ class BalanceAvionBalanceBloque(BaseModel):
     otros_ingresos_avion_usd: float | None = None
 
 
+def _texto_liberal(v: Any) -> str | None:
+    """Texto no vacío ⇒ recortado; vacío o no-texto ⇒ None (metadato: jamás
+    un 422)."""
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+    return None
+
+
+def _conteo_liberal(v: Any) -> int:
+    """Conteo de un resumen (solo alimenta textos): entero ≥ 0 o número
+    entero ⇒ int; lo demás (None, bool, texto, negativo) ⇒ 0."""
+    if isinstance(v, bool):
+        return 0
+    if isinstance(v, int):
+        return max(v, 0)
+    if isinstance(v, float) and math.isfinite(v) and v.is_integer():
+        return max(int(v), 0)
+    return 0
+
+
+class BalanceAfacVuelo(BaseModel):
+    """AFAC POR VUELO (16-oct-2026, API 0.0.89, invariante 90 del API;
+    decisiones del cliente del 16-oct: filas UNA POR VUELO, el costo real es
+    EGRESO DE VUELATOUR y el avión sigue pagando lo RESERVADO). Viaja como
+    `afac` de cada fila `seccion == 'AFAC_VUELO'` de 'otros movimientos'. Los
+    montos de la fila (EGRESO = costo real, INGRESO = reservado, remanente)
+    ya vienen en las llaves de siempre de la fila; esto es el METADATO de la
+    celda editable del libro JSON (vínculo `afac_real` en la celda EGRESO):
+    aquí no se calcula nada. Todo liberal: jamás un 422 por un metadato."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    vuelo_id: str = ""
+    matricula: str = ""
+    horas_cobradas: float | None = None
+    tarifa_usd_hr: float | None = None
+    tc_costos: float | None = None
+    # `permiso_afac_mxn` de la fila del libro TAL CUAL (null = sin tarifa).
+    reservado_mxn: float | None = None
+    # null = sin capturar (o fila no «dueña» de un vuelo multi-avión).
+    costo_real_mxn: float | None = None
+    remanente_mxn: float | None = None
+    capturado_por_nombre: str | None = None
+    capturado_at: str | None = None
+    notas: str | None = None
+    mes_contable: str | None = None  # 'AAAA-MM'
+    # disponible (migración) && fila dueña && mes contable abierto. El ROL
+    # lo decide el panel (el libro no conoce al usuario) y el PUT lo valida.
+    editable: bool = False
+    motivo_no_editable: str | None = None
+    cierre_marca: str | None = None
+
+    @field_validator("vuelo_id", "matricula", mode="before")
+    @classmethod
+    def _id_liberal(cls, v: Any) -> str:
+        return _texto_liberal(v) or ""
+
+    @field_validator(
+        "horas_cobradas",
+        "tarifa_usd_hr",
+        "tc_costos",
+        "reservado_mxn",
+        "costo_real_mxn",
+        "remanente_mxn",
+        mode="before",
+    )
+    @classmethod
+    def _numero_liberal(cls, v: Any) -> float | None:
+        return _monto_vinculo_liberal(v)
+
+    @field_validator(
+        "capturado_por_nombre",
+        "capturado_at",
+        "notas",
+        "mes_contable",
+        "motivo_no_editable",
+        "cierre_marca",
+        mode="before",
+    )
+    @classmethod
+    def _textos_liberales(cls, v: Any) -> str | None:
+        return _texto_liberal(v)
+
+    @field_validator("editable", mode="before")
+    @classmethod
+    def _editable_estricto(cls, v: Any) -> bool:
+        """Solo un `true` JSON abre la celda; cualquier otra cosa ⇒ False."""
+        return v is True
+
+
+class BalanceAfacPago(BaseModel):
+    """Un gasto marcado «Pago de AFAC» del periodo (lo paga VuelaTour; no
+    resta a ningún avión): renglón del bloque «AFAC DEL PERIODO» de 'otros
+    movimientos' (16-oct-2026, API 0.0.89). `detalle` llega armado del API
+    (« · XA-VGV» / « · vuelo #280»); `monto_mxn` null = USD sin T.C. (no
+    suma en la comparación)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    gasto_id: str | None = None
+    fecha: str | None = None
+    detalle: str = ""
+    matricula: str | None = None
+    monto_mxn: float | None = None
+    moneda_original: str | None = None
+    monto_original: float | None = None
+
+    @field_validator("gasto_id", mode="before")
+    @classmethod
+    def _gasto_id_liberal(cls, v: Any) -> str | None:
+        return _texto_liberal(v)
+
+    @field_validator("detalle", mode="before")
+    @classmethod
+    def _detalle_liberal(cls, v: Any) -> str:
+        return v if isinstance(v, str) else ""
+
+
+class BalanceAfacResumen(BaseModel):
+    """Resumen «AFAC DEL PERIODO» de 'otros movimientos' (16-oct-2026, API
+    0.0.89, invariante 90): Σ reservado / Σ costo real / remanente de las
+    filas AFAC por vuelo y la comparación contra los gastos marcados «Pago
+    de AFAC». Lo calcula el API; aquí se pinta (con fórmulas verificadas
+    sobre las filas cuando son contiguas). Montos None ⇒ celda vacía (nunca
+    un 0 falso)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    vuelos: int = 0
+    vuelos_con_reservado: int = 0
+    vuelos_con_real: int = 0
+    vuelos_sin_real: int = 0
+    reservado_mxn: float | None = None
+    costo_real_mxn: float | None = None
+    remanente_mxn: float | None = None
+    pagado_mxn: float | None = None
+    pagos_sin_tc: int = 0
+    diferencia_pagado_mxn: float | None = None
+    reales_fuera_de_libro_mxn: float | None = None
+    pagos: list[BalanceAfacPago] = Field(default_factory=list)
+
+    @field_validator(
+        "vuelos", "vuelos_con_reservado", "vuelos_con_real", "vuelos_sin_real", "pagos_sin_tc",
+        mode="before",
+    )  # fmt: skip
+    @classmethod
+    def _conteos(cls, v: Any) -> int:
+        return _conteo_liberal(v)
+
+
 class BalanceOtroMovimientoFila(BaseModel):
     """Fila de la pestaña "Otros movimientos" (28-ago, hoja manual del
     cliente): egreso pagado apareado con el ingreso cobrado por concepto y
@@ -1369,7 +1519,17 @@ class BalanceOtroMovimientoFila(BaseModel):
     # cascada de su avión—), al final de `filas`; con `afac_en_filas` se pinta
     # un encabezado de sección antes de la primera. None = fila de vuelo o
     # suelta, o API previo.
+    # Desde el API 0.0.89 (16-oct-2026, invariante 90): 'AFAC_VUELO' = fila
+    # AFAC POR VUELO (ingreso = RESERVADO del vuelo, egreso = COSTO REAL que
+    # VuelaTour paga a AFAC, null = por capturar), al final de `filas`,
+    # contiguas; con `afac_por_vuelo` se pinta la fila separadora y la celda
+    # EGRESO lleva el vínculo editable `afac_real` en el libro JSON.
     seccion: str | None = None
+    # ADITIVO (16-oct-2026, API 0.0.89, invariante 90): SOLO en las filas
+    # `seccion == 'AFAC_VUELO'`, ÚLTIMA llave de la fila. Datos del vuelo para
+    # la celda editable (vínculo `afac_real` del libro JSON); los montos de
+    # la fila (ingreso/egreso/remanente) ya vienen en sus llaves de siempre.
+    afac: BalanceAfacVuelo | None = None
 
     @field_validator("clave_cliente", mode="before")
     @classmethod
@@ -1475,6 +1635,20 @@ class BalanceHojaOtrosMovimientos(BaseModel):
     # `_OM_OTROS_INGRESOS_POR_AVION` al final de la fila 2. None/False (API ≤
     # 0.0.74) ⇒ la pestaña de siempre, byte a byte.
     otros_ingresos_por_avion: bool | None = None
+    # ADITIVO (16-oct-2026, API 0.0.89, invariante 90 del API): `true` = las
+    # filas AFAC POR VUELO (`seccion == 'AFAC_VUELO'`, una por vuelo con AFAC:
+    # INGRESO = reservado, EGRESO = costo real) viajan contiguas al final de
+    # `filas` y SUMAN en TOTALES y en el bloque VUELATOUR como cualquier fila.
+    # Con ella: fila separadora antes de la primera, vínculo editable
+    # `afac_real` en su celda EGRESO (libro JSON), leyenda de la fila 2 y
+    # textos del bloque VUELATOUR; MANDA sobre `afac_en_filas` (el 0.0.89 ya no
+    # la manda). Solo con ≥ 1 fila AFAC_VUELO. None/False ⇒ byte a byte.
+    afac_por_vuelo: bool | None = None
+    # ADITIVO (16-oct-2026, API 0.0.89): bloque «AFAC DEL PERIODO» debajo de
+    # TOTALES (reservado vs costo real vs pagado a AFAC con los gastos
+    # marcados «Pago de AFAC»). Viaja con filas AFAC_VUELO o con pagos
+    # marcados. None ⇒ sin bloque.
+    afac_resumen: BalanceAfacResumen | None = None
 
 
 class BalanceAvionOtroIngresoFila(BaseModel):
@@ -1795,6 +1969,14 @@ class BalanceAvionRequest(BaseModel):
     # mes del libro (ver `BalanceCierre`). None (API previo) ⇒ sin bloque
     # «CIERRE DEL MES» bajo TOTALES: libro byte a byte.
     cierre: BalanceCierre | None = None
+    # ADITIVO (16-oct-2026, API 0.0.89, invariante 90 del API): los gastos
+    # PERMISO de ESTE avión marcados «Pago de AFAC» (los paga VuelaTour: ya NO
+    # están en `permisos` ni restan en la cascada). ÚLTIMA llave del libro y
+    # SOLO con ≥ 1. El individual pinta una línea en cursiva bajo el título de
+    # 'permisos' que lo dice (con el detalle en su nota); el general no la
+    # usa (los pagos van en `afac_resumen` de 'otros movimientos'). None ⇒
+    # libro byte a byte.
+    pagos_afac: BalanceAvionHojaGastos | None = None
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod

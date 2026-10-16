@@ -1601,6 +1601,77 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   la marca «sin TC»; esquemas, JSON del 0.0.74 y
   mixto, rutas xlsx y libro JSON; huellas de valores, layout y bytes con la
   llave ausente/null/false; variante general idéntica).
+  **SUPERSEDIDO el 16-oct-2026 por AFAC POR VUELO** (entrada siguiente):
+  el API 0.0.89 ya no manda `afac_en_filas` ni las filas «AFAC ·
+  matrícula»; su camino se conserva por skew con un API 0.0.74–0.0.88.
+- **AFAC POR VUELO: reservado vs costo real en 'otros movimientos', con la
+  celda del costo real EDITABLE en pantalla** (16-oct-2026, API 0.0.89,
+  invariante 90 del API, URGENTE del cliente). Pedido: «debe aparecer en
+  balance general en la hoja de Otros movimientos para poder confirmar el
+  monto […] 2 columnas juntas, una […] lo reservado de afac […] y otra de lo
+  que realmente costó y que en esa celda poder poner el monto y se registre
+  sin tenerte que ir a otro lado»; después: «la columna nueva que te pedí
+  mejor que sea en la columna de egreso». Decisiones del cliente: UNA fila
+  por vuelo; el avión sigue pagando lo RESERVADO (su columna PERMISO AFAC
+  (PROVISIÓN)) y el COSTO REAL es egreso de VuelaTour; se escribe solo el
+  monto del vuelo; los gastos marcados «Pago de AFAC» dejan de restar al
+  avión y se comparan cada mes. **El dinero es del API** (fuente única
+  `afac-por-vuelo.util#filasAfacPorVuelo`); aquí se pinta. Contrato ADITIVO:
+  `BalanceOtroMovimientoFila.afac` (`BalanceAfacVuelo`, solo en filas
+  `seccion == 'AFAC_VUELO'`), `BalanceHojaOtrosMovimientos.afac_por_vuelo`
+  (`_afac_por_vuelo` exige `is True`; MANDA sobre `afac_en_filas`) y
+  `.afac_resumen` (`BalanceAfacResumen` + `BalanceAfacPago`), y
+  `BalanceAvionRequest.pagos_afac` (`BalanceAvionHojaGastos`); todo con
+  default y validadores liberales en el metadato (`editable` solo con un
+  `true` JSON; jamás un 422). (1) Las filas AFAC_VUELO llegan contiguas al
+  final de `filas` y se pintan con `pinta()` como FILAS NORMALES: A clave
+  (swatch; CANCELADO en rojo), B fecha, C concepto del costo real («AFAC
+  costo real · capturó … el …» / «· por capturar»), **D EGRESO = COSTO
+  REAL** (vacía, no 0, si no se ha capturado), F concepto del reservado, **G
+  INGRESO = RESERVADO** (valor tal cual; la fórmula con tarifa × T.C. ×
+  horas no cabe porque esas celdas no están en la fila: el cálculo va en la
+  nota de G), I `ROUND(G-D,2)` y SUMAN en TOTALES con las fórmulas de
+  siempre (sin fórmula especial). Con la bandera: fila separadora
+  `_OM_SECCION_AFAC_VUELO` antes de la primera (estilo del encabezado por
+  avión: negrita NAVY 10, LIGHT A:J, sin montos, sin merge) y, en la celda D
+  de cada fila, el formato MONEY (también vacía), el verde suave
+  `FILL_AFAC_EDITABLE` si el API la manda `editable` y el vínculo
+  `afac_real` del libro JSON (`_vinculo_afac_real`, contrato en la cabecera
+  de `libro_json`: `{tipo, campo, vuelo_id, clave, matricula, valor,
+  reservado_mxn, editable, motivo, mes, capturado_por, capturado_at}`; solo
+  en D, NUNCA en G; sin `vuelo_id` no hay vínculo). Si no fueran contiguas
+  (defensa; se loguea): filas normales sin separador. (2) Fila 2:
+  `_OM_AFAC_POR_VUELO` en el lugar de `_OM_AFAC_EN_FILAS`. (3) Bloque
+  «AFAC DEL PERIODO» (`_bloque_afac_periodo`) DEBAJO de TOTALES (no entra
+  a sus sumas) con `afac_resumen` (viaja también solo con pagos marcados,
+  sin filas ni bandera): título, leyenda combinada A:J, «AFAC por vuelo» con
+  D = `ROUND(SUM(D a:b),2)` (Σ costo real), G = `ROUND(SUM(G a:b),2)` (Σ
+  reservado), I = `ROUND(SUM(I a:b),2)` (remanente) sobre el rango de las
+  filas AFAC (sin filas o no contiguas ⇒ valores del API); un renglón «pago
+  a AFAC» por gasto marcado (detalle en C, monto en D con `vincular_lista`
+  `{tipo:'gasto', id, rol:'fila'|'sin_tc', monto_mxn, columna:'pagado a
+  AFAC'}`, fecha en E; USD sin T.C. ⇒ D vacía con nota), «PAGADO A AFAC» =
+  `ROUND(SUM(D pagos),2)`, «DIFERENCIA» = `ROUND(Dpagado-Dreal,2)` en rojo si
+  ≠ 0 y, solo si > 0, «fuera de libro» (red del API, valor). Todas
+  verificadas: la que no reproduce el centavo vuelve a valor. (4) Bloque
+  VUELATOUR: kwarg `afac_por_vuelo` de `_bloque_empresa` ⇒
+  `_EMPRESA_INGRESOS_AFAC_VUELO` / `_EMPRESA_PAGOS_AFAC_VUELO` y el pie suma
+  `_EMPRESA_AFAC_POR_VUELO` (antes de la regla). (5) Libro INDIVIDUAL: con
+  `pagos_afac` (≥ 1 fila) la fila 3 de 'permisos' lleva en cursiva «N
+  pago(s) de AFAC ($total) los paga VuelaTour: no restan aquí (ver Balance
+  general · otros movimientos, bloque AFAC DEL PERIODO).» con el detalle en
+  su nota (`_linea_pagos_afac`; total = `total_mxn` del API). Ningún texto
+  nuevo lleva «sin TC» ni «· PROVISIÓN (». **Skew**: API 0.0.89 + pyservices
+  previo ⇒ las filas se pintan y SUMAN como filas normales (TOTALES y bloque
+  VUELATOUR correctos), sin separador, sin celda editable ni bloque del
+  periodo; pyservices nuevo + API ≤ 0.0.88 ⇒ byte a byte (huellas
+  `_HUELLAS_0088` del HEAD 575c816 con los payloads de forma real del 0.0.88
+  —cierre de mes + `afac_en_filas`— en `tests/_afac_vuelo_payloads.py`, y
+  las de `test_cierre_mes` con las llaves AFAC en neutro). Orden de deploy
+  del lote: migración `20261016000005` → pyservices (compuerta `GET
+  /version`) → API 0.0.89 → panel. Tests:
+  `tests/test_balance_otros_movimientos_afac_vuelo.py` (+ celda vacía con
+  vínculo en `test_libro_json.py`).
 - **Otros ingresos del avión: pestaña 'Otros ingresos', línea «(+) OTROS
   INGRESOS USD», hoja consolidada, Libro Dinero y reparto** (13-oct-2026,
   API 0.0.75; invariante «INGRESO ASIGNADO A UN AVIÓN» del API, migración

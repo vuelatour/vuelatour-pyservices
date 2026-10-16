@@ -54,6 +54,21 @@ Contrato del JSON (versión 1; el panel lo tipa 1:1 en `types/libro-excel.ts`):
            REGLA: aquí no se decide a qué libro ni a qué mes va un gasto; solo
            se transporta lo que el API ya acreditó (lo anota quien construye
            el libro con `vincular_lista(cell, [...])`).
+  vinculo (UNO por celda, `vincular(cell, {...})`) tipo 'afac_real'
+  (16-oct-2026, API 0.0.89, invariante 90 del API: COSTO REAL AFAC por vuelo,
+  EDITABLE en la vista en pantalla) =
+           {tipo: 'afac_real', campo: 'costo_real_mxn', vuelo_id, clave,
+            matricula, valor, reservado_mxn, editable, motivo, mes,
+            capturado_por, capturado_at}
+           SOLO en la celda EGRESO (columna D) de cada fila AFAC POR VUELO de
+           'otros movimientos' del Balance general (nunca en la del
+           reservado). `valor` null = sin capturar (la celda viaja aunque
+           esté vacía); `editable` = lo que mandó el API (migración aplicada,
+           fila «dueña» del vuelo y mes contable abierto; el ROL lo decide el
+           panel); `motivo` = por qué no se puede editar (es-MX) o null;
+           `mes` = 'AAAA-MM' contable del vuelo. El panel guarda con
+           `PUT /v1/flights/{vuelo_id}/afac-real` y quita con `DELETE`
+           (previa confirmación). Aquí solo se transporta.
 """
 
 from __future__ import annotations
