@@ -47,6 +47,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.schemas.reportes import DineroOtroIngresoFila, DineroVueloFila, DineroXlsxRequest
+from app.services import cierre_mes
 from app.services._formato import ANCHO_CLAVE_TOPE_DINERO, ancho_columna_clave, hay_id_cliente
 
 NAVY = "102A43"
@@ -235,11 +236,15 @@ def _hoja_vuelos(ws: Worksheet, req: DineroXlsxRequest) -> None:
     # CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75):
     # «january02-211026 (50 % N4142R)» va POR CONTENIDO (con tope) solo si
     # alguna fila trae `clave_cliente`; sin él, los 14 de siempre.
+    # Con la marca del cierre de mes (16-oct-2026) la CLAVE crece POR
+    # CONTENIDO (mismo tope) aunque no haya ID por cliente: «vtbeh · Viene de
+    # septiembre 2026» no cabe en 14.
+    hay_marcas = any(v.cierre_marca for v in req.vuelos)
     ws.column_dimensions["A"].width = ancho_columna_clave(
-        (v.clave for v in req.vuelos),
+        (_clave_pintada(v) for v in req.vuelos),
         base=14,
         tope=ANCHO_CLAVE_TOPE_DINERO,
-        con_id_cliente=hay_id_cliente(req.vuelos),
+        con_id_cliente=hay_id_cliente(req.vuelos) or hay_marcas,
     )
     ws.column_dimensions["C"].width = 20
     ws.row_dimensions[4].height = 34
@@ -263,6 +268,8 @@ def _hoja_vuelos(ws: Worksheet, req: DineroXlsxRequest) -> None:
                     val = _fecha(cobro.fecha) if cobro and cobro.fecha else None
                 else:
                     val = cobro.monto_mxn if cobro else None
+            if attr == "clave":
+                val = _clave_pintada(v)
             cell = ws.cell(row=row, column=i, value=val)
             cell.border = _border
             if fmt and isinstance(val, (int, float)):
@@ -270,7 +277,11 @@ def _hoja_vuelos(ws: Worksheet, req: DineroXlsxRequest) -> None:
             if fila_fill:
                 cell.fill = fila_fill
             if attr == "clave":
-                cell.font = Font(size=9)
+                cell.font = (
+                    Font(size=9, bold=True, color=_color_marca(v))
+                    if v.cierre_marca
+                    else Font(size=9)
+                )
                 if v.matricula or v.multi_avion:
                     texto = v.matricula or ""
                     # Vuelo MULTI-AVIÓN (regla B, 28-ago-2026): la fila trae
@@ -334,8 +345,46 @@ def _hoja_vuelos(ws: Worksheet, req: DineroXlsxRequest) -> None:
         "pernocta/comisión y su IVA) — contra eso cuadran los cobros.",
     ).font = Font(italic=True, size=9, color="5B6470")
     ws.merge_cells(start_row=nrow, start_column=1, end_row=nrow, end_column=14)
+    _lineas_cierre(ws, nrow + 2, req)
 
     ws.freeze_panes = ws.cell(row=5, column=4)
+
+
+# ===== CIERRE DE MES (16-oct-2026, API 0.0.88, invariante 89 del API) =====
+# Un vuelo COMPLETADO sin cobrar por completo al cerrar el mes pasa COMPLETO
+# al mes siguiente. En el Libro Dinero el vuelo que PASA no viene en `vuelos`
+# (el libro es de dinero, no de horas); el que VIENE trae su fila completa
+# con la marca junto a la CLAVE. Al final de la hoja, una línea por lista
+# (`cierre.pasan` / `vienen` / `pasarian`) con los montos del API, fuera de
+# TOTALES. Sin `cierre` ni marcas: hoja de siempre.
+_COLOR_SALE = cierre_mes.COLOR_TEXTO_SALE
+_COLOR_VIENE = cierre_mes.COLOR_TEXTO_VIENE
+
+
+def _clave_pintada(v: DineroVueloFila) -> str:
+    return f"{v.clave} · {v.cierre_marca}" if v.cierre_marca else v.clave
+
+
+def _color_marca(v: DineroVueloFila) -> str:
+    return _COLOR_VIENE if cierre_mes.marca_es_entrada(v) else _COLOR_SALE
+
+
+def _lineas_cierre(ws: Worksheet, row: int, req: DineroXlsxRequest) -> None:
+    listas = cierre_mes.listas_balance(req.cierre)
+    sello = cierre_mes.texto_estado_cierre(req.cierre)
+    if not listas and not sello:
+        return
+    ws.cell(
+        row=row, column=1, value="CIERRE DEL MES" + (f" — {sello}" if sello else "")
+    ).font = Font(bold=True, size=10, color=NAVY)
+    for lista, titulo, items in listas:
+        row += 1
+        texto = f"{titulo}: " + " · ".join(cierre_mes.linea_vuelo_libro(it) for it in items) + "."
+        c = ws.cell(row=row, column=1, value=texto)
+        c.font = Font(size=9, color=_COLOR_VIENE if lista == "vienen" else _COLOR_SALE)
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=14)
+        ws.row_dimensions[row].height = 14 * max(1, -(-len(texto) // 150)) + 4
 
 
 # Comisión del vendedor como GASTO (28-sep-2026, API 0.0.39, invariante 31

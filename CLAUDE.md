@@ -1756,6 +1756,77 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   general, payload mixto, vista en pantalla y rutas con el JSON del 0.0.77),
   `tests/test_libro_json.py` (parametrización «por ingreso») y
   `tests/test_reparto_otros_ingresos_avion.py` (`tc_origen` ignorado).
+- **Cierre de mes y vuelos que pasan al mes siguiente** (16-oct-2026, API
+  0.0.88, invariante 89 del API; pedido: «los vuelos que aún no se cobren se
+  marquen en el balance y se muevan para el siguiente mes hasta que se cobre
+  y complete»). El API decide TODO (qué vuelo pasa, a qué mes, con qué
+  leyenda, qué suma); aquí solo se PINTAN campos aditivos con default (sin
+  ellos ⇒ libros byte a byte). Textos compartidos (etiqueta es-MX del mes,
+  sello «Mes cerrado el 16-oct-2026 por Ale» en hora Cancún, títulos de las
+  listas): `app/services/cierre_mes.py` — ningún número. Validador ÚNICO de
+  textos del cierre: `schemas/reportes.texto_cierre_liberal` (folio numérico
+  ⇒ texto; blanco/no-texto ⇒ None; jamás un 422). Lo que consume:
+  - **Balance por avión / general** (`BalanceAvionVuelo`): `cierre_marca`
+    (texto del API: «Pasa a octubre 2026 (pendiente de cobro: cobrado $X de
+    $Y MXN)» / «Viene de septiembre 2026» / «Pendiente de cobro: pasará a
+    octubre 2026 al cerrar»), `fila_sombra` (fila del mes de ORIGEN: horas
+    reales, TODO el dinero en null), `diferido_a` / `diferido_de`
+    ('YYYY-MM'). Raíz `cierre` (`BalanceCierre`: `estado` ABIERTO/CERRADO/
+    REABIERTO, `periodo`, `cerrado_at`, `cerrado_por_nombre`,
+    `reabierto_at/por_nombre`, listas `pasan` / `vienen` / `pasarian` de
+    `{clave, folio, cliente, matricula, fecha, venta_mxn, venta_usd,
+    cobrado_mxn, cobrado_usd, por_cobrar_mxn, por_cobrar_usd, destino,
+    origen, leyenda}`); general además `resumen_cierre` (`{pasan, vienen}`
+    por avión: `matricula, vuelos, venta_mxn, por_cobrar_mxn`). Pinta: en la
+    hoja de vuelos y en 'cobranza' la marca EN LUGAR del estado (el estado
+    real va en la nota), ámbar si sale/pasará y azul claro (DBEAFE) si viene,
+    ESTADO a 30 de ancho y la fila crece a los renglones de la marca; en la
+    fila que viene, la celda vacía de TIEMPO VUELO lleva la nota «Horas
+    voladas en <mes> (mes real del vuelo)». La sombra NO suma porque sus
+    celdas llegan en null (`_formula` con valor None = celda vacía SIN
+    fórmula) y la Σ de TOTALES —que la incluye en su rango— reproduce el
+    total del API (verificado con `verificar_libro`: cero degradaciones
+    nuevas). Bloque «CIERRE DEL MES» (sello + listas como VALORES, sin
+    fórmulas) bajo TOTALES del individual y al pie del RESUMEN del general
+    (CLAVE en A:B y columna AVIÓN + renglón por avión de `resumen_cierre`;
+    si el `cierre` viaja solo en el consolidado, se toma de ahí). Notas al
+    pie solo con alguna marca. `libro_json` copia `cierre` a la raíz de la
+    vista en pantalla (el panel pinta el estado del mes).
+  - **OJO para el API**: en la fila sombra manda también `tc_venta` /
+    `tc_costos` en null; con un T.C. la AVERAGE de TIPO CAMBIO COSTOS de
+    TOTALES (y la GANANCIA USD de filas sin T.C.) ya no reproduce el número
+    del API y vuelve a VALOR (el número no cambia, pero se pierde la
+    fórmula).
+  - **Reparto PDF/XLSX** (`RepartoVueloLinea.cierre_marca`, `diferido_de/a`;
+    raíz `cierre` = `RepartoCierre`: `estado`, `cerrado_at`,
+    `cerrado_por_nombre`, `version`, `coincide_con_snapshot`, listas
+    `diferidos_salen` / `diferidos_entran` / `pendientes_que_pasarian` de
+    `{id, folio, cliente, matricula, venta_usd, cobrado_usd, por_cobrar_usd,
+    destino, origen, leyenda}`): sello en la portada (PDF) y el subtítulo
+    (Excel); la marca bajo el folio del detalle de vuelos (PDF, partida al
+    ancho de la columna con `simpleSplit`) o junto al folio (Excel); al
+    final de cada avión «Pasan a octubre 2026 (pendientes de cobro, no se
+    reparten): #316 Mike Nelson $2,076.40 (cobrado $0.00, por cobrar
+    $2,076.40)» / «Vienen de …»; las matrículas sin bloque (externos) en
+    «Vuelos del cierre sin avión en este reparto»; en el Excel, sección
+    «Cierre del mes» después del detalle de vuelos; `coincide_con_snapshot
+    = false` ⇒ AVISO en rojo. El texto del API va ESCAPADO dentro de los
+    Paragraph (un «&» o «<» del cliente rompía el marcado).
+  - **Libro Dinero** (`DineroVueloFila.cierre_marca`, `diferido_a/de`; raíz
+    `cierre` = `BalanceCierre`): la marca junto a la CLAVE (la columna A
+    crece por contenido con el tope de siempre) y, al final de 'dinero-vlos',
+    «CIERRE DEL MES» con una línea por lista. Un vuelo que PASA no viene en
+    `vuelos` del mes de origen (lo dice `cierre.pasan`).
+  - **Byte a byte**: `tests/test_cierre_mes.py` congela las huellas
+    calculadas con el código de HEAD f0c8ad1 sobre los MISMOS constructores
+    (`tests/_cierre_mes_payloads.py`, que solo importa lo que ya existía):
+    individual y las dos variantes del general (.xlsx + JSON de la vista),
+    reparto PDF (flujos) + XLSX y Libro Dinero — sin las llaves, con ellas
+    en neutro (null/false) y con un mes ABIERTO sin vuelos que pasarían (el
+    .xlsx idéntico; la vista solo gana la llave `cierre`). Orden de
+    despliegue del lote: migración 20261016000004 ⇒ **pyservices** ⇒ API
+    0.0.88 ⇒ panel (pyservices antes del API es seguro: el API 0.0.87 no
+    manda nada de esto).
 
 ## Conciliación
 

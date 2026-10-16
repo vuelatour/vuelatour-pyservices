@@ -557,13 +557,16 @@ def exportar_libro(
     archivo: str | None = None,
     generado: str | None = None,
     vinculos_gasto: bool = False,
+    cierre: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """El libro completo como JSON para la vista en pantalla. Verifica antes
     las fórmulas (las que no reproducen al API vuelven a valor, igual que al
     guardar el .xlsx): lo que se ve en pantalla es lo que se descargaría.
     `vinculos_gasto` (13-oct-2026): agrega `"vinculos_gasto": true` como
     ÚLTIMA llave de la raíz (el libro marca las celdas de los gastos); sin él,
-    la raíz de siempre, byte a byte."""
+    la raíz de siempre, byte a byte. `cierre` (16-oct-2026, API 0.0.88): el
+    bloque `cierre` del payload copiado tal cual a la raíz (el panel pinta el
+    encabezado con el estado del mes); None ⇒ la llave no viaja."""
     xlsx_formulas.asegurar_valores(wb)
     reg = xlsx_formulas.registro(wb)
     estilos = _Estilos()
@@ -580,4 +583,6 @@ def exportar_libro(
     }
     if vinculos_gasto:
         libro["vinculos_gasto"] = True
+    if cierre is not None:
+        libro["cierre"] = cierre
     return libro

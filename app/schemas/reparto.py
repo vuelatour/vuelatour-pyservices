@@ -4,7 +4,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.schemas.reportes import regla_comisiones_liberal
+from app.schemas.reportes import (
+    lista_cierre_liberal,
+    regla_comisiones_liberal,
+    texto_cierre_liberal,
+)
 
 
 class RepartoSocioLinea(BaseModel):
@@ -52,6 +56,96 @@ class RepartoVueloLinea(BaseModel):
     multi_avion: bool | None = None
     # Tramos de este avión en el vuelo (p. ej. "CUN→MID"); informativo.
     tramos_avion: str | None = None
+    # CIERRE DE MES (16-oct-2026, API 0.0.88): texto YA armado por el API
+    # para un vuelo que VINO de un mes anterior («Viene de septiembre 2026»)
+    # o que, en un mes abierto, pasará al cerrar («Pendiente de cobro: pasará
+    # a octubre 2026 al cerrar»). Los que SALEN no vienen en `vuelos` (no
+    # cuentan): van en `RepartoCierre.diferidos_salen`. Se imprime junto al
+    # folio; None ⇒ el folio de siempre.
+    cierre_marca: str | None = None
+    diferido_de: str | None = None
+    diferido_a: str | None = None
+
+    @field_validator("cierre_marca", "diferido_de", "diferido_a", mode="before")
+    @classmethod
+    def _texto_cierre_liberal(cls, v: Any) -> str | None:
+        return texto_cierre_liberal(v)
+
+
+class RepartoCierreVuelo(BaseModel):
+    """Un vuelo de las listas del cierre del reparto (16-oct-2026, API
+    0.0.88): SALE del mes (`destino`; pendiente de cobro al cierre: NO se
+    reparte), ENTRA de un mes anterior (`origen`) o, en un mes abierto,
+    PASARÍA al cerrar. Montos en USD ya calculados por el API; informativos."""
+
+    id: str | None = None
+    folio: str | None = None
+    cliente: str | None = None
+    matricula: str | None = None
+    venta_usd: float | None = None
+    cobrado_usd: float | None = None
+    por_cobrar_usd: float | None = None
+    destino: str | None = None
+    origen: str | None = None
+    leyenda: str | None = None
+
+    @field_validator(
+        "id", "folio", "cliente", "matricula", "destino", "origen", "leyenda", mode="before"
+    )
+    @classmethod
+    def _textos(cls, v: Any) -> str | None:
+        return texto_cierre_liberal(v)
+
+
+class RepartoCierre(BaseModel):
+    """Bloque raíz `cierre` de `GET /v1/profit-sharing` (16-oct-2026, API
+    0.0.88): estado del mes, sello del cierre y las listas de vuelos
+    diferidos. `coincide_con_snapshot` False = alguien movió porcentajes o un
+    T.C. después de cerrar (el API lo detecta; aquí solo se avisa)."""
+
+    disponible: bool | None = None
+    periodo: str | None = None
+    estado: str | None = None
+    cerrado_at: str | None = None
+    cerrado_por_nombre: str | None = None
+    reabierto_at: str | None = None
+    reabierto_por_nombre: str | None = None
+    version: int | None = None
+    coincide_con_snapshot: bool | None = None
+    diferidos_salen: list[RepartoCierreVuelo] = Field(default_factory=list)
+    diferidos_entran: list[RepartoCierreVuelo] = Field(default_factory=list)
+    pendientes_que_pasarian: list[RepartoCierreVuelo] = Field(default_factory=list)
+
+    @field_validator(
+        "periodo", "estado", "cerrado_at", "cerrado_por_nombre", "reabierto_at",
+        "reabierto_por_nombre", mode="before",
+    )
+    @classmethod
+    def _textos(cls, v: Any) -> str | None:
+        return texto_cierre_liberal(v)
+
+    @field_validator(
+        "diferidos_salen", "diferidos_entran", "pendientes_que_pasarian", mode="before"
+    )
+    @classmethod
+    def _listas(cls, v: Any) -> list:
+        return lista_cierre_liberal(v)
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def _version(cls, v: Any) -> Any:
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+    @field_validator("coincide_con_snapshot", mode="before")
+    @classmethod
+    def _coincide(cls, v: Any) -> bool | None:
+        return v if isinstance(v, bool) else None
+
+    def tiene_algo(self) -> bool:
+        estado = (self.estado or "").strip().upper()
+        return bool(
+            self.diferidos_salen or self.diferidos_entran or self.pendientes_que_pasarian
+        ) or estado in ("CERRADO", "REABIERTO")
 
 
 class RepartoTcOficialGastos(BaseModel):
@@ -229,6 +323,10 @@ class RepartoPdfRequest(BaseModel):
     # VuelaTour). Con `true` cambian SOLO textos (`reparto_comisiones`);
     # None/False (API ≤ 0.0.73) ⇒ los documentos de siempre.
     comision_vendedor_solo_gasto_real: bool | None = None
+    # ADITIVO (16-oct-2026, API 0.0.88, invariante 89 del API): el cierre del
+    # mes del reparto (ver `RepartoCierre`). None (API previo) ⇒ el PDF y el
+    # Excel de siempre, byte a byte.
+    cierre: RepartoCierre | None = None
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod

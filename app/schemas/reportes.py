@@ -1078,6 +1078,30 @@ class BalanceAvionVuelo(BaseModel):
     # multi-avión, `_nota_participacion`). None = API previo.
     comision_vendedor_real_mxn: float | None = None
     comision_vendedor_real_pagos: int | None = None
+    # --- CIERRE DE MES (16-oct-2026, API 0.0.88, invariante 89 del API) ---
+    # Vuelo que PASÓ al mes siguiente por cobro pendiente al cerrar, o que
+    # VINO de un mes anterior. `cierre_marca` es el texto YA armado por el
+    # API que se pinta en ESTADO («Pasa a octubre 2026 (pendiente de cobro:
+    # cobrado $0.00 de $36,632.89 MXN)» / «Viene de septiembre 2026» /
+    # «Pendiente de cobro: pasará a octubre 2026 al cerrar»); `fila_sombra`
+    # = fila del mes de ORIGEN de un diferido: horas reales y TODO el dinero
+    # en null (el API lo manda así: ninguna SUM del libro la cuenta y aquí no
+    # se vacía nada); `diferido_a` / `diferido_de` = 'YYYY-MM'. None/False
+    # (API ≤ 0.0.87 o vuelo normal) ⇒ la fila de siempre, byte a byte.
+    cierre_marca: str | None = None
+    fila_sombra: bool = False
+    diferido_a: str | None = None
+    diferido_de: str | None = None
+
+    @field_validator("cierre_marca", "diferido_a", "diferido_de", mode="before")
+    @classmethod
+    def _texto_cierre_liberal(cls, v: Any) -> str | None:
+        return texto_cierre_liberal(v)
+
+    @field_validator("fila_sombra", mode="before")
+    @classmethod
+    def _sombra_liberal(cls, v: Any) -> bool:
+        return v is True
 
     @field_validator("comisiones_detalle", mode="before")
     @classmethod
@@ -1550,6 +1574,127 @@ class BalanceAvionHojaOtrosIngresos(BaseModel):
         return [] if v is None else v
 
 
+def texto_cierre_liberal(v: Any) -> str | None:
+    """Texto informativo del cierre de mes (16-oct-2026; balances y reparto,
+    ÚNICA regla): número finito ⇒ texto (el API manda el folio como número),
+    blanco o cualquier otra cosa ⇒ None (jamás un 422 por una etiqueta)."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int | float):
+        return str(v) if math.isfinite(v) else None
+    if isinstance(v, str):
+        return v.strip() or None
+    return None
+
+
+def lista_cierre_liberal(v: Any) -> list:
+    """NestJS puede mandar null en una lista vacía: jamás un 422."""
+    return v if isinstance(v, list) else []
+
+
+class BalanceCierreVuelo(BaseModel):
+    """Un vuelo de las listas del cierre (16-oct-2026, API 0.0.88): el que
+    PASA al mes siguiente (`destino`), VIENE de un mes anterior (`origen`) o
+    PASARÍA al cerrar un mes abierto. Montos informativos YA calculados por el
+    API: aquí se pintan como valor, fuera de toda suma. Todo opcional."""
+
+    clave: str | None = None
+    folio: str | None = None
+    cliente: str | None = None
+    matricula: str | None = None
+    fecha: str | None = None
+    venta_mxn: float | None = None
+    venta_usd: float | None = None
+    cobrado_mxn: float | None = None
+    cobrado_usd: float | None = None
+    por_cobrar_mxn: float | None = None
+    por_cobrar_usd: float | None = None
+    destino: str | None = None  # 'YYYY-MM'
+    origen: str | None = None  # 'YYYY-MM'
+    leyenda: str | None = None
+
+    @field_validator(
+        "clave", "folio", "cliente", "matricula", "fecha", "destino", "origen", "leyenda",
+        mode="before",
+    )
+    @classmethod
+    def _textos(cls, v: Any) -> str | None:
+        return texto_cierre_liberal(v)
+
+
+class BalanceCierreResumenFila(BaseModel):
+    """Renglón por avión de `resumen_cierre` del Balance general (cuántos
+    vuelos pasan/vienen y sus montos; el API los suma, aquí solo se pintan)."""
+
+    matricula: str | None = None
+    vuelos: int = 0
+    venta_mxn: float | None = None
+    por_cobrar_mxn: float | None = None
+
+    @field_validator("matricula", mode="before")
+    @classmethod
+    def _matricula(cls, v: Any) -> str | None:
+        return texto_cierre_liberal(v)
+
+    @field_validator("vuelos", mode="before")
+    @classmethod
+    def _vuelos(cls, v: Any) -> Any:
+        return 0 if v is None else v
+
+
+class BalanceCierreResumen(BaseModel):
+    pasan: list[BalanceCierreResumenFila] = Field(default_factory=list)
+    vienen: list[BalanceCierreResumenFila] = Field(default_factory=list)
+
+    @field_validator("pasan", "vienen", mode="before")
+    @classmethod
+    def _listas(cls, v: Any) -> list:
+        return lista_cierre_liberal(v)
+
+
+class BalanceCierre(BaseModel):
+    """Bloque raíz `cierre` de los balances (16-oct-2026, API 0.0.88):
+    estado del mes («ABIERTO» / «CERRADO» / «REABIERTO»), quién y cuándo lo
+    cerró y las tres listas de vuelos: `pasan` (salen de este mes al cerrar:
+    NO suman), `vienen` (entraron de un mes anterior: suman completos) y
+    `pasarian` (mes abierto: hoy suman, al cerrar pasan). Con `cierre` ausente
+    (API ≤ 0.0.87) o con estado ABIERTO y listas vacías no se pinta nada:
+    libro byte a byte."""
+
+    disponible: bool | None = None
+    periodo: str | None = None
+    estado: str | None = None
+    cerrado_at: str | None = None
+    cerrado_por_nombre: str | None = None
+    reabierto_at: str | None = None
+    reabierto_por_nombre: str | None = None
+    pasan: list[BalanceCierreVuelo] = Field(default_factory=list)
+    vienen: list[BalanceCierreVuelo] = Field(default_factory=list)
+    pasarian: list[BalanceCierreVuelo] = Field(default_factory=list)
+
+    @field_validator(
+        "periodo", "estado", "cerrado_at", "cerrado_por_nombre", "reabierto_at",
+        "reabierto_por_nombre", mode="before",
+    )
+    @classmethod
+    def _textos(cls, v: Any) -> str | None:
+        return texto_cierre_liberal(v)
+
+    @field_validator("pasan", "vienen", "pasarian", mode="before")
+    @classmethod
+    def _listas(cls, v: Any) -> list:
+        return lista_cierre_liberal(v)
+
+    def tiene_algo(self) -> bool:
+        """¿Hay algo que pintar? Listas con filas o un mes CERRADO/REABIERTO
+        (su sello se imprime aunque ningún vuelo haya pasado)."""
+        estado = (self.estado or "").strip().upper()
+        return bool(self.pasan or self.vienen or self.pasarian) or estado in (
+            "CERRADO",
+            "REABIERTO",
+        )
+
+
 class BalanceAvionRequest(BaseModel):
     generado: str | None = None
     matricula: str = ""
@@ -1646,6 +1791,10 @@ class BalanceAvionRequest(BaseModel):
     # `vinculos_gasto: true` en la raíz (el libro marca las celdas de los
     # gastos). Cualquier otro valor ⇒ None (la raíz de siempre).
     vinculos_gasto: bool | None = None
+    # ADITIVO (16-oct-2026, API 0.0.88, invariante 89 del API): el cierre del
+    # mes del libro (ver `BalanceCierre`). None (API previo) ⇒ sin bloque
+    # «CIERRE DEL MES» bajo TOTALES: libro byte a byte.
+    cierre: BalanceCierre | None = None
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod
@@ -1960,6 +2109,11 @@ class BalanceGeneralRequest(BaseModel):
     # ADITIVO (13-oct-2026, API 0.0.75, punto 5 del lote): como en
     # `BalanceAvionRequest`: solo el libro de la vista en pantalla.
     vinculos_gasto: bool | None = None
+    # ADITIVOS (16-oct-2026, API 0.0.88, invariante 89 del API): el cierre
+    # del mes del libro (bloque «CIERRE DEL MES» al pie del RESUMEN) y el
+    # resumen por avión de lo que pasa/viene. None ⇒ RESUMEN de siempre.
+    cierre: BalanceCierre | None = None
+    resumen_cierre: BalanceCierreResumen | None = None
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod
@@ -2119,11 +2273,25 @@ class DineroVueloFila(BaseModel):
     # avión que toca a esta matrícula (la CLAVE ya trae el sufijo del API).
     participacion: float | None = None
     multi_avion: bool | None = None
+    # CIERRE DE MES (16-oct-2026, API 0.0.88, invariante 89 del API): marca
+    # YA armada por el API («Viene de septiembre 2026» / «Pendiente de cobro:
+    # pasará a octubre 2026 al cerrar»), se pinta junto a la CLAVE. Un vuelo
+    # que PASÓ al mes siguiente no viene en `vuelos` del mes de origen (el
+    # Libro es de dinero): va en `DineroXlsxRequest.cierre.pasan`. None (API
+    # ≤ 0.0.87 o vuelo normal) ⇒ la fila de siempre.
+    cierre_marca: str | None = None
+    diferido_a: str | None = None
+    diferido_de: str | None = None
 
     @field_validator("clave_cliente", mode="before")
     @classmethod
     def _clave_cliente_liberal(cls, v: Any) -> str | None:
         return clave_cliente_liberal(v)
+
+    @field_validator("cierre_marca", "diferido_a", "diferido_de", mode="before")
+    @classmethod
+    def _texto_cierre_liberal(cls, v: Any) -> str | None:
+        return texto_cierre_liberal(v)
 
 
 class DineroOtroIngresoFila(BaseModel):
@@ -2270,6 +2438,11 @@ class DineroXlsxRequest(BaseModel):
     # `utilidades_comision_vendedor_pagada_mxn`; None/False (API ≤ 0.0.73) ⇒
     # libro byte a byte.
     comision_vendedor_solo_gasto_real: bool | None = None
+    # ADITIVO (16-oct-2026, API 0.0.88, invariante 89 del API): el cierre del
+    # mes (mismo bloque que los balances, `BalanceCierre`): líneas «CIERRE
+    # DEL MES» al final de 'dinero-vlos'. None (API previo) ⇒ libro byte a
+    # byte.
+    cierre: BalanceCierre | None = None
 
     @field_validator("otros_ingresos_avion", mode="before")
     @classmethod

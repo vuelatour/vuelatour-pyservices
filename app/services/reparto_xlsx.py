@@ -13,10 +13,12 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from app.schemas.reparto import (
+    RepartoCierre,
     RepartoOtrosIngresosDesglose,
     RepartoPdfRequest,
     RepartoVueloLinea,
 )
+from app.services import cierre_mes
 from app.services.reparto_comisiones import (
     ETIQUETA_COLUMNA,
     comisiones_al_avion,
@@ -104,11 +106,74 @@ def _nota_tc_oficial_global(tc) -> str | None:
 
 def _folio_vuelo(v: RepartoVueloLinea) -> str:
     """'#105 · 50 %' cuando el vuelo fue MULTI-AVIÓN (regla B, 28-ago-2026:
-    la venta del avión se repartió por tramo); '#105' si no."""
+    la venta del avión se repartió por tramo); '#105' si no. Con la marca del
+    cierre de mes (16-oct-2026, texto del API) al final: '#105 · Viene de
+    septiembre 2026'."""
     texto = f"#{v.folio}" if v.folio is not None else "—"
     if v.participacion is not None and v.participacion < 0.9999:
         texto += f" · {_pct(v.participacion)}"
+    if v.cierre_marca:
+        texto += f" · {v.cierre_marca}"
     return texto
+
+
+# ===== CIERRE DE MES (16-oct-2026, API 0.0.88, invariante 89 del API) =====
+# Sección «Cierre del mes» (después del detalle de vuelos): los vuelos que
+# PASAN al mes siguiente (pendientes de cobro: no se reparten), los que
+# VIENEN de un mes anterior (se reparten aquí) y, en un mes abierto, los que
+# PASARÍAN al cerrar. Montos y leyendas YA calculados por el API, como
+# valores (no entran a ningún total). Sin `cierre` no existe: libro de
+# siempre.
+ENCABEZADOS_CIERRE = [
+    "Avión", "Vuelo", "Cliente", "Venta USD", "Cobrado USD", "Por cobrar USD", "Mes", "Leyenda",
+]  # fmt: skip
+_FILL_CIERRE = {"diferidos_salen": cierre_mes.FILL_SALE,
+                "diferidos_entran": cierre_mes.FILL_VIENE,
+                "pendientes_que_pasarian": cierre_mes.FILL_SALE}  # fmt: skip
+
+
+def _hay_listas_cierre(cierre: RepartoCierre | None) -> bool:
+    return cierre is not None and any(
+        getattr(cierre, attr) for attr, _p, _m in cierre_mes.LISTAS_REPARTO
+    )
+
+
+def _seccion_cierre(ws, r: int, cierre: RepartoCierre) -> int:
+    """Pinta la sección desde la fila `r` (ya con el espacio previo) y
+    devuelve la fila siguiente a la última escrita."""
+    titulo = "Cierre del mes"
+    sello = cierre_mes.texto_estado_cierre(cierre)
+    if sello:
+        titulo += f" — {sello}"
+    _title(ws, titulo, r, len(ENCABEZADOS_CIERRE), size=12)
+    r += 1
+    _header_row(ws, r, ENCABEZADOS_CIERRE)
+    r += 1
+    for attr, plantilla, mes_attr in cierre_mes.LISTAS_REPARTO:
+        items = getattr(cierre, attr)
+        if not items:
+            continue
+        sub = ws.cell(
+            row=r, column=1, value=cierre_mes.titulo_lista_reparto(plantilla, items, mes_attr)
+        )
+        sub.font = Font(bold=True, size=10)
+        sub.fill = PatternFill("solid", fgColor=_FILL_CIERRE[attr])
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=len(ENCABEZADOS_CIERRE))
+        r += 1
+        for v in items:
+            mes = getattr(v, mes_attr)
+            valores = [
+                v.matricula, f"#{v.folio}" if v.folio else "—", v.cliente,
+                v.venta_usd, v.cobrado_usd, v.por_cobrar_usd,
+                cierre_mes.etiqueta_mes(mes), v.leyenda,
+            ]  # fmt: skip
+            for col, val in enumerate(valores, start=1):
+                c = ws.cell(row=r, column=col, value=val)
+                c.border = _border
+                if col in (4, 5, 6):
+                    c.number_format = MONEY
+            r += 1
+    return r
 
 
 # Grupo del desglose de gastos (mismas etiquetas que el panel y el PDF).
@@ -216,7 +281,11 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     con_oi = any(a.otros_ingresos_avion_usd for a in req.aviones)
     n_cols = 15 if con_oi else 14
     _title(ws, "VuelaTour — Reporte mensual por avión", 1, n_cols, size=16)
-    sub = ws.cell(row=2, column=1, value=f"Periodo: {req.periodo_desde} a {req.periodo_hasta}  ·  Generado: {req.generado}")
+    # Sello del cierre de mes (16-oct-2026) al final del subtítulo; sin
+    # `cierre` (o mes abierto), el de siempre.
+    sello_cierre = cierre_mes.texto_estado_cierre(req.cierre)
+    sub = ws.cell(row=2, column=1, value=f"Periodo: {req.periodo_desde} a {req.periodo_hasta}  ·  Generado: {req.generado}"
+                  + (f"  ·  {sello_cierre}" if sello_cierre else ""))  # fmt: skip
     sub.font = Font(italic=True, size=10, color="5B6470")
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=n_cols)
 
@@ -362,6 +431,13 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         nt = ws.cell(row=r, column=1, value=nota_global)
         nt.font = Font(italic=True, size=9, color="5B6470")
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
+    # Cierre de mes (16-oct-2026): los números de hoy ya no son los del
+    # cierre (el API lo detecta) ⇒ aviso en rojo, como en el PDF.
+    if req.cierre is not None and req.cierre.coincide_con_snapshot is False:
+        r += 1
+        na = ws.cell(row=r, column=1, value=f"AVISO: {cierre_mes.AVISO_SNAPSHOT}")
+        na.font = Font(bold=True, size=9, color="B91C1C")
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
 
     # Anchos de columna.
     widths = [12, 16, 13, 16, 16, 17, 15, 16, 12, 16, 16, 16, 18, 18]
@@ -429,6 +505,9 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
                     mc.border = _border
                 ws.cell(row=r, column=6, value=v.tramos_avion).border = _border
                 r += 1
+
+    if _hay_listas_cierre(req.cierre):
+        r = _seccion_cierre(ws, r + 2, req.cierre)
 
     # Gastos por categoría (solo si el API lo manda, 2-sep-2026): la categoría
     # se imprime con su etiqueta amable (homologada con panel/app/API) o con

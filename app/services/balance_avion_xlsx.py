@@ -131,6 +131,8 @@ from app.schemas.reportes import (
     BalanceAvionRequest,
     BalanceAvionTotales,
     BalanceAvionVuelo,
+    BalanceCierre,
+    BalanceCierreResumen,
     BalanceEmpresaBloque,
     BalanceGeneralRequest,
     BalanceGeneralResumenFila,
@@ -140,7 +142,7 @@ from app.schemas.reportes import (
     BalanceVinculoGasto,
     TcHoy,
 )
-from app.services import libro_json, xlsx_formulas
+from app.services import cierre_mes, libro_json, xlsx_formulas
 from app.services._formato import (
     ANCHO_CLAVE_TOPE_BALANCE,
     _tc_txt,
@@ -2320,6 +2322,191 @@ def _notas_pie_costo_por_hora(req: BalanceAvionRequest, hay_extension: bool) -> 
     )
 
 
+# ===== CIERRE DE MES (16-oct-2026, API 0.0.88, invariante 89 del API) =====
+# Un vuelo COMPLETADO que al cerrar el mes no estaba cobrado por completo
+# pasa COMPLETO (venta, gastos y comisiones) al mes siguiente; sus HORAS se
+# quedan en su mes real. El API lo manda en DOS filas: la «sombra» del mes de
+# ORIGEN (horas reales, dinero en null ⇒ ninguna SUM la cuenta) y la fila
+# completa del mes DESTINO (dinero, sin horas). Aquí solo se PINTA la marca
+# (`cierre_marca`, texto del API) en ESTADO —ámbar la que sale o pasará, azul
+# claro la que viene— y el bloque «CIERRE DEL MES» con las listas raíz
+# `cierre.pasan` / `vienen` / `pasarian`, SIN fórmulas y fuera de toda suma.
+# Nada de esto existe sin los campos: libro byte a byte.
+# Ámbar = sale (o pasará); azul claro = viene (en ESTADO no choca con el
+# azul del T.C. oficial, que nunca pinta esa columna).
+_FILL_CIERRE_SALE = cierre_mes.FILL_SALE
+_FILL_CIERRE_VIENE = cierre_mes.FILL_VIENE
+_COLOR_CIERRE_SALE = cierre_mes.COLOR_TEXTO_SALE
+_COLOR_CIERRE_VIENE = cierre_mes.COLOR_TEXTO_VIENE
+_ANCHO_ESTADO_CIERRE = 30
+_TITULO_BLOQUE_CIERRE = "CIERRE DEL MES"
+_NOTA_CIERRE_FILAS = (
+    "CIERRE DE MES: una fila con ESTADO «Pasa a <mes>» es un vuelo pendiente de "
+    "cobro al cerrar el mes que pasó COMPLETO (venta, gastos y comisiones) al "
+    "mes siguiente — aquí conserva sus horas y sus celdas de dinero van vacías "
+    "(no suman); «Viene de <mes>» es un vuelo de un mes anterior que cuenta "
+    "completo en este mes (sus horas quedaron en su mes real); «Pendiente de "
+    "cobro: pasará a <mes> al cerrar» hoy SÍ suma y pasará completo al "
+    "siguiente mes cuando se cierre este. Las listas están en el bloque "
+    f"{_TITULO_BLOQUE_CIERRE}."
+)
+_NOTA_CIERRE_COBRANZA = (
+    "CIERRE DE MES: las filas «Pasa a <mes>» son vuelos pendientes de cobro al "
+    "cerrar el mes, que pasaron completos al mes siguiente: sus celdas van "
+    "vacías y no suman; las filas «Viene de <mes>» traen el detalle de cobros "
+    "real y suman completas en este mes."
+)
+_NOTA_CIERRE_HORAS = (
+    "Horas voladas en {mes} (mes real del vuelo): en este mes la fila solo "
+    "trae el dinero."
+)
+
+
+def _pintar_estado_cierre(cell, v: BalanceAvionVuelo) -> str:
+    """ESTADO de una fila con `cierre_marca`: el texto del API (envuelto), en
+    el color de su sentido, con el estado real en la nota. Devuelve el
+    relleno de la celda."""
+    entrada = cierre_mes.marca_es_entrada(v)
+    cell.value = v.cierre_marca
+    cell.font = Font(
+        bold=True, size=9, color=_COLOR_CIERRE_VIENE if entrada else _COLOR_CIERRE_SALE
+    )
+    cell.alignment = Alignment(wrap_text=True, vertical="top")
+    lineas = [f"Estado del vuelo: {v.estado or '—'}.", v.cierre_marca or ""]
+    if v.fila_sombra:
+        lineas.append(
+            "Fila del mes de origen: conserva las horas; el dinero (venta, "
+            "gastos, comisiones y cobros) cuenta en el mes al que pasó."
+        )
+    elif entrada:
+        lineas.append(
+            "Cuenta completo en este mes (venta, gastos, comisiones y cobros); "
+            "sus horas quedaron en su mes real."
+        )
+    cell.comment = _comentario_cobro("\n".join(x for x in lineas if x))
+    return _FILL_CIERRE_VIENE if entrada else _FILL_CIERRE_SALE
+
+
+def _hay_marcas_cierre(vuelos: list[BalanceAvionVuelo]) -> bool:
+    return any(v.cierre_marca for v in vuelos)
+
+
+def _alto_fila_marca(ws: Worksheet, row: int, marca: str | None) -> None:
+    """La marca va envuelta en ESTADO (ancho `_ANCHO_ESTADO_CIERRE`): la fila
+    crece a sus renglones (≈ 30 caracteres por renglón a 9 pt) sin achicar
+    un alto que ya traiga (el detalle de cobros de la cobranza)."""
+    if not marca:
+        return
+    lineas = math.ceil(len(marca) / 30)
+    if lineas <= 1:
+        return
+    alto = 12 * lineas + 4
+    actual = ws.row_dimensions[row].height
+    if actual is None or actual < alto:
+        ws.row_dimensions[row].height = alto
+
+
+def _bloque_cierre(
+    ws: Worksheet,
+    row: int,
+    cierre: BalanceCierre,
+    *,
+    n_cols: int,
+    con_avion: bool,
+    clave_span: int = 1,
+    resumen: BalanceCierreResumen | None = None,
+) -> int:
+    """Bloque «CIERRE DEL MES» (bajo TOTALES del libro individual; al pie del
+    RESUMEN del general): el sello del cierre y las listas de vuelos que
+    PASAN (no suman), VIENEN (suman completos) y PASARÍAN (mes abierto),
+    como VALORES del API, sin fórmulas ni totales. `con_avion` agrega la
+    columna AVIÓN (general); `clave_span` combina la CLAVE en varias columnas
+    (el RESUMEN tiene la A angosta); `resumen` (general) añade el renglón por
+    avión. Devuelve la fila siguiente al bloque."""
+    estado_txt = cierre_mes.texto_estado_cierre(cierre)
+    titulo = _TITULO_BLOQUE_CIERRE + (f" — {estado_txt}" if estado_txt else " (mes abierto)")
+    ct = ws.cell(row=row, column=1, value=titulo)
+    ct.font = Font(bold=True, size=11, color=NAVY)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
+    row += 1
+    if cierre.periodo and cierre_mes.etiqueta_mes(cierre.periodo):
+        cp = ws.cell(row=row, column=1, value=f"Mes: {cierre_mes.etiqueta_mes(cierre.periodo)}")
+        cp.font = Font(italic=True, size=9, color=MUTED)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
+        row += 1
+    for lista, subtitulo, items in cierre_mes.listas_balance(cierre):
+        fill = _FILL_CIERRE_VIENE if lista == "vienen" else _FILL_CIERRE_SALE
+        por_avion = getattr(resumen, lista, []) if resumen is not None else []
+        cs = ws.cell(row=row, column=1, value=subtitulo)
+        cs.font = Font(bold=True, size=9)
+        cs.fill = PatternFill("solid", fgColor=fill)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
+        row += 1
+        columnas: list[tuple[str, str, str | None]] = [
+            ("CLAVE", "clave", None),
+            ("FECHA", "fecha", None),
+        ]
+        if con_avion:
+            columnas.append(("AVIÓN", "matricula", None))
+        columnas += [
+            ("VENTA\nMXN", "venta_mxn", MONEY),
+            ("COBRADO\nMXN", "cobrado_mxn", MONEY),
+            ("POR COBRAR\nMXN", "por_cobrar_mxn", MONEY),
+            ("VENTA\nUSD", "venta_usd", MONEY),
+            ("LEYENDA", "leyenda", None),
+        ]
+        # Encabezado de la lista (la CLAVE ocupa `clave_span` columnas).
+        col = 1
+        for encabezado, _attr, _fmt in columnas:
+            c = ws.cell(row=row, column=col, value=encabezado)
+            c.font = Font(bold=True, color=NAVY, size=8)
+            c.fill = PatternFill("solid", fgColor=LIGHT)
+            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            c.border = _border
+            if col == 1 and clave_span > 1:
+                ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=clave_span)
+                col += clave_span
+            else:
+                col += 1
+        ws.row_dimensions[row].height = 30
+        row += 1
+        for it in items:
+            col = 1
+            for _encabezado, attr, fmt in columnas:
+                val = cierre_mes.nombre_vuelo(it) if attr == "clave" else getattr(it, attr)
+                if fmt is None:
+                    c = ws.cell(row=row, column=col, value=_fecha(val) if attr == "fecha" else val)
+                    if attr == "leyenda":
+                        c.alignment = Alignment(vertical="top")
+                else:
+                    c = _num(ws, row, col, val, fmt)
+                c.border = _border
+                if col == 1 and clave_span > 1:
+                    ws.merge_cells(
+                        start_row=row, start_column=1, end_row=row, end_column=clave_span
+                    )
+                    col += clave_span
+                else:
+                    col += 1
+            row += 1
+        for f in por_avion:
+            # Renglón por avión del `resumen_cierre` del API (general).
+            ca = ws.cell(
+                row=row,
+                column=1,
+                value=f"{f.matricula or '—'}: {f.vuelos} vuelo(s)",
+            )
+            ca.font = Font(italic=True, size=9, color=MUTED)
+            if clave_span > 1:
+                ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=clave_span)
+            col_montos = clave_span + (2 if con_avion else 1) + 1
+            _num(ws, row, col_montos, f.venta_mxn, MONEY, italic=True, color=MUTED)
+            _num(ws, row, col_montos + 2, f.por_cobrar_mxn, MONEY, italic=True, color=MUTED)
+            row += 1
+        row += 1
+    return row
+
+
 def _constantes_maestra(
     ws: Worksheet,
     req: BalanceAvionRequest,
@@ -2531,7 +2718,12 @@ def _hoja_maestra(
                         # FÓRMULA para openpyxl (guarda de la caja chica,
                         # 24-sep-2026) — se queda como TEXTO.
                         _texto_literal(cell)
-                    if attr == "estado" and val == "CANCELADO":
+                    if attr == "estado" and v.cierre_marca:
+                        # CIERRE DE MES (16-oct-2026): la marca del API en
+                        # lugar del estado (que va en la nota), ámbar si
+                        # sale/pasará y azul claro si viene de otro mes.
+                        fill = _pintar_estado_cierre(cell, v)
+                    elif attr == "estado" and val == "CANCELADO":
                         cell.font = Font(color=RED, size=9)
                     elif attr == "estado":
                         cell.font = Font(color=MUTED, size=9)
@@ -2605,6 +2797,18 @@ def _hoja_maestra(
                 # horas voladas con el tramo culpable en la nota. En la
                 # variante general también TIEMPO CALZOS/HOBS (HR): es el
                 # divisor de COSTO X HORA y unas horas infladas lo bajan.
+                # Vuelo que VIENE de otro mes (cierre de mes, 16-oct-2026):
+                # la fila trae el dinero y no las horas (quedaron en su mes
+                # real); la celda vacía de horas lo dice en su nota.
+                if (
+                    origen == "tiempo_vuelo"
+                    and v.diferido_de
+                    and v.tiempo_vuelo is None
+                    and not v.fila_sombra
+                ):
+                    cell.comment = _comentario_cobro(
+                        _NOTA_CIERRE_HORAS.format(mes=cierre_mes.etiqueta_mes(v.diferido_de))
+                    )
                 if origen == "tiempo_vuelo" and v.salto_taco_interno:
                     fill = AMBER
                     nota_int = Comment(
@@ -2693,6 +2897,7 @@ def _hoja_maestra(
             cell.border = _border
             if fill:
                 cell.fill = PatternFill("solid", fgColor=fill)
+        _alto_fila_marca(ws, row, v.cierre_marca)
         row += 1
 
     # «Calculado por el sistema» (variante general): la nota va UNA vez, en
@@ -2802,7 +3007,13 @@ def _hoja_maestra(
         ws.cell(row=row, column=10, value="MXN").font = Font(bold=True, size=9)
         row += 1
     row += 1
+    # Bloque «CIERRE DEL MES» (16-oct-2026, API 0.0.88) bajo TOTALES del libro
+    # INDIVIDUAL (el general lo lleva al pie del RESUMEN): solo con `cierre` y
+    # algo que decir; sin él, nada (byte a byte).
+    if not general and req.cierre is not None and req.cierre.tiene_algo():
+        row = _bloque_cierre(ws, row, req.cierre, n_cols=min(n, 14), con_avion=False)
     hay_extension = _hay_extension_pagada(req)
+    hay_marcas_cierre = _hay_marcas_cierre(req.vuelos)
 
     # Notas al pie (las de la variante general: `_notas_pie_costo_por_hora`).
     # COMISIONES / GANANCIA y COBRADO REAL: las del libro INDIVIDUAL, que lleva
@@ -2859,6 +3070,9 @@ def _hoja_maestra(
     )
     if disp.costo_por_hora:
         notas_pie = _notas_pie_costo_por_hora(req, hay_extension)
+    if hay_marcas_cierre:
+        # Qué significan las filas marcadas (solo cuando hay alguna).
+        notas_pie = (*notas_pie, _NOTA_CIERRE_FILAS)
     for nota in notas_pie:
         ws.cell(row=row, column=1, value=nota).font = Font(color=MUTED, size=9, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=14)
@@ -2877,7 +3091,9 @@ def _hoja_maestra(
         ),
         2: 12,
         3: 34,
-        4: 12,
+        # ESTADO se ensancha SOLO si alguna fila trae la marca del cierre
+        # («Pasa a octubre 2026 (pendiente de cobro: …)», envuelta).
+        4: _ANCHO_ESTADO_CIERRE if hay_marcas_cierre else 12,
     }
     for i, (grupo, _h, attr, _f) in enumerate(cols, start=1):
         if attr in ("cobrado_real_mxn", "cobrado_mxn"):
@@ -3651,7 +3867,13 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
         ws.cell(row=row, column=2, value=_fecha(v.fecha))
         ws.cell(row=row, column=3, value=v.ruta)
         ec = ws.cell(row=row, column=4, value=v.estado)
-        ec.font = Font(color=RED if v.estado == "CANCELADO" else MUTED, size=9)
+        if v.cierre_marca:
+            # CIERRE DE MES (16-oct-2026): la marca del API en ESTADO; la
+            # fila sombra («Pasa a …») va con sus celdas vacías (el API las
+            # manda en null) y no suma.
+            ec.fill = PatternFill("solid", fgColor=_pintar_estado_cierre(ec, v))
+        else:
+            ec.font = Font(color=RED if v.estado == "CANCELADO" else MUTED, size=9)
         st = ws.cell(row=row, column=5, value=v.status_cobro or "—")
         if v.status_cobro == "Cobrado":
             st.fill = PatternFill("solid", fgColor="D1FAE5")
@@ -3662,6 +3884,10 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
         elif v.status_cobro == "Pendiente":
             st.fill = PatternFill("solid", fgColor="FECACA")
             st.font = Font(color="991B1B", bold=True, size=9)
+        elif v.cierre_marca and not cierre_mes.marca_es_entrada(v):
+            # «Pasa a oct-2026» (status del API en la fila sombra).
+            st.fill = PatternFill("solid", fgColor=_FILL_CIERRE_SALE)
+            st.font = Font(color=_COLOR_CIERRE_SALE, bold=True, size=9)
         _num(ws, row, 6, v.total_mxn)
         _num(ws, row, 7, v.cobrado_mxn)
         # POR COBRAR = round2(venta avión − cobrado), igual que el API.
@@ -3707,6 +3933,7 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
             ws.row_dimensions[row].height = 14 * lineas + 4
         for c in range(1, n_cols + 1):
             ws.cell(row=row, column=c).border = _border
+        _alto_fila_marca(ws, row, v.cierre_marca)
         row += 1
 
     ws.cell(row=row, column=1, value="TOTALES").font = Font(bold=True)
@@ -3773,6 +4000,8 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
             if _hay_netos(req)
             else ()
         ),
+        # Filas marcadas por el cierre de mes (16-oct-2026): solo con alguna.
+        *((_NOTA_CIERRE_COBRANZA,) if _hay_marcas_cierre(req.vuelos) else ()),
     ):
         ws.cell(row=row, column=1, value=nota).font = Font(color=MUTED, size=9, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
@@ -3787,7 +4016,10 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
         tope=ANCHO_CLAVE_TOPE_BALANCE,
         con_id_cliente=hay_id_cliente(req.vuelos),
     )
-    anchos_cobranza = [ancho_clave, 11, 26, 12, 11, 16, 15, 15, 13, 16, 15, 14, ancho_detalle]
+    ancho_estado = _ANCHO_ESTADO_CIERRE if _hay_marcas_cierre(req.vuelos) else 12
+    anchos_cobranza = [
+        ancho_clave, 11, 26, ancho_estado, 11, 16, 15, 15, 13, 16, 15, 14, ancho_detalle,
+    ]  # fmt: skip
     for i, w in enumerate(anchos_cobranza, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A8"
@@ -5460,7 +5692,14 @@ def libro_balance_avion(req: BalanceAvionRequest, *, archivo: str | None = None)
         archivo=archivo,
         generado=req.generado,
         vinculos_gasto=req.vinculos_gasto is True,
+        cierre=_cierre_json(req.cierre),
     )
+
+
+def _cierre_json(cierre: BalanceCierre | None) -> dict | None:
+    """El bloque `cierre` del payload para la raíz del libro JSON (16-oct-2026):
+    tal cual lo validó el esquema; None ⇒ la raíz de siempre."""
+    return None if cierre is None else cierre.model_dump(mode="json")
 
 
 def _fila_resumen(
@@ -5621,6 +5860,24 @@ def _hoja_resumen_general(
         ws.cell(row=row, column=1, value=nota).font = Font(color=MUTED, size=9, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=12)
         row += 1
+    # Bloque «CIERRE DEL MES» al pie (16-oct-2026, API 0.0.88): el `cierre`
+    # de la raíz del general (o, si solo viaja en el consolidado, el suyo) y
+    # el renglón por avión de `resumen_cierre`. Sin ellos, el RESUMEN de
+    # siempre, byte a byte.
+    cierre = req.cierre
+    if cierre is None and req.consolidado is not None:
+        cierre = req.consolidado.cierre
+    if cierre is not None and cierre.tiene_algo():
+        row += 1
+        _bloque_cierre(
+            ws,
+            row,
+            cierre,
+            n_cols=12,
+            con_avion=True,
+            clave_span=2,
+            resumen=req.resumen_cierre,
+        )
     for i in range(1, 13):
         ws.column_dimensions[get_column_letter(i)].width = 10 if i == 1 else 14
     ws.freeze_panes = "A4"
@@ -6275,10 +6532,14 @@ def _titulo_balance_general(req: BalanceGeneralRequest) -> str:
 def libro_balance_general(req: BalanceGeneralRequest, *, archivo: str | None = None) -> dict:
     """El MISMO libro de flota («Balance mensual» o «Balance general» según
     `variante`), como JSON para verlo en pantalla (12-oct-2026)."""
+    cierre = req.cierre
+    if cierre is None and req.consolidado is not None:
+        cierre = req.consolidado.cierre
     return libro_json.exportar_libro(
         construir_balance_general(req),
         titulo=_titulo_balance_general(req),
         archivo=archivo,
         generado=req.generado,
         vinculos_gasto=req.vinculos_gasto is True,
+        cierre=_cierre_json(cierre),
     )

@@ -1,11 +1,13 @@
 """Render del PDF de reparto de utilidades (doc 5.9 — reporte 'vital')."""
 
 from io import BytesIO
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.lib.utils import simpleSplit
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import (
     KeepTogether,
@@ -18,12 +20,15 @@ from reportlab.platypus import (
 
 from app.schemas.reparto import (
     RepartoAvion,
+    RepartoCierre,
+    RepartoCierreVuelo,
     RepartoGastoCategoriaLinea,
     RepartoOtroIngresoLinea,
     RepartoOtrosIngresosDesglose,
     RepartoPdfRequest,
     RepartoVueloLinea,
 )
+from app.services import cierre_mes
 from app.services.reparto_comisiones import (
     ETIQUETA_FILA,
     LINEA_COMISION_VENDEDOR,
@@ -200,16 +205,76 @@ def _nota_otros_ingresos(req: RepartoPdfRequest, desglose_txt: str) -> str:
     )
 
 
+# Ancho útil de la columna «Vuelo» del detalle (60 mm menos el relleno de la
+# celda): la marca del cierre se parte a este ancho.
+_ANCHO_FOLIO_PT = 60 * mm - 12
+
+
 def _folio_vuelo(v: RepartoVueloLinea) -> str:
     """'#105 · 50 % (CUN-MID)' cuando el vuelo fue MULTI-AVIÓN (regla B,
     28-ago-2026: la venta del avión se repartió por tramo); '#105' si no.
-    Helvetica no dibuja '→' (sale una caja): se sustituye por '-'."""
+    Helvetica no dibuja '→' (sale una caja): se sustituye por '-'. Con la
+    marca del cierre de mes (16-oct-2026) va DEBAJO, partida al ancho de la
+    columna (una celda de texto de la tabla no envuelve sola: se encimaría
+    con el cliente): '#105\nViene de septiembre 2026'."""
     texto = f"#{v.folio}" if v.folio is not None else "—"
     if v.participacion is not None and v.participacion < 0.9999:
         texto += f" · {_pct(v.participacion)}"
         if v.tramos_avion:
             texto += f" ({v.tramos_avion.replace('→', '-')})"
+    if v.cierre_marca:
+        renglones = simpleSplit(
+            v.cierre_marca.replace("→", "-"), "Helvetica", 7.5, _ANCHO_FOLIO_PT
+        )
+        texto += "\n" + "\n".join(renglones)
     return texto
+
+
+# ===== CIERRE DE MES (16-oct-2026, API 0.0.88, invariante 89 del API) =====
+# Un vuelo COMPLETADO sin cobrar por completo al cerrar el mes pasa COMPLETO
+# al mes siguiente y se reparte cuando está cobrado. El API manda en `cierre`
+# el estado del mes y las listas (`diferidos_salen`, `diferidos_entran`,
+# `pendientes_que_pasarian`), ya con montos; aquí solo se imprimen: al final
+# de cada avión sus vuelos y, en la portada, el sello del cierre. Sin `cierre`
+# el PDF es el de siempre (flujos de contenido idénticos).
+def _linea_vuelo_cierre(v: RepartoCierreVuelo) -> str:
+    """«#316 Mike Nelson $2,076.40 (cobrado $0.00, por cobrar $2,076.40)» —
+    las partes que no vienen se omiten; '→' no se dibuja en Helvetica. Va
+    dentro de un Paragraph: el texto del API se ESCAPA (un «&» o «<» en el
+    nombre del cliente rompería el marcado)."""
+    partes = [f"#{v.folio}" if v.folio else "—"]
+    if v.cliente:
+        partes.append(v.cliente)
+    if v.venta_usd is not None:
+        partes.append(_usd(v.venta_usd))
+    detalle = [
+        f"cobrado {_usd(v.cobrado_usd)}" if v.cobrado_usd is not None else None,
+        f"por cobrar {_usd(v.por_cobrar_usd)}" if v.por_cobrar_usd is not None else None,
+    ]
+    detalle = [x for x in detalle if x]
+    texto = " ".join(partes)
+    if detalle:
+        texto += f" ({', '.join(detalle)})"
+    return escape(texto.replace("→", "-"))
+
+
+def _parrafos_cierre_avion(
+    cierre: RepartoCierre | None, matricula: str | None, estilo: ParagraphStyle
+) -> list[Paragraph]:
+    """Las líneas del cierre que tocan a ESTE avión (por `matricula`), una por
+    lista con vuelos; `matricula` None ⇒ las que no son de ningún avión del
+    reparto (externos)."""
+    if cierre is None:
+        return []
+    parrafos: list[Paragraph] = []
+    for attr, plantilla, mes_attr in cierre_mes.LISTAS_REPARTO:
+        items = [v for v in getattr(cierre, attr) if v.matricula == matricula]
+        if not items:
+            continue
+        titulo = cierre_mes.titulo_lista_reparto(plantilla, items, mes_attr)
+        lineas = " · ".join(_linea_vuelo_cierre(v) for v in items)
+        parrafos.append(Paragraph(f"<b>{titulo}:</b> {lineas}", estilo))
+    return parrafos
 
 
 # Grupo del desglose de gastos (mismas etiquetas que el panel).
@@ -320,9 +385,19 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
         "foot", parent=base["Normal"], fontSize=8, textColor=MUTED, leading=11
     )
 
+    s_cierre = ParagraphStyle(
+        "cierre", parent=base["Normal"], fontSize=7.5, textColor=MUTED, leading=10
+    )
+    s_aviso_cierre = ParagraphStyle(
+        "aviso_cierre", fontSize=8, textColor=colors.HexColor("#b91c1c"), leading=11
+    )
+
     story: list = []
 
     # ---- Encabezado ----
+    # Sello del cierre de mes (16-oct-2026): «Mes cerrado el 16-oct-2026 por
+    # Ale» bajo la fecha de generación; sin `cierre` (o mes abierto), nada.
+    sello_cierre = cierre_mes.texto_estado_cierre(req.cierre)
     encabezado = Table(
         [
             [
@@ -333,7 +408,8 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
                 Paragraph("Aero Charter Cancún S.A. de C.V.", s_sub),
                 Paragraph(
                     f"Periodo: {req.periodo_desde} a {req.periodo_hasta}<br/>"
-                    f"Generado: {req.generado} (hora de Cancún, UTC−5)",
+                    f"Generado: {req.generado} (hora de Cancún, UTC−5)"
+                    + (f"<br/><b>{escape(sello_cierre)}</b>" if sello_cierre else ""),
                     s_meta,
                 ),
             ],
@@ -441,6 +517,11 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
     if nota_global:
         story.append(Spacer(1, 2 * mm))
         story.append(Paragraph(nota_global, s_sub))
+    # Cierre de mes (16-oct-2026): si el API detectó que los números de hoy
+    # ya no son los del cierre, el aviso va arriba, en rojo.
+    if req.cierre is not None and req.cierre.coincide_con_snapshot is False:
+        story.append(Spacer(1, 2 * mm))
+        story.append(Paragraph(f"AVISO: {cierre_mes.AVISO_SNAPSHOT}", s_aviso_cierre))
     story.append(Spacer(1, 8 * mm))
 
     # ---- Por aeronave ----
@@ -449,8 +530,27 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
 
     for avion in req.aviones:
         story.append(
-            _bloque_avion(avion, s_avion, linea_comision=linea_comision_vendedor(req))
+            _bloque_avion(
+                avion,
+                s_avion,
+                linea_comision=linea_comision_vendedor(req),
+                cierre=_parrafos_cierre_avion(req.cierre, avion.matricula, s_cierre),
+            )
         )
+        story.append(Spacer(1, 6 * mm))
+    # Vuelos del cierre cuya matrícula no tiene bloque arriba (externos o un
+    # avión sin dinero en el periodo): no se pierden en silencio.
+    fuera = cierre_mes.matriculas_sin_bloque(req.cierre, (a.matricula for a in req.aviones))
+    if fuera:
+        bloque_fuera: list = [
+            Paragraph(cierre_mes.TITULO_REPARTO_SIN_AVION, s_avion),
+            Spacer(1, 2 * mm),
+        ]
+        for matricula in fuera:
+            if matricula:
+                bloque_fuera.append(Paragraph(f"<b>{escape(matricula)}</b>", s_sub))
+            bloque_fuera += _parrafos_cierre_avion(req.cierre, matricula, s_cierre)
+        story.append(KeepTogether(bloque_fuera))
         story.append(Spacer(1, 6 * mm))
 
     # ---- Resumen por socio ----
@@ -513,7 +613,11 @@ def _bloque_avion(
     estilo_titulo: ParagraphStyle,
     *,
     linea_comision: str = LINEA_COMISION_VENDEDOR,
+    cierre: list[Paragraph] | None = None,
 ) -> KeepTogether:
+    """`cierre` (16-oct-2026): los párrafos del cierre de mes de ESTE avión
+    (vuelos que pasan / vienen / pasarían), al final del bloque; vacío o
+    None ⇒ el bloque de siempre."""
     titulo = Paragraph(f"{avion.matricula} — {avion.modelo}", estilo_titulo)
 
     filas: list[list[str]] = [
@@ -713,6 +817,11 @@ def _bloque_avion(
         )
         bloque.append(Spacer(1, 2 * mm))
         bloque.append(rtabla)
+
+    # Cierre de mes (16-oct-2026): al final del avión, sus vuelos diferidos.
+    for parrafo in cierre or []:
+        bloque.append(Spacer(1, 1.5 * mm))
+        bloque.append(parrafo)
 
     return KeepTogether(bloque)
 
