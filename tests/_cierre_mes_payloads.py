@@ -106,50 +106,107 @@ MARCA_PASA = "Pasa a octubre 2026 (pendiente de cobro: cobrado $0.00 de $36,632.
 MARCA_VIENE = "Viene de agosto 2026"
 LEYENDA_PASA = "Pasa a octubre 2026 · pendiente de cobro: cobrado $0.00 de $2,076.40 USD"
 
-# Llaves de dinero de la fila que el API manda en null en la fila SOMBRA
-# (contrato §4.3; también los T.C. y las horas cobradas: sin venta no hay
-# tipo de cambio de la fila ni horas vendidas).
+# La fila SOMBRA y la que VIENE, campo por campo como las arma el API
+# (`aircraft/cierre-balance.util.ts` de la rama 0.0.88: `aplicarFilaSombra` y
+# `aplicarFilaViene`). Si el API cambia esa lista, se cambia aquí: el test
+# prueba el libro con la forma REAL de la fila, no con una aproximación.
+# Llaves que el API pone en null en la SOMBRA (todo el dinero, los T.C. y
+# las horas COBRADAS, que son de la venta).
 DINERO_FILA = (
     "horas_cobradas", "tarifa_usd", "iva_hr_usd", "total_usd", "iva_usd", "tc_venta",
-    "total_mxn", "iva_mxn", "subtotal_mxn", "total_cotizacion_mxn", "op_mxn",
-    "piloto_mxn", "otros_mxn", "permiso_afac_mxn", "costo_total_mxn", "tc_costos",
-    "costo_usd", "costo_usd_siva", "iva_pagado_usd", "iva_pagado_mxn",
-    "remanente_mxn", "dif_iva_mxn", "comision_vendedor_mxn", "ganancia_mxn",
-    "ganancia_usd", "costo_hr_usd", "costo_hr_usd_siva", "cobrado_mxn",
-    "cobrado_real_mxn", "por_cobrar_mxn", "por_cobrar_usd", "comisiones_mxn",
+    "total_cotizacion_usd", "total_cotizacion_mxn", "otros_ingresos_usd", "tua_pagado_mxn",
+    "total_mxn", "iva_mxn", "subtotal_mxn", "gas_mxn", "gas_litros", "gas_precio_litro",
+    "op_mxn", "piloto_mxn", "otros_mxn", "permiso_afac_mxn", "permiso_afac_usd_hr",
+    "costo_total_mxn", "tc_costos", "costo_usd", "costo_usd_siva", "iva_pagado_usd",
+    "iva_pagado_mxn", "remanente_mxn", "dif_iva_mxn", "comision_vendedor_mxn",
+    "ganancia_mxn", "ganancia_usd", "costo_hr_usd", "costo_hr_usd_siva", "cobrado_mxn",
+    "cobrado_real_mxn", "por_cobrar_mxn", "por_cobrar_usd", "factura_vuelatour",
+)  # fmt: skip
+# Listas que el API vacía en la SOMBRA.
+LISTAS_SOMBRA = (
+    "gas_detalle", "op_detalle", "piloto_detalle", "otros_detalle", "op_vinculos",
+    "piloto_vinculos", "otros_vinculos", "cobros",
+)  # fmt: skip
+# Llaves que el API BORRA de la SOMBRA (`delete fila.…`).
+BORRADAS_SOMBRA = (
+    "extension_pagada_mxn", "comisiones_mxn", "comisiones_detalle",
     "comision_banco_avion_mxn", "comision_vendedor_prov_mxn",
+    "comision_vendedor_real_mxn", "comision_vendedor_real_pagos",
 )  # fmt: skip
 
 
-def _fila_sombra(modelo: dict) -> dict:
-    s = copy.deepcopy(modelo)
+def aplicar_fila_sombra(fila: dict, destino: str, leyenda: str) -> dict:
+    """`aplicarFilaSombra` del API: horas, tacos y ruta REALES; el dinero en
+    null; ESTADO real; STATUS «Pasa a <mes corto>»."""
+    s = copy.deepcopy(fila)
     for k in DINERO_FILA:
         s[k] = None
-    for k in list(s):
-        if k.endswith("_detalle") or k.endswith("_vinculos"):
-            s[k] = []
+    for k in LISTAS_SOMBRA:
+        s[k] = []
+    for k in BORRADAS_SOMBRA:
+        s.pop(k, None)
+    s.update(
+        status_cobro=f"Pasa a {_MES_CORTO[int(destino[5:7]) - 1]}-{destino[:4]}",
+        cierre_marca=leyenda,
+        fila_sombra=True,
+        diferido_a=destino,
+        diferido_de=None,
+    )
+    return s
+
+
+def aplicar_fila_viene(fila: dict, origen: str) -> None:
+    """`aplicarFilaViene` del API: el dinero completo; horas y tacos en null."""
+    fila.update(
+        tiempo_vuelo=None,
+        taco_inicio=None,
+        taco_fin=None,
+        taco_inicio_obs=[],
+        taco_fin_obs=[],
+        salto_taco_inicio=False,
+        salto_taco_esperado=None,
+        salto_taco_interno=False,
+        salto_taco_interno_detalle=None,
+        cierre_marca=f"Viene de {cierre_mes_etiqueta(origen)}",
+        fila_sombra=False,
+        diferido_a=None,
+        diferido_de=origen,
+    )
+
+
+_MES_CORTO = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+_MES_LARGO = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+    "septiembre", "octubre", "noviembre", "diciembre",
+]  # fmt: skip
+
+
+def cierre_mes_etiqueta(mes: str) -> str:
+    return f"{_MES_LARGO[int(mes[5:7]) - 1]} {mes[:4]}"
+
+
+def _fila_sombra(modelo: dict) -> dict:
+    """#499 (voló el 28-sep, PASA a octubre): la fila de forma real del
+    modelo con sus horas propias (0.95 h, tacos que empalman)."""
+    s = copy.deepcopy(modelo)
     s.update(
         clave="#499 · Cliente Nueve",
         fecha="2026-09-28",
         orden_ts="2026-09-28T12:00:00Z",
-        cobros=[],
         tiempo_vuelo=0.95,
-        taco_inicio=None,
-        taco_fin=None,
-        status_cobro="Pasa a oct-2026",
+        taco_inicio=1100.0,
+        taco_fin=1100.95,
         estado="COMPLETADO",
-        fila_sombra=True,
-        diferido_a="2026-10",
-        cierre_marca=MARCA_PASA,
     )
-    return s
+    return aplicar_fila_sombra(s, "2026-10", MARCA_PASA)
 
 
 def con_filas_de_cierre(p: dict) -> dict:
     """Las dos filas del cierre en el libro de XA-TST (o del consolidado)."""
     p = copy.deepcopy(p)
     viene = next(v for v in p["vuelos"] if v["clave"].startswith("#403"))
-    viene.update(tiempo_vuelo=None, diferido_de="2026-08", cierre_marca=MARCA_VIENE)
+    aplicar_fila_viene(viene, "2026-08")
+    assert viene["cierre_marca"] == MARCA_VIENE
     p["vuelos"].append(_fila_sombra(p["vuelos"][0]))
     return p
 

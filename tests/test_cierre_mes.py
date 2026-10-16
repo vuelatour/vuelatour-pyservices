@@ -159,6 +159,12 @@ def _fila_de(ws, prefijo: str) -> int:
     return filas[0]
 
 
+def _es_columna_de_horas(titulo: str) -> bool:
+    """Columnas de HORAS de la hoja de vuelos (tiempo y tacómetros): las
+    únicas que la fila sombra conserva (decisión 1 del cliente)."""
+    return "TIEMPO" in titulo or "TACO" in titulo
+
+
 def _encabezados(ws, fila: int = 2) -> dict[str, int]:
     return {str(c.value).replace("\n", " "): c.column for c in ws[fila] if c.value is not None}
 
@@ -316,11 +322,17 @@ def test_individual_sombra_no_suma_y_viene_suma(registros) -> None:
     ev = ws.cell(row=viene, column=enc["ESTADO"])
     assert ev.value == pay.MARCA_VIENE
     assert ev.fill.fgColor.rgb.endswith("DBEAFE")
-    # Fila SOMBRA: horas reales y TODO el dinero vacío (sin fórmula).
+    # Fila SOMBRA (forma REAL del API: `aplicarFilaSombra`): horas y tacos
+    # reales y TODO el dinero vacío (sin fórmula).
     assert ws.cell(row=sombra, column=enc["TIEMPO VUELO HR"]).value == 0.95
+    assert ws.cell(row=sombra, column=enc["TACO INICIO"]).value == 1100
     for titulo, col in enc.items():
-        if col > enc["ESTADO"] and titulo not in ("TIEMPO VUELO HR", "STATUS"):
+        if col > enc["ESTADO"] and not _es_columna_de_horas(titulo) and titulo != "STATUS":
             assert ws.cell(row=sombra, column=col).value is None, titulo
+    # Fila que VIENE: horas y tacos vacíos (se quedaron en su mes real).
+    for titulo, col in enc.items():
+        if _es_columna_de_horas(titulo):
+            assert ws.cell(row=viene, column=col).value is None, titulo
     assert ws.cell(row=sombra, column=enc["STATUS"]).value == "Pasa a oct-2026"
     # Fila que VIENE: dinero completo y horas vacías con su nota.
     hv = ws.cell(row=viene, column=enc["TIEMPO VUELO HR"])
@@ -397,6 +409,33 @@ def test_individual_cobranza_marca_y_celdas_vacias() -> None:
     assert any(n.startswith("CIERRE DE MES: las filas «Pasa a <mes>»") for n in notas)
 
 
+def test_cancelado_con_marca_no_entra_al_sumif_de_cotizacion(registros) -> None:
+    """Revisión 16-oct: TOTAL COTIZACIÓN de 'cobranza' es SUMIF(ESTADO,
+    "<>CANCELADO"). Si una fila CANCELADO trajera marca del cierre (el API no
+    se la pone, pero nada en el esquema lo impide) y la marca reemplazara a
+    «CANCELADO», su cotización ($60,000 de #404) entraría a la suma y la
+    fórmula dejaría de reproducir al API. ESTADO se queda «CANCELADO»."""
+    render_balance_avion_xlsx(BalanceAvionRequest.model_validate(pay.individual_base()))
+    degradadas_base = registros[-1].degradadas()
+    p = pay.individual_base()
+    cancelado = next(v for v in p["vuelos"] if v["clave"].startswith("#404"))
+    assert cancelado["estado"] == "CANCELADO" and cancelado["total_cotizacion_mxn"] == 60000
+    cancelado.update(cierre_marca="Viene de agosto 2026", diferido_de="2026-08")
+    data = render_balance_avion_xlsx(BalanceAvionRequest.model_validate(p))
+    assert registros[-1].degradadas() == degradadas_base
+    assert verificar_libro(data)
+    wb = load_workbook(BytesIO(data))
+    cb = wb["cobranza"]
+    fila = _fila_de(cb, "#404")
+    assert cb.cell(row=fila, column=4).value == "CANCELADO"
+    tot = _fila_de(cb, "TOTALES")
+    assert "SUMIF" in str(cb.cell(row=tot, column=10).value)
+    ws = wb[MAESTRA_TST]
+    assert ws.cell(row=_fila_de(ws, "#404"), column=_encabezados(ws)["ESTADO"]).value == (
+        "CANCELADO"
+    )
+
+
 def test_individual_vista_en_pantalla_trae_el_cierre() -> None:
     p = pay.individual_con_cierre()
     vista = libro_balance_avion(BalanceAvionRequest.model_validate({**p, "vinculos_gasto": True}))
@@ -429,7 +468,7 @@ def test_general_marcas_resumen_y_cobranza(variante: str, registros) -> None:
     assert ws.cell(row=sombra, column=enc["ESTADO"]).value == pay.MARCA_PASA
     assert ws.cell(row=_fila_de(ws, "#403"), column=enc["ESTADO"]).value == pay.MARCA_VIENE
     for titulo, col in enc.items():
-        if col > enc["ESTADO"] and "TIEMPO" not in titulo and "STATUS" not in titulo:
+        if col > enc["ESTADO"] and not _es_columna_de_horas(titulo) and "STATUS" not in titulo:
             assert ws.cell(row=sombra, column=col).value is None, titulo
     # El bloque NO va en la hoja de vuelos del general: va en el RESUMEN.
     assert not any(

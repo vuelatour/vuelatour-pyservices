@@ -1792,11 +1792,20 @@ Reglas de este microservicio (FastAPI, Python 3.12).
     si el `cierre` viaja solo en el consolidado, se toma de ahí). Notas al
     pie solo con alguna marca. `libro_json` copia `cierre` a la raíz de la
     vista en pantalla (el panel pinta el estado del mes).
-  - **OJO para el API**: en la fila sombra manda también `tc_venta` /
-    `tc_costos` en null; con un T.C. la AVERAGE de TIPO CAMBIO COSTOS de
-    TOTALES (y la GANANCIA USD de filas sin T.C.) ya no reproduce el número
-    del API y vuelve a VALOR (el número no cambia, pero se pierde la
-    fórmula).
+  - **Forma REAL de las dos filas** (revisión 16-oct contra la rama del API
+    0.0.88, `aircraft/cierre-balance.util.ts`): `aplicarFilaSombra` pone en
+    null TODO el dinero, los T.C. (`tc_venta` / `tc_costos`; con un T.C. la
+    AVERAGE de TIPO CAMBIO COSTOS de TOTALES ya no reproduciría al API) y
+    las horas COBRADAS, vacía detalles/vínculos/cobros y BORRA las llaves de
+    comisiones y extensión; conserva horas y TACOS reales. `aplicarFilaViene`
+    pone en null `tiempo_vuelo`, tacos y saltos. `tests/_cierre_mes_payloads.py`
+    (`aplicar_fila_sombra` / `aplicar_fila_viene`) copia esas listas campo
+    por campo: si el API las cambia, se cambian ahí.
+  - **La marca NUNCA reemplaza «CANCELADO»** (`_marca_en_estado`, regla
+    única de la hoja de vuelos y de 'cobranza'): TOTAL COTIZACIÓN de
+    'cobranza' es `SUMIF(ESTADO, "<>CANCELADO")`; si la marca tapara el
+    estado de un cancelado, su cotización entraría a la suma. El API no le
+    pone marca a un cancelado; la guarda lo asegura por construcción.
   - **Reparto PDF/XLSX** (`RepartoVueloLinea.cierre_marca`, `diferido_de/a`;
     raíz `cierre` = `RepartoCierre`: `estado`, `cerrado_at`,
     `cerrado_por_nombre`, `version`, `coincide_con_snapshot`, listas

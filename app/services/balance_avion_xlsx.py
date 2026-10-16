@@ -2387,8 +2387,17 @@ def _pintar_estado_cierre(cell, v: BalanceAvionVuelo) -> str:
     return _FILL_CIERRE_VIENE if entrada else _FILL_CIERRE_SALE
 
 
+def _marca_en_estado(v: BalanceAvionVuelo) -> bool:
+    """¿La marca del cierre REEMPLAZA el texto de ESTADO? Nunca en una fila
+    CANCELADO: TOTAL COTIZACIÓN de 'cobranza' es SUMIF(ESTADO, "<>CANCELADO")
+    y la fila cancelada debe seguir fuera de esa suma (el API no le pone
+    marca a un cancelado; esta guarda lo garantiza por construcción). ÚNICA
+    regla para la hoja de vuelos y la cobranza."""
+    return bool(v.cierre_marca) and v.estado != "CANCELADO"
+
+
 def _hay_marcas_cierre(vuelos: list[BalanceAvionVuelo]) -> bool:
-    return any(v.cierre_marca for v in vuelos)
+    return any(_marca_en_estado(v) for v in vuelos)
 
 
 def _alto_fila_marca(ws: Worksheet, row: int, marca: str | None) -> None:
@@ -2718,7 +2727,7 @@ def _hoja_maestra(
                         # FÓRMULA para openpyxl (guarda de la caja chica,
                         # 24-sep-2026) — se queda como TEXTO.
                         _texto_literal(cell)
-                    if attr == "estado" and v.cierre_marca:
+                    if attr == "estado" and _marca_en_estado(v):
                         # CIERRE DE MES (16-oct-2026): la marca del API en
                         # lugar del estado (que va en la nota), ámbar si
                         # sale/pasará y azul claro si viene de otro mes.
@@ -2897,7 +2906,7 @@ def _hoja_maestra(
             cell.border = _border
             if fill:
                 cell.fill = PatternFill("solid", fgColor=fill)
-        _alto_fila_marca(ws, row, v.cierre_marca)
+        _alto_fila_marca(ws, row, v.cierre_marca if _marca_en_estado(v) else None)
         row += 1
 
     # «Calculado por el sistema» (variante general): la nota va UNA vez, en
@@ -3867,7 +3876,7 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
         ws.cell(row=row, column=2, value=_fecha(v.fecha))
         ws.cell(row=row, column=3, value=v.ruta)
         ec = ws.cell(row=row, column=4, value=v.estado)
-        if v.cierre_marca:
+        if _marca_en_estado(v):
             # CIERRE DE MES (16-oct-2026): la marca del API en ESTADO; la
             # fila sombra («Pasa a …») va con sus celdas vacías (el API las
             # manda en null) y no suma.
@@ -3884,7 +3893,7 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
         elif v.status_cobro == "Pendiente":
             st.fill = PatternFill("solid", fgColor="FECACA")
             st.font = Font(color="991B1B", bold=True, size=9)
-        elif v.cierre_marca and not cierre_mes.marca_es_entrada(v):
+        elif _marca_en_estado(v) and not cierre_mes.marca_es_entrada(v):
             # «Pasa a oct-2026» (status del API en la fila sombra).
             st.fill = PatternFill("solid", fgColor=_FILL_CIERRE_SALE)
             st.font = Font(color=_COLOR_CIERRE_SALE, bold=True, size=9)
@@ -3933,7 +3942,7 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
             ws.row_dimensions[row].height = 14 * lineas + 4
         for c in range(1, n_cols + 1):
             ws.cell(row=row, column=c).border = _border
-        _alto_fila_marca(ws, row, v.cierre_marca)
+        _alto_fila_marca(ws, row, v.cierre_marca if _marca_en_estado(v) else None)
         row += 1
 
     ws.cell(row=row, column=1, value="TOTALES").font = Font(bold=True)
