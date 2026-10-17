@@ -5667,9 +5667,19 @@ def _linea_pagos_afac(ws: Worksheet, pagos: BalanceAvionHojaGastos) -> None:
     de AFAC» los paga VuelaTour y ya NO restan aquí (ni en la cascada ni en
     el reparto): una línea en cursiva lo dice, con el total del API
     (`total_mxn`, nada se suma aquí) y el detalle de cada pago en su nota.
-    La fila 3 está vacía en esta hoja (título 1, periodo 2, resumen 4–5)."""
+    La fila 3 está vacía en esta hoja (título 1, periodo 2, resumen 4–5).
+    Revisión (16-oct-2026): el `total_mxn` del API NO incluye los pagos en
+    USD sin T.C. (`monto_mxn` null; `buildHoja` los cuenta 0) — la línea lo
+    dice («; 1 en USD sin T.C., no suma») en vez de presentar el total como
+    si fueran todos, y sin pagos con pesos no cita un «$0.00» falso."""
     n = len(pagos.filas)
-    monto = f" (${pagos.total_mxn:,.2f})" if pagos.total_mxn is not None else ""
+    sin_tc = sum(1 for f in pagos.filas if f.monto_mxn is None)
+    partes: list[str] = []
+    if pagos.total_mxn is not None and sin_tc < n:
+        partes.append(f"${pagos.total_mxn:,.2f}")
+    if sin_tc:
+        partes.append(f"{sin_tc} en USD sin T.C., no suma{'n' if sin_tc != 1 else ''}")
+    monto = f" ({'; '.join(partes)})" if partes else ""
     if n == 1:
         texto = f"1 pago de AFAC{monto} lo paga VuelaTour: no resta aquí"
     else:
@@ -6025,7 +6035,15 @@ _COLUMNAS_PROVISION = (3, 4)
 
 def _es_provision(f: BalanceOtroMovimientoFila) -> bool:
     """¿El egreso de la fila es (o incluye) una PROVISIÓN sin gasto real?
-    (la marca del API en el concepto o en una línea de su nota)."""
+    (la marca del API en el concepto o en una línea de su nota).
+    Revisión del AFAC POR VUELO (16-oct-2026, API 0.0.89): una fila
+    `seccion == 'AFAC_VUELO'` NUNCA es provisión — su `nota_egreso` son las
+    NOTAS LIBRES que el operador escribió con el costo real (`PUT
+    /v1/flights/:id/afac-real`), no un texto del API: una nota que dijera
+    «· PROVISIÓN (» pintaba de amarillo la celda editable y sacaba la
+    leyenda del amarillo. Ninguna fila de un API previo trae esa sección."""
+    if f.seccion == "AFAC_VUELO":
+        return False
     return any(
         _MARCA_PROVISION.search(texto) for texto in (f.concepto_egreso, f.nota_egreso) if texto
     )

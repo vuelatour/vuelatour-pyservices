@@ -1671,7 +1671,21 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   del lote: migración `20261016000005` → pyservices (compuerta `GET
   /version`) → API 0.0.89 → panel. Tests:
   `tests/test_balance_otros_movimientos_afac_vuelo.py` (+ celda vacía con
-  vínculo en `test_libro_json.py`).
+  vínculo en `test_libro_json.py`). **Revisión adversaria (16-oct-2026)**
+  contra los payloads REALES del API 0.0.89 (volcados de `payloadGeneral` /
+  `payloadAvion` de la rama afac-real, mensual y general, con un real, un
+  vuelo por capturar y dos pagos marcados): nombres 1:1, TOTALES cuentan
+  cada fila UNA vez, cero fórmulas degradadas, vínculo `afac_real` solo en D
+  de cada fila AFAC_VUELO (75 filas, multi-avión no dueña, solo-real, real 0,
+  no contiguas, solo pagos), huellas `_HUELLAS_0088` recalculadas sobre un
+  export limpio de 575c816 (idénticas) y skew API 0.0.89 + pyservices 575c816
+  (TOTALES correctos, sin vínculo). Dos arreglos: (a) `_es_provision` ignora
+  las filas AFAC_VUELO — su `nota_egreso` son las NOTAS LIBRES del operador
+  (PUT afac-real), y una nota con «· PROVISIÓN (» pintaba de amarillo la
+  celda editable y sacaba la leyenda; (b) la línea de 'permisos' del
+  individual dice cuántos pagos van en USD sin T.C. («($1,500.00; 1 en USD
+  sin T.C., no suma)»): el `total_mxn` del API (`buildHoja`) los cuenta 0 y
+  la línea los presentaba como incluidos (o citaba «$0.00»).
 - **Otros ingresos del avión: pestaña 'Otros ingresos', línea «(+) OTROS
   INGRESOS USD», hoja consolidada, Libro Dinero y reparto** (13-oct-2026,
   API 0.0.75; invariante «INGRESO ASIGNADO A UN AVIÓN» del API, migración

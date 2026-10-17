@@ -314,6 +314,32 @@ def test_remanente_negativo_en_rojo_y_nada_en_amarillo() -> None:
     assert estilos[verde["s"]].get("co") != "9C0006"
 
 
+def test_notas_del_costo_real_con_la_marca_de_provision_no_pintan_amarillo() -> None:
+    """Revisión (16-oct-2026): `nota_egreso` de una fila AFAC_VUELO son las
+    NOTAS LIBRES del operador (PUT /v1/flights/:id/afac-real), no un texto
+    del API. Una nota con «· PROVISIÓN (» no puede volver amarilla la celda
+    editable ni sacar la leyenda del amarillo (una fila de vuelo con la
+    marca del API, sí: el amarillo de siempre no cambia)."""
+    p = pa.general_0089()
+    om_p = p["consolidado"]["otros_movimientos"]
+    afac = [f for f in om_p["filas"] if f.get("seccion") == "AFAC_VUELO"]
+    afac[0]["nota_egreso"] = "Recibo · PROVISIÓN (el gestor manda la factura después)"
+    afac[0]["afac"]["notas"] = afac[0]["nota_egreso"]
+    data, om, _ = _general(p)
+    assert _rellenos_amber(om) == []
+    assert _LEYENDA_PROVISION not in _textos(om)
+    sep = _fila_de(om, _OM_SECCION_AFAC_VUELO)
+    d = om.cell(row=sep + 1, column=4)
+    assert d.fill.fgColor.rgb == f"00{FILL_AFAC_EDITABLE}"
+    assert d.comment.text == afac[0]["nota_egreso"]
+    # Control: la MISMA marca en una fila de vuelo normal sí pinta amarillo.
+    normal = next(f for f in om_p["filas"] if f.get("seccion") is None and f.get("egreso_mxn"))
+    normal["concepto_egreso"] = "pago comisión vendedor (X) · PROVISIÓN (mismo monto)"
+    _, om2, _ = _general(p)
+    assert _rellenos_amber(om2) != []
+    assert _LEYENDA_PROVISION in _textos(om2)
+
+
 # ---------------------------------------------------------------------------
 # (c) Libro JSON: el vínculo editable `afac_real` en la celda EGRESO (D).
 # ---------------------------------------------------------------------------
@@ -688,22 +714,54 @@ def test_individual_linea_de_pagos_afac_en_permisos() -> None:
     assert a3["t"].startswith("2 pagos de AFAC") and a3["n"].startswith("01/09/2026")
 
 
-def test_individual_un_pago_en_usd_sin_tc() -> None:
+_PAGO_USD_SIN_TC = {
+    "fecha": "2026-09-22", "categoria": "Permiso", "detalle": "Derechos AFAC en USD",
+    "monto_mxn": None, "moneda_original": "USD", "monto_original": 40.0,
+    "tc_aplicado": None, "gasto_id": pa.GASTO_3,
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("total", [0.0, None], ids=["api-0", "null"])
+def test_individual_un_pago_en_usd_sin_tc(total) -> None:
+    """Revisión (16-oct-2026): el `buildHoja` del API manda `total_mxn` 0 (no
+    null) cuando el único pago es USD sin T.C.: la línea NO cita un «$0.00»
+    falso, dice que ese pago no suma."""
     p = pa.individual_0089()
-    p["pagos_afac"]["filas"] = [
-        {"fecha": "2026-09-22", "categoria": "Permiso", "detalle": "Derechos AFAC en USD",
-         "monto_mxn": None, "moneda_original": "USD", "monto_original": 40.0,
-         "tc_aplicado": None, "gasto_id": pa.GASTO_3},
-    ]  # fmt: skip
-    p["pagos_afac"]["total_mxn"] = None
+    p["pagos_afac"]["filas"] = [dict(_PAGO_USD_SIN_TC)]
+    p["pagos_afac"]["total_mxn"] = total
+    p["pagos_afac"]["usd"] = None
+    p["pagos_afac"]["usd_hr"] = None
     ws = load_workbook(
         BytesIO(render_balance_avion_xlsx(BalanceAvionRequest.model_validate(p)))
     )["permisos"]
     assert ws["A3"].value == (
-        "1 pago de AFAC lo paga VuelaTour: no resta aquí (ver Balance general · "
-        "otros movimientos, bloque AFAC DEL PERIODO)."
+        "1 pago de AFAC (1 en USD sin T.C., no suma) lo paga VuelaTour: no resta "
+        "aquí (ver Balance general · otros movimientos, bloque AFAC DEL PERIODO)."
     )
     assert ws["A3"].comment.text == "22/09/2026 · Derechos AFAC en USD · sin T.C. (USD 40.00)"
+
+
+def test_individual_pagos_mixtos_el_total_dice_que_no_incluye_el_usd_sin_tc() -> None:
+    """Revisión (16-oct-2026): con un pago en pesos y otro USD sin T.C., el
+    `total_mxn` del API ($1,500.00) NO incluye el segundo: la línea lo dice
+    (antes: «2 pagos de AFAC ($1,500.00)», como si fuera de los dos)."""
+    p = pa.individual_0089()
+    p["pagos_afac"]["filas"] = [p["pagos_afac"]["filas"][0], dict(_PAGO_USD_SIN_TC)]
+    p["pagos_afac"]["total_mxn"] = 1500.0
+    p["pagos_afac"]["usd"] = None
+    p["pagos_afac"]["usd_hr"] = None
+    ws = load_workbook(
+        BytesIO(render_balance_avion_xlsx(BalanceAvionRequest.model_validate(p)))
+    )["permisos"]
+    assert ws["A3"].value == (
+        "2 pagos de AFAC ($1,500.00; 1 en USD sin T.C., no suma) los paga "
+        "VuelaTour: no restan aquí (ver Balance general · otros movimientos, "
+        "bloque AFAC DEL PERIODO)."
+    )
+    assert ws["A3"].comment.text == (
+        "01/09/2026 · Permisos Vuelos Privados · Yousefh Pineda Bedolla · $1,500.00\n"
+        "22/09/2026 · Derechos AFAC en USD · sin T.C. (USD 40.00)"
+    )
 
 
 @pytest.mark.parametrize("pagos", [None, {"filas": []}], ids=["null", "vacia"])
