@@ -2477,10 +2477,18 @@ def _bloque_cierre(
         ]
         if con_avion:
             columnas.append(("AVIÓN", "matricula", None))
+        # Con el motivo del API (caso #351, 16-oct-2026) cobrado y por cobrar
+        # dicen su corte: son los montos AL CIERRE, no los de hoy.
+        dia_corte = cierre_mes.dia_corto(cierre_mes.primer_corte(items))
+        al_corte = f"\nAL {dia_corte.upper()}" if dia_corte else ""
         columnas += [
             ("VENTA\nMXN", "venta_mxn", MONEY),
-            ("COBRADO\nMXN", "cobrado_mxn", MONEY),
-            ("POR COBRAR\nMXN", "por_cobrar_mxn", MONEY),
+            ("COBRADO MXN" + al_corte if al_corte else "COBRADO\nMXN", "cobrado_mxn", MONEY),
+            (
+                "POR COBRAR MXN" + al_corte if al_corte else "POR COBRAR\nMXN",
+                "por_cobrar_mxn",
+                MONEY,
+            ),
             ("VENTA\nUSD", "venta_usd", MONEY),
             ("LEYENDA", "leyenda", None),
         ]

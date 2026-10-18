@@ -1921,6 +1921,42 @@ Reglas de este microservicio (FastAPI, Python 3.12).
     despliegue del lote: migración 20261016000004 ⇒ **pyservices** ⇒ API
     0.0.88 ⇒ panel (pyservices antes del API es seguro: el API 0.0.87 no
     manda nada de esto).
+  - **Caso #351: «cobrado después», no «pendiente de cobro»** (16-oct-2026,
+    API 0.0.91; el cliente: «aparece que aún no se cobran pero sí están
+    cobrados»). Los cinco de septiembre (#316, #337, #343, #344, #351)
+    pasan a octubre con motivo `COBRO_POSTERIOR`: no estaban cobrados al
+    30-sep, pero se cobraron en octubre. Las leyendas siguen siendo del API
+    y ya lo dicen; aquí solo cambian los textos PROPIOS, y SOLO cuando el
+    item trae `motivo` (sin él, todo byte a byte: las huellas de siempre
+    siguen pasando). Campos ADITIVOS con validador liberal
+    (`numero_cierre_liberal`: número finito o None, jamás un 422):
+    `BalanceCierreVuelo.motivo`, `corte` ('YYYY-MM-DD'),
+    `cobrado_despues_usd`, `cobrado_despues_mxn`, `fecha_cobro_despues`;
+    `RepartoCierreVuelo.motivo`, `cobrado_posterior_usd`,
+    `fecha_cobro_posterior`. Fuente única `app/services/cierre_mes.py`:
+    `dia_corto` ('2026-10-04' ⇒ '4-oct'), `corte_del_vuelo` (el `corte` del
+    API o, sin él, el último día del mes anterior al destino),
+    `es_cobro_posterior`, `detalle_cobro` (las piezas «cobrado al 30-sep $X»
+    / «por cobrar al 30-sep $Y» / «cobrado después $Z el 14-oct» o, en un
+    COBRO_POSTERIOR sin monto, «cobrado el 14-oct, después del 30-sep»),
+    `titulo_lista_reparto` y los títulos con `corte` («Pasan a octubre 2026
+    (sin cobro completo al 30-sep: no suman en este mes)», «Pasarán a
+    octubre 2026 al cerrar el mes: sin cobro completo al 30-sep (hoy sí
+    suman)»; en el reparto «… (sin cobro completo al 30-sep, no se
+    reparten)»). Lo usan: las líneas del bloque CIERRE DEL MES del balance
+    (encabezados «COBRADO MXN\nAL 30-SEP» / «POR COBRAR MXN\nAL 30-SEP»),
+    el Libro Dinero (`linea_vuelo_libro`), el PDF del reparto
+    (`_linea_vuelo_cierre`) y el Excel del reparto
+    (`ENCABEZADOS_CIERRE_AL_CIERRE`, «Cobrado USD al cierre» / «Por cobrar
+    USD al cierre»). Las notas al pie del balance NO cambian. Ojo con el
+    skew: el API ≤ 0.0.90 YA manda `motivo` en los items del REPARTO
+    (`diferidos_salen` / `diferidos_entran`), así que con este pyservices
+    el PDF/Excel del reparto ya rotulan «al 30-sep» y «cobrado después del
+    30-sep» antes del API 0.0.91 (es cierto; solo falta la fecha). Orden:
+    pyservices ⇒ API 0.0.91 ⇒ panel; todo es aditivo, cualquier orden es
+    seguro. Tests: sección 8 de `tests/test_cierre_mes.py` (helpers,
+    esquemas liberales, línea del libro por motivo, títulos, bloque del
+    balance, Libro Dinero, PDF y Excel del reparto).
 
 ## Conciliación
 

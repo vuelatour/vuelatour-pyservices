@@ -677,3 +677,211 @@ def test_rutas_aceptan_los_payloads_del_cierre(monkeypatch, request) -> None:
         assert res.status_code == 200, (ruta, res.text[:300])
     res = client.post("/pdf/balance-avion-libro", json=individual, headers=h)
     assert res.json()["cierre"]["estado"] == "CERRADO"
+
+
+# ---------------------------------------------------------------------------
+# 8) Caso #351 (16-oct-2026, API 0.0.91): «aparece que aún no se cobran pero
+# sí están cobrados». Con el `motivo` (y el `corte`) del API, los montos de
+# las listas van AL CORTE y se dice lo cobrado DESPUÉS; sin ellos, todo como
+# siempre (las huellas de arriba lo congelan).
+# ---------------------------------------------------------------------------
+
+POSTERIOR = "COBRO_POSTERIOR"
+
+
+def test_helpers_del_corte() -> None:
+    assert cierre_mes.dia_corto("2026-09-30") == "30-sep"
+    assert cierre_mes.dia_corto("2026-10-04") == "4-oct"
+    assert cierre_mes.dia_corto("2026-10-04T12:00:00Z") == "4-oct"
+    for raro in (None, "", "2026-13-01", "30/09/2026", 7):
+        assert cierre_mes.dia_corto(raro) is None
+    sin_motivo = BalanceCierre.model_validate(
+        {"pasan": [{"destino": "2026-10", "corte": "2026-09-30"}]}
+    ).pasan[0]
+    assert cierre_mes.corte_del_vuelo(sin_motivo) is None
+    pasa = RepartoCierre.model_validate(
+        {"diferidos_salen": [{"destino": "2026-01", "motivo": POSTERIOR}],
+         "diferidos_entran": [{"origen": "2026-02", "motivo": "SIN_COBRO"}]}
+    )  # fmt: skip
+    assert cierre_mes.corte_del_vuelo(pasa.diferidos_salen[0]) == "2025-12-31"
+    assert cierre_mes.corte_del_vuelo(pasa.diferidos_entran[0]) == "2026-02-28"
+    con_corte = BalanceCierre.model_validate(
+        {"pasan": [{"destino": "2026-10", "corte": "2026-09-15", "motivo": POSTERIOR}]}
+    ).pasan[0]
+    assert cierre_mes.corte_del_vuelo(con_corte) == "2026-09-15"
+
+
+def test_esquemas_aditivos_del_corte_son_liberales() -> None:
+    v = BalanceCierre.model_validate(
+        {"pasan": [{"motivo": " COBRO_POSTERIOR ", "corte": "   ", "cobrado_despues_usd": "12",
+                    "cobrado_despues_mxn": float("nan"), "fecha_cobro_despues": 20261014}]}
+    ).pasan[0]  # fmt: skip
+    assert (v.motivo, v.corte, v.cobrado_despues_usd, v.cobrado_despues_mxn) == (
+        "COBRO_POSTERIOR", None, None, None,
+    )  # fmt: skip
+    assert v.fecha_cobro_despues == "20261014"
+    r = RepartoCierre.model_validate(
+        {"pendientes_que_pasarian": [{"cobrado_posterior_usd": True, "motivo": None}]}
+    ).pendientes_que_pasarian[0]
+    assert (r.cobrado_posterior_usd, r.motivo, r.fecha_cobro_posterior) == (None, None, None)
+
+
+def _vuelo_libro(**extra) -> object:
+    base = {"clave": "#351 · Cliente 351", "folio": 351, "cliente": "Cliente 351",
+            "venta_mxn": 36632.89, "cobrado_mxn": 0, "por_cobrar_mxn": 36632.89,
+            "destino": "2026-10"}  # fmt: skip
+    return BalanceCierre.model_validate({"pasan": [{**base, **extra}]}).pasan[0]
+
+
+def test_linea_del_libro_por_motivo() -> None:
+    linea = cierre_mes.linea_vuelo_libro
+    assert linea(_vuelo_libro()) == (
+        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado $0.00, por cobrar $36,632.89"
+    )
+    assert linea(_vuelo_libro(motivo=POSTERIOR, corte="2026-09-30", cobrado_despues_mxn=36632.89,
+                              fecha_cobro_despues="2026-10-14")) == (
+        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30-sep $0.00, "
+        "cobrado después $36,632.89 el 14-oct"
+    )  # fmt: skip
+    # Mes cerrado: la bitácora solo guardó el motivo (sin monto ni fecha).
+    assert linea(_vuelo_libro(motivo=POSTERIOR, corte="2026-09-30")) == (
+        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30-sep $0.00, "
+        "cobrado después del 30-sep"
+    )
+    assert linea(_vuelo_libro(motivo=POSTERIOR, fecha_cobro_despues="2026-10-14")) == (
+        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30-sep $0.00, "
+        "cobrado el 14-oct, después del 30-sep"
+    )
+    assert linea(_vuelo_libro(motivo="COBRO_PARCIAL", cobrado_mxn=500, por_cobrar_mxn=1500,
+                              venta_mxn=2000, cobrado_despues_mxn=700,
+                              fecha_cobro_despues="2026-10-03")) == (
+        "#351 · Cliente 351 — venta $2,000.00 MXN, cobrado al 30-sep $500.00, "
+        "por cobrar al 30-sep $1,500.00, cobrado después $700.00 el 3-oct"
+    )  # fmt: skip
+    assert linea(_vuelo_libro(motivo="SIN_COBRO", cobrado_despues_mxn=0)) == (
+        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30-sep $0.00, "
+        "por cobrar al 30-sep $36,632.89"
+    )
+
+
+def test_titulos_con_el_corte() -> None:
+    assert cierre_mes.titulo_pasan("2026-10", "2026-09-30") == (
+        "Pasan a octubre 2026 (sin cobro completo al 30-sep: no suman en este mes)"
+    )
+    assert cierre_mes.titulo_pasarian("2026-10", "2026-09-30") == (
+        "Pasarán a octubre 2026 al cerrar el mes: sin cobro completo al 30-sep (hoy sí suman)"
+    )
+    assert cierre_mes.titulo_vienen("2026-08", "2026-08-31") == cierre_mes.titulo_vienen("2026-08")
+    # Sin corte, los de siempre.
+    assert cierre_mes.titulo_pasan("2026-10") == (
+        "Pasan a octubre 2026 (pendientes de cobro al cierre: no suman en este mes)"
+    )
+
+
+def _cierre_351(p: dict) -> dict:
+    p["cierre"]["pasan"][0].update(
+        motivo=POSTERIOR, corte="2026-09-30",
+        leyenda="Pasa a octubre 2026 (cobrado después del 30-sep; al cierre: $0.00 MXN de "
+        "$36,632.89 MXN)",
+    )  # fmt: skip
+    return p
+
+
+def test_balance_bloque_cierre_con_el_corte() -> None:
+    p = _cierre_351(pay.individual_con_cierre())
+    ws = load_workbook(BytesIO(render_balance_avion_xlsx(BalanceAvionRequest.model_validate(p))))[
+        MAESTRA_TST
+    ]
+    pasan = _fila_de(ws, "Pasan a octubre 2026")
+    assert ws.cell(row=pasan, column=1).value == (
+        "Pasan a octubre 2026 (sin cobro completo al 30-sep: no suman en este mes)"
+    )
+    assert [ws.cell(row=pasan + 1, column=c).value for c in range(1, 8)] == [
+        "CLAVE", "FECHA", "VENTA\nMXN", "COBRADO MXN\nAL 30-SEP", "POR COBRAR MXN\nAL 30-SEP",
+        "VENTA\nUSD", "LEYENDA",
+    ]  # fmt: skip
+    assert ws.cell(row=pasan + 2, column=7).value.startswith(
+        "Pasa a octubre 2026 (cobrado después del 30-sep"
+    )
+    # Los que VIENEN no traen motivo: su encabezado no cambia.
+    vienen = _fila_de(ws, "Vienen de agosto 2026")
+    assert ws.cell(row=vienen + 1, column=4).value == "COBRADO\nMXN"
+
+
+def test_dinero_lineas_con_el_corte() -> None:
+    p = _cierre_351(pay.dinero_con_cierre())
+    p["cierre"]["pasarian"] = [
+        {"clave": "#351 · Cliente 351", "folio": 351, "venta_mxn": 36632.89, "cobrado_mxn": 0,
+         "por_cobrar_mxn": 36632.89, "destino": "2026-10", "motivo": POSTERIOR,
+         "corte": "2026-09-30", "cobrado_despues_usd": 2076.4, "cobrado_despues_mxn": 36632.89,
+         "fecha_cobro_despues": "2026-10-14"},
+    ]  # fmt: skip
+    ws = load_workbook(BytesIO(render_dinero_xlsx(DineroXlsxRequest.model_validate(p))))[
+        "dinero-vlos"
+    ]
+    tit = _fila_de(ws, "CIERRE DEL MES")
+    assert ws.cell(row=tit + 1, column=1).value == (
+        "Pasan a octubre 2026 (sin cobro completo al 30-sep: no suman en este mes): "
+        "#499 · Cliente Nueve — venta $36,632.89 MXN, cobrado al 30-sep $0.00, "
+        "cobrado después del 30-sep."
+    )
+    assert ws.cell(row=tit + 3, column=1).value == (
+        "Pasarán a octubre 2026 al cerrar el mes: sin cobro completo al 30-sep (hoy sí suman): "
+        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30-sep $0.00, "
+        "cobrado después $36,632.89 el 14-oct."
+    )
+
+
+def _reparto_351() -> dict:
+    p = pay.reparto_con_cierre(estado="REABIERTO")
+    p["cierre"]["diferidos_salen"][0].update(
+        motivo=POSTERIOR, cobrado_posterior_usd=0,
+        leyenda="Pasa a octubre 2026 · cobrado después del 30-sep (al 30-sep: $0.00 USD de "
+        "$2,076.40 USD)",
+    )  # fmt: skip
+    p["cierre"]["pendientes_que_pasarian"] = [
+        {"id": "v-351", "folio": 351, "cliente": "Cliente 351", "matricula": "XB-TST",
+         "venta_usd": 2343.2, "cobrado_usd": 0, "por_cobrar_usd": 2343.2, "destino": "2026-10",
+         "motivo": POSTERIOR, "cobrado_posterior_usd": 2343.2,
+         "fecha_cobro_posterior": "2026-10-14",
+         "leyenda": "Pasará a octubre 2026 al cerrar · cobrado el 14-oct, después del 30-sep "
+         "(al 30-sep: $0.00 USD de $2,343.20 USD)"},
+    ]  # fmt: skip
+    return p
+
+
+def test_reparto_pdf_con_el_corte() -> None:
+    texto = _texto_pdf(render_reparto_pdf(RepartoPdfRequest.model_validate(_reparto_351())))
+    assert (
+        "Pasan a octubre 2026 (sin cobro completo al 30-sep, no se reparten): #316 Mike & Nelson "
+        "<MN> $2,076.40 (cobrado al 30-sep $0.00, cobrado después del 30-sep)"
+    ) in texto
+    assert (
+        "Pasarán a octubre 2026 al cerrar el mes (sin cobro completo al 30-sep): #351 Cliente 351 "
+        "$2,343.20 (cobrado al 30-sep $0.00, cobrado después $2,343.20 el 14-oct)"
+    ) in texto
+    # El que VIENE no trae motivo en el payload de prueba: su línea de siempre.
+    assert "(cobrado $800.00, por cobrar $0.00)" in texto
+    # El externo (sin motivo) tampoco cambia.
+    assert "#990 Operador Externo $500.00 (cobrado $100.00, por cobrar $400.00)" in texto
+
+
+def test_reparto_xlsx_encabezados_al_cierre() -> None:
+    from app.services.reparto_xlsx import ENCABEZADOS_CIERRE_AL_CIERRE
+
+    ws = load_workbook(
+        BytesIO(render_reparto_xlsx(RepartoPdfRequest.model_validate(_reparto_351())))
+    ).active
+    tit = _fila_de(ws, "Cierre del mes")
+    assert [ws.cell(row=tit + 1, column=c).value for c in range(1, 9)] == (
+        ENCABEZADOS_CIERRE_AL_CIERRE
+    )
+    assert ENCABEZADOS_CIERRE_AL_CIERRE[4:6] == [
+        "Cobrado USD al cierre", "Por cobrar USD al cierre",
+    ]  # fmt: skip
+    salen = _fila_de(ws, "Pasan a octubre 2026")
+    assert ws.cell(row=salen, column=1).value == (
+        "Pasan a octubre 2026 (sin cobro completo al 30-sep, no se reparten)"
+    )
+    pasarian = _fila_de(ws, "Pasarán a octubre 2026")
+    assert ws.cell(row=pasarian + 1, column=8).value.startswith("Pasará a octubre 2026 al cerrar")

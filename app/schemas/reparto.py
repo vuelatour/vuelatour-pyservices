@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.reportes import (
     lista_cierre_liberal,
+    numero_cierre_liberal,
     regla_comisiones_liberal,
     texto_cierre_liberal,
 )
@@ -88,13 +89,25 @@ class RepartoCierreVuelo(BaseModel):
     destino: str | None = None
     origen: str | None = None
     leyenda: str | None = None
+    # ADITIVOS (16-oct-2026, caso #351): por qué pasa, lo cobrado DESPUÉS del
+    # corte (USD) y el día del último cobro. Un vuelo que sale por la
+    # bitácora del cierre trae el motivo pero no lo cobrado después (0).
+    motivo: str | None = None
+    cobrado_posterior_usd: float | None = None
+    fecha_cobro_posterior: str | None = None
 
     @field_validator(
-        "id", "folio", "cliente", "matricula", "destino", "origen", "leyenda", mode="before"
+        "id", "folio", "cliente", "matricula", "destino", "origen", "leyenda",
+        "motivo", "fecha_cobro_posterior", mode="before",
     )
     @classmethod
     def _textos(cls, v: Any) -> str | None:
         return texto_cierre_liberal(v)
+
+    @field_validator("cobrado_posterior_usd", mode="before")
+    @classmethod
+    def _monto_posterior(cls, v: Any) -> float | None:
+        return numero_cierre_liberal(v)
 
 
 class RepartoCierre(BaseModel):

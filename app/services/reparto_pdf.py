@@ -241,17 +241,22 @@ def _linea_vuelo_cierre(v: RepartoCierreVuelo) -> str:
     """«#316 Mike Nelson $2,076.40 (cobrado $0.00, por cobrar $2,076.40)» —
     las partes que no vienen se omiten; '→' no se dibuja en Helvetica. Va
     dentro de un Paragraph: el texto del API se ESCAPA (un «&» o «<» en el
-    nombre del cliente rompería el marcado)."""
+    nombre del cliente rompería el marcado). Con el `motivo` del API, los
+    montos al corte y lo cobrado después («(cobrado al 30-sep $0.00,
+    cobrado después $2,076.40 el 14-oct)», `cierre_mes.detalle_cobro`)."""
     partes = [f"#{v.folio}" if v.folio else "—"]
     if v.cliente:
         partes.append(v.cliente)
     if v.venta_usd is not None:
         partes.append(_usd(v.venta_usd))
-    detalle = [
-        f"cobrado {_usd(v.cobrado_usd)}" if v.cobrado_usd is not None else None,
-        f"por cobrar {_usd(v.por_cobrar_usd)}" if v.por_cobrar_usd is not None else None,
-    ]
-    detalle = [x for x in detalle if x]
+    detalle = cierre_mes.detalle_cobro(
+        v,
+        cobrado=v.cobrado_usd,
+        por_cobrar=v.por_cobrar_usd,
+        despues=v.cobrado_posterior_usd,
+        fecha_despues=v.fecha_cobro_posterior,
+        dinero=_usd,
+    )
     texto = " ".join(partes)
     if detalle:
         texto += f" ({', '.join(detalle)})"

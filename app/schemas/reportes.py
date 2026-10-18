@@ -1761,6 +1761,17 @@ def texto_cierre_liberal(v: Any) -> str | None:
     return None
 
 
+def numero_cierre_liberal(v: Any) -> float | None:
+    """Monto ADITIVO del cierre (16-oct-2026): número finito ⇒ float; lo
+    demás (null, texto, NaN, booleano) ⇒ None. Jamás un 422 por un dato
+    informativo nuevo."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int | float):
+        return float(v) if math.isfinite(v) else None
+    return None
+
+
 def lista_cierre_liberal(v: Any) -> list:
     """NestJS puede mandar null en una lista vacía: jamás un 422."""
     return v if isinstance(v, list) else []
@@ -1786,14 +1797,31 @@ class BalanceCierreVuelo(BaseModel):
     destino: str | None = None  # 'YYYY-MM'
     origen: str | None = None  # 'YYYY-MM'
     leyenda: str | None = None
+    # ADITIVOS (16-oct-2026, «aparece que aún no se cobran pero sí están
+    # cobrados», caso #351): por qué pasa (`SIN_COBRO` | `COBRO_PARCIAL` |
+    # `COBRO_POSTERIOR`), el día del corte con el que se midió «cobrado»
+    # ('YYYY-MM-DD') y, si el API lo sabe, lo cobrado DESPUÉS del corte y el
+    # día del último cobro. Sin ellos (API ≤ 0.0.90) el bloque es el de
+    # siempre, byte a byte.
+    motivo: str | None = None
+    corte: str | None = None
+    cobrado_despues_usd: float | None = None
+    cobrado_despues_mxn: float | None = None
+    fecha_cobro_despues: str | None = None
 
     @field_validator(
         "clave", "folio", "cliente", "matricula", "fecha", "destino", "origen", "leyenda",
+        "motivo", "corte", "fecha_cobro_despues",
         mode="before",
     )
     @classmethod
     def _textos(cls, v: Any) -> str | None:
         return texto_cierre_liberal(v)
+
+    @field_validator("cobrado_despues_usd", "cobrado_despues_mxn", mode="before")
+    @classmethod
+    def _montos_aditivos(cls, v: Any) -> float | None:
+        return numero_cierre_liberal(v)
 
 
 class BalanceCierreResumenFila(BaseModel):

@@ -127,6 +127,13 @@ def _folio_vuelo(v: RepartoVueloLinea) -> str:
 ENCABEZADOS_CIERRE = [
     "Avión", "Vuelo", "Cliente", "Venta USD", "Cobrado USD", "Por cobrar USD", "Mes", "Leyenda",
 ]  # fmt: skip
+# Con el `motivo` del API (caso #351, 16-oct-2026): lo cobrado y lo por
+# cobrar son los del CORTE de cada lista; sin «al cierre» se leían como de
+# hoy («aparece que aún no se cobran pero sí están cobrados»).
+ENCABEZADOS_CIERRE_AL_CIERRE = [
+    "Avión", "Vuelo", "Cliente", "Venta USD", "Cobrado USD al cierre",
+    "Por cobrar USD al cierre", "Mes", "Leyenda",
+]  # fmt: skip
 _FILL_CIERRE = {"diferidos_salen": cierre_mes.FILL_SALE,
                 "diferidos_entran": cierre_mes.FILL_VIENE,
                 "pendientes_que_pasarian": cierre_mes.FILL_SALE}  # fmt: skip
@@ -147,7 +154,10 @@ def _seccion_cierre(ws, r: int, cierre: RepartoCierre) -> int:
         titulo += f" — {sello}"
     _title(ws, titulo, r, len(ENCABEZADOS_CIERRE), size=12)
     r += 1
-    _header_row(ws, r, ENCABEZADOS_CIERRE)
+    con_motivo = any(
+        cierre_mes.hay_motivo(getattr(cierre, attr)) for attr, _p, _m in cierre_mes.LISTAS_REPARTO
+    )
+    _header_row(ws, r, ENCABEZADOS_CIERRE_AL_CIERRE if con_motivo else ENCABEZADOS_CIERRE)
     r += 1
     for attr, plantilla, mes_attr in cierre_mes.LISTAS_REPARTO:
         items = getattr(cierre, attr)
