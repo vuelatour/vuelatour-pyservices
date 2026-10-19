@@ -854,7 +854,9 @@ def _numero_de_celda(x: float) -> float:
     return float(format(x, ".16g"))
 
 
-def _fila_antes_de_comisiones(v: BalanceAvionVuelo) -> BalanceAvionVuelo:
+def _fila_antes_de_comisiones(
+    v: BalanceAvionVuelo, *, usd_por_gasto: bool = False
+) -> BalanceAvionVuelo:
     """La fila de un vuelo como se ve en una hoja SIN la columna COMISIONES
     (Balance general, 7-oct-2026): si el avión absorbe comisiones en ella
     (regla de septiembre 2026), GANANCIA MXN = el REMANENTE del API y
@@ -862,7 +864,10 @@ def _fila_antes_de_comisiones(v: BalanceAvionVuelo) -> BalanceAvionVuelo:
     visible de la celda, ROUND(GANANCIA MXN ÷ TIPO CAMBIO COSTOS, 2), con lo
     que el API mandaba antes de la regla; sin T.C. de costos va vacía (el API
     la convierte con el T.C. promedio del libro de SU avión, que esta hoja no
-    tiene: mejor vacía que un número que no es). Sin comisiones, la fila tal
+    tiene: mejor vacía que un número que no es). Con `usd_por_gasto` (API
+    0.0.98, regla B) tampoco se deriva: el API no manda la ganancia en
+    dólares antes de comisiones y la celda va VACÍA (la nota del encabezado
+    lo dice). Sin comisiones, la fila tal
     cual (su GANANCIA ya es el remanente). Con COMISIONES en 0 explícito (el
     API manda null, pero el esquema admite la «regla con 0»), una copia SIN
     la llave, que se pinta igual que la de null: si no, GANANCIA MXN citaba
@@ -875,7 +880,7 @@ def _fila_antes_de_comisiones(v: BalanceAvionVuelo) -> BalanceAvionVuelo:
     if comisiones == 0:
         return v.model_copy(update={"comisiones_mxn": None, "comision_vendedor_mxn": None})
     ganancia_usd = None
-    if v.remanente_mxn is not None and v.tc_costos:
+    if not usd_por_gasto and v.remanente_mxn is not None and v.tc_costos:
         ganancia_usd = xlsx_formulas.redondear_excel(
             _numero_de_celda(v.remanente_mxn) / _numero_de_celda(v.tc_costos), 2
         )
@@ -889,7 +894,9 @@ def _fila_antes_de_comisiones(v: BalanceAvionVuelo) -> BalanceAvionVuelo:
     )
 
 
-def _antes_de_comisiones(req: BalanceAvionRequest) -> BalanceAvionRequest:
+def _antes_de_comisiones(
+    req: BalanceAvionRequest, *, usd_por_gasto: bool = False
+) -> BalanceAvionRequest:
     """El libro tal como lo pinta una hoja de vuelos SIN la columna
     COMISIONES (las dos variantes del Balance general, 7-oct-2026, API
     0.0.66; pedido del cliente: «estas comisiones se están duplicando en la
@@ -906,7 +913,7 @@ def _antes_de_comisiones(req: BalanceAvionRequest) -> BalanceAvionRequest:
     TOTALES son los del API: su GANANCIA ya es el remanente, como con null.
     Solo PRESENTACIÓN: ningún número del API se recalcula, se elige el de
     antes de comisiones."""
-    vuelos = [_fila_antes_de_comisiones(v) for v in req.vuelos]
+    vuelos = [_fila_antes_de_comisiones(v, usd_por_gasto=usd_por_gasto) for v in req.vuelos]
     if all(nueva is vieja for nueva, vieja in zip(vuelos, req.vuelos, strict=True)):
         return req
     if not any(_monto_no_cero(_comisiones(v)) for v in req.vuelos):
@@ -2270,6 +2277,60 @@ _NOTA_CALCULADO_POR_SISTEMA_CELDA = (
     "fórmula citaría no va en este Balance general (está en el Balance "
     "mensual)."
 )
+
+# ===== USD GASTO POR GASTO (19-oct-2026, API 0.0.98, regla B del API) =====
+# Con la bandera raíz ADITIVA `usd_por_gasto` el API calcula TODO dólar gasto
+# por gasto (cada gasto a USD con su T.C. propio o, sin él, el oficial del
+# día en que se pagó: el criterio del reparto a socios) y ya no es «MXN ÷ T.C.
+# promedio». Entonces ninguna celda del libro deriva un USD como fórmula de
+# pesos ÷ T.C.: el TOTAL USD de las hojas de gastos y combustible y, en la
+# hoja de vuelos, toda la cadena USD/IVA del lado de los costos (la que hoy
+# nace en «Y / z»: COSTO TOTAL USD, USD S/IVA, IVA PAGADO USD y MXN, GANANCIA
+# USD, COSTO X HORA USD y USD S/IVA; en la variante general TOTAL PARA
+# PROVEEDOR (DLLS), IVA TOTAL PAGADO (DLLS y PESOS), COSTO X HORA, COSTO HR
+# MÁS IVA e IVA X HR) van como VALOR del API con esta nota en su encabezado.
+# Las de pesos puros (VENTA, COSTO TOTAL MXN, REMANENTE, GANANCIA MXN, TOTAL
+# PAGADO S/IVA = PESOS − IVA PESOS) y las de la VENTA (POR COBRAR USD = MXN ÷
+# T.C. de la cotización) siguen como fórmula. Sin la bandera, byte a byte.
+_COLS_USD_POR_GASTO = frozenset(
+    (
+        "costo_usd",
+        "costo_usd_siva",
+        "iva_pagado_usd",
+        "iva_pagado_mxn",
+        "ganancia_usd",
+        "costo_hr_usd",
+        "costo_hr_usd_siva",
+        "cph_iva_hr_usd",
+    )
+)
+_NOTA_ENCABEZADO_USD_POR_GASTO = (
+    "USD calculado gasto por gasto: cada gasto a dólares con su T.C. propio o "
+    "el oficial del día en que se pagó (criterio del reparto a socios); no es "
+    "el total en pesos ÷ T.C. promedio."
+)
+# GANANCIA USD de la hoja de vuelos del GENERAL (antes de comisiones): el API
+# no manda esa cifra en dólares y aquí ya no se deriva de pesos ÷ T.C.
+_NOTA_ENCABEZADO_GANANCIA_USD_POR_GASTO_FLOTA = (
+    _NOTA_ENCABEZADO_USD_POR_GASTO + " En esta hoja la GANANCIA va antes de "
+    "comisiones y el API no manda esa cifra en dólares: en los vuelos con "
+    "comisiones la celda queda vacía (su GANANCIA USD después de comisiones "
+    "está en el Balance mensual del avión)."
+)
+
+
+def _usd_por_gasto(req: BalanceAvionRequest | None) -> bool:
+    """¿El libro trae la bandera raíz `usd_por_gasto` del API 0.0.98 en
+    `true`? None/False/ausente (API previo) ⇒ las fórmulas de siempre."""
+    return req is not None and req.usd_por_gasto is True
+
+
+def _usd_por_gasto_general(req: BalanceGeneralRequest, cons: BalanceAvionRequest | None) -> bool:
+    """Bandera para las hojas de FLOTA del general: la del consolidado (que
+    puede traerla o no) o la de cualquier `aviones[]`."""
+    return _usd_por_gasto(cons) or any(_usd_por_gasto(a) for a in req.aviones)
+
+
 # Partes del COSTO TOTAL de un vuelo, en el orden de sus columnas del Balance
 # mensual: nombre en la nota, monto del API y líneas de detalle de su nota.
 _PARTES_COSTO_TOTAL = (
@@ -2612,8 +2673,17 @@ def _constantes_maestra(
 
 
 def _hoja_maestra(
-    ws: Worksheet, req: BalanceAvionRequest, *, general: bool = False, costo_por_hora: bool = False
+    ws: Worksheet,
+    req: BalanceAvionRequest,
+    *,
+    general: bool = False,
+    costo_por_hora: bool = False,
+    usd_por_gasto: bool | None = None,
 ) -> _Maestra:
+    # `usd_por_gasto` (19-oct-2026, API 0.0.98, regla B): la cadena USD/IVA
+    # del lado de los costos va como VALOR del API con nota en el encabezado
+    # (`_COLS_USD_POR_GASTO`). None = la bandera raíz del `req` (el general
+    # pasa la suya: la del consolidado o la de cualquier avión).
     # `general` solo ajusta las notas al pie (29-ago): en el Balance general
     # las hojas 'combustible'/'Gastos Indirectos'/'permisos' ya no existen —
     # viven en el libro individual de cada avión. Desde el 5-oct-2026 también
@@ -2636,8 +2706,10 @@ def _hoja_maestra(
         disp = _DISP_FLOTA_AFAC
     else:
         disp = _DISP_FLOTA
+    if usd_por_gasto is None:
+        usd_por_gasto = _usd_por_gasto(req)
     if disp.comision_col is None:
-        req = _antes_de_comisiones(req)
+        req = _antes_de_comisiones(req, usd_por_gasto=usd_por_gasto)
     cols = disp.cols
     ws.title = sheet_title(f"reporte horas {req.matricula}")
     n = len(cols)
@@ -2794,6 +2866,11 @@ def _hoja_maestra(
                         # general: la nota «calculado por el sistema» va en
                         # su encabezado (antes en COSTO TOTAL MXN).
                         calculadas.add(i)
+                    if usd_por_gasto and attr in _COLS_USD_POR_GASTO:
+                        # USD gasto por gasto (API 0.0.98, regla B): el dólar
+                        # ya no es pesos ÷ T.C. — VALOR del API, con la nota en
+                        # el encabezado (abajo).
+                        formula = None
                     cell = _formula(ws, row, i, formula, val, fmt)
                 if attr == "horas_cobradas" and horas_menores:
                     fill = AMBER
@@ -2949,6 +3026,16 @@ def _hoja_maestra(
         nota_sis.width = 320
         nota_sis.height = 120
         ws.cell(row=2, column=i).comment = nota_sis
+    # USD gasto por gasto (API 0.0.98): la nota, UNA vez, en el encabezado de
+    # cada columna que pasó a valor (en el general, GANANCIA USD dice además
+    # por qué queda vacía en los vuelos con comisiones).
+    if usd_por_gasto:
+        for i, c in enumerate(cols, start=1):
+            if c[2] in _COLS_USD_POR_GASTO:
+                nota_upg = _NOTA_ENCABEZADO_USD_POR_GASTO
+                if c[2] == "ganancia_usd" and disp.comision_col is None:
+                    nota_upg = _NOTA_ENCABEZADO_GANANCIA_USD_POR_GASTO_FLOTA
+                ws.cell(row=2, column=i).comment = _comentario_cobro(nota_upg)
 
     # Fila TOTALES al final (sumas y promedios YA calculados por el API; desde
     # el 5-oct-2026 como fórmulas SUM/AVERAGE visibles con ese número). En la
@@ -2961,11 +3048,17 @@ def _hoja_maestra(
         cell = ws.cell(row=row, column=i)
         total_attr = disp.total_map.get(attr) if attr else None
         if total_attr is not None:
+            formula_tot = _formula_total(attr, maestra)
+            if usd_por_gasto and attr in _COLS_USD_POR_GASTO and total_attr in _TOTALES_PROMEDIO:
+                # USD gasto por gasto: el promedio del API sale de sus números
+                # completos y el AVERAGE de las celdas (ya a centavos) no lo
+                # reproduce ⇒ valor (las Σ sí: el API suma filas redondeadas).
+                formula_tot = None
             cell = _formula(
                 ws,
                 row,
                 i,
-                _formula_total(attr, maestra),
+                formula_tot,
                 _valor_total(t, total_attr),
                 fmt or MONEY,
                 bold=True,
@@ -3247,7 +3340,11 @@ def _hoja_gastos(
     maestra: _Maestra | None = None,
     usd: str | None = None,
     con_tc: bool = False,
+    usd_por_gasto: bool = False,
 ) -> None:
+    # `usd_por_gasto` (19-oct-2026, API 0.0.98, regla B): TOTAL USD (C5) como
+    # VALOR del API —ya no es TOTAL MXN ÷ T.C. promedio— con la nota en su
+    # encabezado; USD X HR sigue siendo TOTAL USD ÷ horas. Sin ella, igual.
     # `con_tc` (13-oct-2026, API 0.0.74; SOLO la pestaña 'permisos' del libro
     # individual y solo con la bandera `tc_por_fila` del API): columna «T.C.»
     # AL FINAL (después de COSTO/VENTA/GANANCIA si existieran; letra calculada,
@@ -3302,7 +3399,10 @@ def _hoja_gastos(
         bold=True,
     )
     _formula_cita(ws, 5, 2, maestra, "{tc_costos}", req.totales.tc_promedio, TC)
-    _formula(ws, 5, 3, _usd_de_mxn(usd, "A5", "B5", maestra), hoja.usd, MONEY, bold=True)
+    formula_usd = None if usd_por_gasto else _usd_de_mxn(usd, "A5", "B5", maestra)
+    _formula(ws, 5, 3, formula_usd, hoja.usd, MONEY, bold=True)
+    if usd_por_gasto:
+        ws.cell(row=4, column=3).comment = _comentario_cobro(_NOTA_ENCABEZADO_USD_POR_GASTO)
     _formula_cita(ws, 5, 4, maestra, "{tiempo_vuelo}", req.totales.tiempo_vuelo, HORAS)
     _formula(ws, 5, 5, "ROUND(C5/D5,2)", hoja.usd_hr, MONEY)
     for c in range(1, 6):
@@ -4070,6 +4170,7 @@ def _hoja_combustible(
     titulo: str | None = None,
     maestra: _Maestra | None = None,
     usd: str | None = None,
+    usd_por_gasto: bool = False,
 ) -> None:
     """Pestaña 'combustible' (26-ago-2026): el gas del avión POR MES —
     ya no va por vuelo. Ledger con litros + resumen con $/L promedio.
@@ -4081,7 +4182,9 @@ def _hoja_combustible(
     Fórmulas (5-oct-2026): subtotales y TOTAL DEL PERIODO = Σ de las cargas;
     arriba, TOTAL MXN cita el TOTAL DEL PERIODO, LITROS = Σ litros, $ X LITRO
     = TOTAL MXN ÷ LITROS, TC PROMEDIO cita la hoja maestra, TOTAL USD según
-    `usd` (ver _USD_TC_LIBRO) y USD X HR = TOTAL USD ÷ horas voladas."""
+    `usd` (ver _USD_TC_LIBRO) y USD X HR = TOTAL USD ÷ horas voladas.
+    `usd_por_gasto` (19-oct-2026, API 0.0.98, regla B): TOTAL USD como VALOR
+    del API con la nota en su encabezado (ya no es TOTAL MXN ÷ T.C.)."""
     _title(ws, titulo or f"Combustible — {req.matricula}".strip(" —"), 1, 7)
     periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'}"
     ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
@@ -4221,7 +4324,10 @@ def _hoja_combustible(
     )
     _formula(ws, 5, 3, "ROUND(A5/B5,2)", hoja.precio_litro_prom, MONEY)
     _formula_cita(ws, 5, 4, maestra, "{tc_costos}", req.totales.tc_promedio, TC)
-    _formula(ws, 5, 5, _usd_de_mxn(usd, "A5", "D5", maestra), hoja.usd, MONEY, bold=True)
+    formula_usd = None if usd_por_gasto else _usd_de_mxn(usd, "A5", "D5", maestra)
+    _formula(ws, 5, 5, formula_usd, hoja.usd, MONEY, bold=True)
+    if usd_por_gasto:
+        ws.cell(row=4, column=5).comment = _comentario_cobro(_NOTA_ENCABEZADO_USD_POR_GASTO)
     _formula_cita(ws, 5, 6, maestra, "ROUND(E5/{tiempo_vuelo},2)", hoja.usd_hr, MONEY)
     for c in range(1, 7):
         ws.cell(row=5, column=c).border = _border
@@ -4342,6 +4448,150 @@ def _nota_otros_en_indirectos(otros_usd: float, general: bool) -> Comment:
     return com
 
 
+# ===== RESERVA DE OVERHAUL MARCADA en el balance, SIN RESTAR (19-oct-2026,
+# API 0.0.98) =====
+# Decisión del cliente: el reparto a socios ya resta la reserva de overhaul
+# (horas voladas del periodo × Σ `monto_por_hora_usd` de los motores) y el
+# Balance por avión / Balance general NO la restan: solo la MARCAN, muy claro,
+# para que se entienda qué debe aportar el avión para el overhaul. SOLO cuando
+# el API manda `balance.reserva_overhaul_usd` (el discriminador), DESPUÉS de
+# los socios de cada cascada (hoja USD del individual, cada bloque del general
+# y la hoja en pesos) va un bloque aparte —fila en blanco, relleno ámbar
+# claro, encabezado en negritas— con lo que debe aportar el avión, «Cómo se
+# calcula» y una nota. La cascada (filas, índices y fórmulas) NO cambia con la
+# llave; sin ella (API ≤ 0.0.97) el libro es byte a byte el de siempre.
+_TITULO_RESERVA_OVERHAUL = "RESERVA DE OVERHAUL · informativa (no se resta en este balance)"
+_FILA_RESERVA = "Lo que debe aportar el avión USD"
+_FILA_RESERVA_PESOS = "Lo que debe aportar el avión (MXN)"
+_COMO_SE_CALCULA = "Cómo se calcula: "
+_NOTA_RESERVA_OVERHAUL = (
+    "Es la aportación del periodo para el overhaul de los motores de este "
+    "avión: horas voladas × tarifa por hora de cada motor. No se resta en la "
+    "utilidad de este balance; el reparto a socios sí la descuenta antes de "
+    "repartir. No es dinero guardado en una cuenta ni un acumulado."
+)
+_NOTA_RESERVA_OVERHAUL_INCOMPLETA = (
+    "Sin tarifa de reserva de overhaul configurada para este avión (ficha del "
+    "avión → reserva de overhaul): no se puede calcular lo que debe aportar."
+)
+# Ámbar claro del bloque (distinto del AMBER de alertas y del LIGHT de los
+# totales): se lee como «informativo», no como error.
+_FILL_RESERVA = "FEF3C7"
+_FONT_COMO_SE_CALCULA = {"size": 9, "italic": True, "color": "374151"}
+
+
+def _con_reserva_overhaul(b: BalanceAvionBalanceBloque) -> bool:
+    """¿El balance lleva el bloque informativo de la reserva de overhaul?
+    Solo si el API (0.0.98+) manda `reserva_overhaul_usd` (0.0 también
+    cuenta: se pinta 0.00); None = API previo ⇒ nada."""
+    return b.reserva_overhaul_usd is not None
+
+
+def _como_se_calcula_reserva(b: BalanceAvionBalanceBloque) -> str:
+    """Texto de la fila «Cómo se calcula» del bloque: «18.20 h voladas en el
+    periodo × 2 motores × 55.00 USD/hr = 2,002.00 USD» (la tarifa del API es
+    la Σ de los motores: se muestra por motor, Σ ÷ motores) y, con T.C.
+    oficial, «· en pesos al T.C. oficial del 30-sep-2026 (18.0243)». Con
+    `reserva_overhaul_incompleta`, el aviso de «sin tarifa»."""
+    if b.reserva_overhaul_incompleta is True:
+        return _NOTA_RESERVA_OVERHAUL_INCOMPLETA
+    horas = b.reserva_overhaul_horas_hr or 0.0
+    motores = b.reserva_overhaul_motores or 0
+    usd_hr = b.reserva_overhaul_usd_hr or 0.0
+    por_motor = usd_hr / motores if motores else usd_hr
+    usd = b.reserva_overhaul_usd or 0.0
+    texto = (
+        f"{horas:.2f} h voladas en el periodo × {motores} "
+        f"{'motor' if motores == 1 else 'motores'} × {por_motor:,.2f} USD/hr "
+        f"= {usd:,.2f} USD"
+    )
+    if b.reserva_overhaul_tc is not None:
+        dia = cierre_mes.fecha_corta(b.reserva_overhaul_tc_dia)
+        cuando = f" del {dia}" if dia else ""
+        texto += f" · en pesos al T.C. oficial{cuando} ({_tc_txt(b.reserva_overhaul_tc)})"
+    return texto
+
+
+def _bloque_reserva_overhaul(
+    ws: Worksheet, b: BalanceAvionBalanceBloque, row: int, *, pesos: bool
+) -> int:
+    """Bloque INFORMATIVO de la reserva de overhaul DESPUÉS de los socios de
+    una cascada (`row` = la siguiente fila libre), separado por una fila en
+    blanco: encabezado en negritas, «Lo que debe aportar el avión» (USD; en
+    la hoja en pesos B = el MXN del API —None ⇒ «—» con
+    `_NOTA_SIN_PESOS_RESERVA`— y C = el USD informativo), «Cómo se calcula:
+    …» y la nota al pie, todo con relleno ámbar claro. No resta nada ni
+    mueve ninguna fila de arriba (los socios y `celdas_empresa` quedan donde
+    estaban). Devuelve la siguiente fila libre."""
+    n_cols = 4 if pesos else 3
+    ancho = _ANCHO_HOJA_BALANCE_PESOS if pesos else _ANCHO_HOJA_BALANCE
+    relleno = PatternFill("solid", fgColor=_FILL_RESERVA)
+
+    def tenir(r: int) -> None:
+        for col in range(1, n_cols + 1):
+            c = ws.cell(row=r, column=col)
+            c.fill = relleno
+            c.border = _border
+
+    row += 1  # fila en blanco: el bloque no es parte de la cascada
+    hc = ws.cell(row=row, column=1, value=_TITULO_RESERVA_OVERHAUL)
+    hc.font = Font(bold=True, color=NAVY)
+    tenir(row)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
+    row += 1
+    lc = ws.cell(row=row, column=1, value=_FILA_RESERVA_PESOS if pesos else _FILA_RESERVA)
+    lc.font = Font(bold=True, color=NAVY)
+    if pesos:
+        _celda_pesos(
+            ws,
+            row,
+            2,
+            None,
+            b.reserva_overhaul_mxn,
+            nota_sin=_NOTA_SIN_PESOS_RESERVA,
+            bold=True,
+            color="000000",
+        )
+        _celda_usd_info(ws, row, 3, None, b.reserva_overhaul_usd)
+    else:
+        _formula(ws, row, 2, None, b.reserva_overhaul_usd, MONEY, bold=True)
+    tenir(row)
+    row += 1
+    texto = _COMO_SE_CALCULA + _como_se_calcula_reserva(b)
+    cc = ws.cell(row=row, column=1, value=texto)
+    cc.font = Font(**_FONT_COMO_SE_CALCULA)
+    cc.alignment = Alignment(wrap_text=True, vertical="top")
+    tenir(row)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
+    lineas = math.ceil(len(texto) / ancho)
+    if lineas > 1:
+        ws.row_dimensions[row].height = 15 * lineas + 1
+    row += 1
+    _pinta_nota_envuelta(ws, row, _NOTA_RESERVA_OVERHAUL, n_cols, ancho)
+    tenir(row)
+    return row + 1
+
+
+def _formulas_cascada(letra: str, k: int, *, con_oi: bool) -> tuple[str, str, int, int]:
+    """Fórmulas de UTILIDAD DESPUÉS y UTILIDAD COBRADA de la cascada que
+    empieza en la fila `k` (UTILIDAD ANTES DE GASTOS), en la columna `letra`,
+    y las filas de DESPUÉS y COBRADA: `(despues, cobrada, fila_despues,
+    fila_cobrada)`. Filas desde `k`: 1 combustible, 2 indirectos, 3
+    refacciones, 4 permisos, [5 otros ingresos (SUMA), con `con_oi`],
+    después, pendiente, cobrada. DESPUÉS = ROUND(antes − las cuatro restas
+    [+ otros ingresos], 2) y COBRADA = ROUND(después − pendiente, 2): la
+    aritmética del API, carácter por carácter la de siempre (fuente única de
+    las cascadas USD y en pesos)."""
+    terminos = "".join(f"-{letra}{k + i}" for i in range(1, 5))
+    fila_despues = k + 5
+    if con_oi:
+        terminos += f"+{letra}{fila_despues}"
+        fila_despues += 1
+    despues = f"ROUND({letra}{k}{terminos},2)"
+    cobrada = f"ROUND({letra}{fila_despues}-{letra}{fila_despues + 1},2)"
+    return despues, cobrada, fila_despues, fila_despues + 2
+
+
 # Filas de la cascada que, en el libro INDIVIDUAL, citan otra hoja (5-oct-2026):
 # clave de `refs` → etiqueta de la fila.
 _CASCADA_REFS = {
@@ -4450,7 +4700,11 @@ def _bloque_balance(
     − las cinco restas + otros ingresos, 2): el `utilidad_despues_usd` del API
     ya los suma. Individual: la línea cita la pestaña «Otros ingresos» (refs);
     GENERAL: valor. Socios y `celdas_empresa` citan la fila corrida sola. Sin
-    la hoja (API ≤ 0.0.74), las fórmulas y filas de siempre, byte a byte."""
+    la hoja (API ≤ 0.0.74), las fórmulas y filas de siempre, byte a byte.
+    RESERVA DE OVERHAUL (19-oct-2026, API 0.0.98): con `balance.reserva_
+    overhaul_usd` (`_con_reserva_overhaul`) el bloque INFORMATIVO
+    `_bloque_reserva_overhaul` va DESPUÉS de los socios; la cascada no cambia
+    ni una celda (no se resta nada). Sin la llave, byte a byte."""
     b = req.balance
     refs = refs or {}
     fila_ini = row
@@ -4476,16 +4730,9 @@ def _bloque_balance(
     # Filas de la cascada desde UTILIDAD ANTES DE GASTOS (`k`): 0 antes, 1
     # combustible, 2 indirectos, 3 refacciones, 4 permisos, 5 después, 6
     # pendiente, 7 cobrada. Con otros ingresos del avión (`con_oi`): 5 otros
-    # ingresos (SUMA), 6 después, 7 pendiente, 8 cobrada.
+    # ingresos (SUMA), 6 después, 7 pendiente, 8 cobrada (`_formulas_cascada`).
     k = fila_ini + len(previas)
-    if con_oi:
-        despues = f"ROUND(B{k}-B{k + 1}-B{k + 2}-B{k + 3}-B{k + 4}+B{k + 5},2)"
-        cobrada = f"ROUND(B{k + 6}-B{k + 7},2)"
-        fila_cobrada = k + 8
-    else:
-        despues = f"ROUND(B{k}-B{k + 1}-B{k + 2}-B{k + 3}-B{k + 4},2)"
-        cobrada = f"ROUND(B{k + 5}-B{k + 6},2)"
-        fila_cobrada = k + 7
+    despues, cobrada, _, fila_cobrada = _formulas_cascada("B", k, con_oi=con_oi)
     filas: list[tuple[str, float | None, bool]] = [
         *previas,
         ("UTILIDAD ANTES DE GASTOS USD", b.utilidad_antes_usd, False),
@@ -4579,6 +4826,11 @@ def _bloque_balance(
         ).font = Font(color=RED, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
         row += 1
+    # Reserva de overhaul (19-oct-2026, API 0.0.98): bloque INFORMATIVO al
+    # final, después de los socios (nada de arriba se mueve). Solo con la
+    # llave; sin ella, byte a byte.
+    if _con_reserva_overhaul(b):
+        row = _bloque_reserva_overhaul(ws, b, row, pesos=False)
     return row
 
 
@@ -5008,6 +5260,13 @@ _NOTA_SIN_PESOS_SOCIO = (
     "Sin cifra en pesos: la UTILIDAD COBRADA en pesos no se pudo calcular "
     "(ver la cascada de arriba)."
 )
+# La reserva de overhaul (API 0.0.98) no tiene hoja: su None en pesos es «sin
+# T.C. oficial del cierre», no «una fila sin pesos en su hoja».
+_NOTA_SIN_PESOS_RESERVA = (
+    "Sin cifra en pesos: la reserva de overhaul se pasa a pesos con el T.C. "
+    "oficial del cierre del periodo y no hay T.C. oficial para ese día. La "
+    "cifra en dólares de la derecha es solo informativa."
+)
 _NOTA_CASCADA_ANTES_COMISIONES_PESOS = (
     "Utilidad en pesos de los vuelos del avión ANTES de comisiones = UTILIDAD "
     "ANTES DE GASTOS (MXN) + COMISIONES (MXN): la hoja de vuelos de este libro "
@@ -5033,6 +5292,32 @@ _NOTA_BALANCE_PESOS = (
     "es la utilidad COBRADA en pesos × el % de cada socio. La columna «USD "
     "(informativo)» es la misma cascada en dólares, solo de referencia."
 )
+# El mismo pie con la reserva de overhaul del API 0.0.98 (`_con_reserva_
+# overhaul`): la última frase dice cómo se arma la columna USD desde ese API
+# (cada gasto a dólares con su T.C. propio o el oficial del día en que se
+# pagó, el criterio del reparto a socios) y que la reserva es un bloque
+# INFORMATIVO en pesos al T.C. oficial del cierre. Sin la llave (API
+# 0.0.93–0.0.97), `_NOTA_BALANCE_PESOS` byte a byte.
+_NOTA_BALANCE_PESOS_RESERVA = (
+    "Cifras en pesos (MXN): cada línea suma lo que el libro ya tiene en pesos "
+    "—la venta del avión al tipo de cambio de su cotización y los gastos en "
+    "pesos tal cual (los de dólares, a su tipo de cambio)—; no es la cifra en "
+    "dólares convertida con un tipo de cambio único. El reparto a socios "
+    "es la utilidad COBRADA en pesos × el % de cada socio. La columna «USD "
+    "(informativo)» es la misma cascada en dólares, solo de referencia: cada "
+    "gasto pasa a dólares con su T.C. propio o, si no lo trae, con el T.C. "
+    "oficial del día en que se pagó (el mismo criterio del reparto a socios). "
+    "La reserva de overhaul va al final como bloque informativo (no se resta "
+    "en este balance), en pesos al T.C. oficial del cierre del periodo."
+)
+
+
+def _nota_balance_pesos(con_reserva: bool) -> str:
+    """Pie de la hoja 'balance' en pesos: con la reserva de overhaul del API
+    0.0.98, el que explica la columna USD; sin ella, el de siempre."""
+    return _NOTA_BALANCE_PESOS_RESERVA if con_reserva else _NOTA_BALANCE_PESOS
+
+
 _NOTA_EMPRESA_INGRESOS_PESOS = (
     "Suma de la columna INGRESO MXN de la hoja 'otros movimientos' (en pesos, "
     "tal cual)"
@@ -5198,7 +5483,11 @@ def _bloque_balance_pesos(
     hoja); mismas fórmulas en las dos columnas (B en pesos, C en dólares).
     `celdas_empresa` acumula la celda MONTO MXN (y la USD) de cada socio
     `es_empresa`: el bloque VUELATOUR en pesos la cita. Devuelve la
-    siguiente fila libre."""
+    siguiente fila libre. Con la reserva de overhaul del API 0.0.98
+    (`_con_reserva_overhaul`) el bloque INFORMATIVO `_bloque_reserva_overhaul`
+    va después de los socios (B = el `reserva_overhaul_mxn` del API, None ⇒
+    «—» con `_NOTA_SIN_PESOS_RESERVA`; C = el USD informativo); la cascada
+    no cambia ni una celda."""
     b = req.balance
     refs_mxn = refs_mxn or {}
     refs_usd = refs_usd or {}
@@ -5210,23 +5499,10 @@ def _bloque_balance_pesos(
     con_previas = general and _cascada_con_comisiones(b)
     n_previas = 2 if con_previas else 0
     k = fila_ini + n_previas
-    if con_oi:
-        fila_despues, fila_cobrada = k + 6, k + 8
-    else:
-        fila_despues, fila_cobrada = k + 5, k + 7
+    fila_cobrada = _formulas_cascada("B", k, con_oi=con_oi)[3]
 
     def formulas(letra: str) -> dict[str, str]:
-        if con_oi:
-            despues = (
-                f"ROUND({letra}{k}-{letra}{k + 1}-{letra}{k + 2}-{letra}{k + 3}"
-                f"-{letra}{k + 4}+{letra}{k + 5},2)"
-            )
-        else:
-            despues = (
-                f"ROUND({letra}{k}-{letra}{k + 1}-{letra}{k + 2}-{letra}{k + 3}"
-                f"-{letra}{k + 4},2)"
-            )
-        cobrada = f"ROUND({letra}{fila_despues}-{letra}{fila_despues + 1},2)"
+        despues, cobrada, _, _ = _formulas_cascada(letra, k, con_oi=con_oi)
         propias = {"despues": despues, "cobrada": cobrada}
         if con_previas:
             propias["antes"] = f"ROUND({letra}{fila_ini}-{letra}{fila_ini + 1},2)"
@@ -5369,6 +5645,10 @@ def _bloque_balance_pesos(
         ).font = Font(color=RED, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
         row += 1
+    # Reserva de overhaul (19-oct-2026, API 0.0.98): bloque INFORMATIVO al
+    # final, después de los socios. Solo con la llave; sin ella, byte a byte.
+    if _con_reserva_overhaul(b):
+        row = _bloque_reserva_overhaul(ws, b, row, pesos=True)
     return row
 
 
@@ -5386,7 +5666,8 @@ def _hoja_balance_pesos(
     )
     ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
     row = _bloque_balance_pesos(ws, req, 4, refs_mxn=refs_mxn, refs_usd=refs_usd)
-    _pinta_nota_envuelta(ws, row + 1, _NOTA_BALANCE_PESOS, 4, _ANCHO_HOJA_BALANCE_PESOS)
+    nota = _nota_balance_pesos(_con_reserva_overhaul(req.balance))
+    _pinta_nota_envuelta(ws, row + 1, nota, 4, _ANCHO_HOJA_BALANCE_PESOS)
     for i, w in enumerate(_ANCHOS_BALANCE_PESOS, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -5626,7 +5907,8 @@ def _hoja_balance_general_pesos(
             afac_en_filas=_afac_en_filas(cons.otros_movimientos),
             afac_por_vuelo=_afac_por_vuelo(cons.otros_movimientos),
         )
-    _pinta_nota_envuelta(ws, row, _NOTA_BALANCE_PESOS, 4, _ANCHO_HOJA_BALANCE_PESOS)
+    nota = _nota_balance_pesos(any(_con_reserva_overhaul(a.balance) for a in req.aviones))
+    _pinta_nota_envuelta(ws, row, nota, 4, _ANCHO_HOJA_BALANCE_PESOS)
     for i, w in enumerate(_ANCHOS_BALANCE_PESOS, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -6439,10 +6721,18 @@ def construir_balance_avion(req: BalanceAvionRequest) -> Workbook:
     `render_balance_avion_xlsx` (.xlsx) y `libro_balance_avion` (JSON para la
     vista en pantalla, 12-oct-2026)."""
     wb = Workbook()
-    maestra = _hoja_maestra(wb.active, req)
+    # USD gasto por gasto (19-oct-2026, API 0.0.98, regla B): con la bandera
+    # raíz, los dólares derivados de pesos ÷ T.C. van como valor del API.
+    upg = _usd_por_gasto(req)
+    maestra = _hoja_maestra(wb.active, req, usd_por_gasto=upg)
     _hoja_cobranza(wb.create_sheet("cobranza"), req)
     _hoja_combustible(
-        wb.create_sheet("combustible"), req.combustible, req, maestra=maestra, usd=_USD_TC_LIBRO
+        wb.create_sheet("combustible"),
+        req.combustible,
+        req,
+        maestra=maestra,
+        usd=_USD_TC_LIBRO,
+        usd_por_gasto=upg,
     )
     # Pestaña ÚNICA "Gastos Indirectos" (pedido del cliente 2-sep-2026: las
     # hojas 'gastos indirectos' y 'otros gastos' se confundían): las DOS
@@ -6458,6 +6748,7 @@ def construir_balance_avion(req: BalanceAvionRequest) -> Workbook:
         resaltar_parciales=True,
         maestra=maestra,
         usd=_USD_TC_LIBRO,
+        usd_por_gasto=upg,
     )
     # Hoja "refacciones" (29-ago): solo si el API la manda (skew tolerante).
     if req.refacciones is not None:
@@ -6469,6 +6760,7 @@ def construir_balance_avion(req: BalanceAvionRequest) -> Workbook:
             nota=_NOTA_REFACCIONES,
             maestra=maestra,
             usd=_USD_TC_LIBRO,
+            usd_por_gasto=upg,
         )
     # Hoja 'permisos' con T.C. por fila y MONTO MXN como fórmula SOLO cuando
     # el API manda la bandera (13-oct-2026, API 0.0.74, invariante 59 del
@@ -6484,6 +6776,7 @@ def construir_balance_avion(req: BalanceAvionRequest) -> Workbook:
         maestra=maestra,
         usd=_USD_TC_LIBRO,
         con_tc=con_tc_permisos,
+        usd_por_gasto=upg,
     )
     # Pagos de AFAC que paga VuelaTour (16-oct-2026, API 0.0.89, invariante
     # 90): ya NO están en esta hoja ni restan aquí; una línea lo dice. Sin la
@@ -7520,11 +7813,15 @@ def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
         # «general» (6-oct-2026, API 0.0.64): costo total + costo por hora en
         # lugar del desglose de costos; «mensual» (o sin la llave): la de
         # siempre. Las demás hojas son las mismas en las dos.
+        # USD gasto por gasto (19-oct-2026, API 0.0.98, regla B): la bandera
+        # del consolidado (que puede traerla o no) o la de cualquier avión.
+        upg = _usd_por_gasto_general(req, cons)
         maestra = _hoja_maestra(
             wb.create_sheet(),
             cons,
             general=True,
             costo_por_hora=req.variante == VARIANTE_BALANCE_GENERAL,
+            usd_por_gasto=upg,
         )
         # Pestaña "Otros movimientos" JUNTO a "reporte horas" (pedido del
         # cliente 28-ago): se crea aquí para que quede al lado; solo si el
@@ -7551,6 +7848,7 @@ def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
             cons,
             titulo="Combustible — flota (por avión y por mes)",
             maestra=maestra,
+            usd_por_gasto=upg,
         )
         # Hoja 'otros gastos' (payload `gastos_empresa`, 29-ago): gastos de
         # EMPRESA sin avión ni vuelo — egresos de VuelaTour, fuera de toda
@@ -7570,6 +7868,7 @@ def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
                 titulo_exacto=True,
                 maestra=maestra,
                 usd=_USD_TC_CELDA,
+                usd_por_gasto=upg,
             )
         # Hoja 'repartidos a aviones' (payload `otros_gastos`; 1-sep-2026:
         # antes 'otros gastos' — se veía vacía sin repartos y ese nombre
@@ -7589,6 +7888,7 @@ def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
                 else _NOTA_REPARTIDOS_A_AVIONES
             ),
             maestra=maestra,
+            usd_por_gasto=upg,
         )
         # Hoja 'otros ingresos aviones' (13-oct-2026, API 0.0.75, invariante
         # «INGRESO ASIGNADO A UN AVIÓN» del API): los ingresos ING-n
@@ -7622,6 +7922,7 @@ def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
                 cons,
                 nota=_NOTA_REFACCIONES_GENERAL,
                 maestra=maestra,
+                usd_por_gasto=upg,
             )
         # Balance EN PESOS (18-oct-2026, API 0.0.93): con la bandera RAÍZ la
         # hoja 'balance' va en pesos (dólares informativos); sin ella, la de

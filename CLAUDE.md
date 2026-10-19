@@ -2070,6 +2070,116 @@ Reglas de este microservicio (FastAPI, Python 3.12).
     panel**. Tests: `tests/test_balance_en_pesos.py` y
     `tests/test_reparto_en_pesos.py` (payloads en `tests/_pesos_payloads.py`,
     espejo de la aritmética del API).
+- **Reserva de overhaul MARCADA en el balance (sin restar) + USD por gasto
+  (19-oct-2026, API 0.0.98).** Decisión del cliente: la reserva de overhaul
+  (horas voladas del periodo × Σ `monto_por_hora_usd` de los motores) NO se
+  resta en el Balance por avión ni en el Balance general; solo queda
+  MARCADA, muy clara, para que se entienda qué debe aportar el avión para el
+  overhaul (el reparto a socios sigue restándola). **Aquí no se calcula
+  nada**: se pinta un bloque informativo y, con la regla B, se dejan de
+  derivar dólares.
+  - **Contrato ADITIVO en `BalanceAvionBalanceBloque`** (todo con default
+    None): `reserva_overhaul_usd` (el DISCRIMINADOR del bloque: número, 0.0
+    si no hubo horas o no hay tarifa; `_con_reserva_overhaul` = `is not
+    None`), `reserva_overhaul_mxn` (round2(usd × T.C. oficial del cierre);
+    None con la USD presente = sin T.C. oficial ⇒ «—» con
+    `_NOTA_SIN_PESOS_RESERVA`) y los metadatos de «Cómo se calcula», con
+    validador liberal (jamás un 422): `reserva_overhaul_horas_hr`,
+    `reserva_overhaul_usd_hr` (tarifa Σ motores, USD/hr; el texto la muestra
+    POR MOTOR, Σ ÷ motores), `reserva_overhaul_motores`,
+    `reserva_overhaul_tc`, `reserva_overhaul_tc_dia` ('YYYY-MM-DD') y
+    `reserva_overhaul_incompleta` (solo un `true` JSON = voló horas sin
+    tarifa configurada).
+  - **La cascada NO cambia**: con o sin la llave, filas, índices y fórmulas
+    de `_bloque_balance` y `_bloque_balance_pesos` son los de siempre
+    (`_formulas_cascada(letra, k, con_oi)`, fuente única de las dos
+    cascadas: DESPUÉS = `ROUND(B{k}-B{k+1}-B{k+2}-B{k+3}-B{k+4}[+B{k+5}],2)`,
+    COBRADA = `ROUND(B{despues}-B{despues+1},2)`); los socios y
+    `celdas_empresa` quedan donde estaban.
+  - **Bloque informativo** (`_bloque_reserva_overhaul(ws, b, row, pesos)`),
+    SOLO con la llave, DESPUÉS de los socios de cada cascada (hoja USD del
+    individual, cada bloque de avión del general y la hoja en pesos),
+    separado por una fila en blanco, con relleno ámbar claro `_FILL_RESERVA`
+    (FEF3C7) y bordes: (1) encabezado en negritas combinado
+    `_TITULO_RESERVA_OVERHAUL` = «RESERVA DE OVERHAUL · informativa (no se
+    resta en este balance)»; (2) fila `_FILA_RESERVA` «Lo que debe aportar
+    el avión USD» con `reserva_overhaul_usd` como VALOR (0 se pinta 0.00);
+    en pesos `_FILA_RESERVA_PESOS` «Lo que debe aportar el avión (MXN)» con
+    B = `reserva_overhaul_mxn` (`_celda_pesos`; None ⇒ «—» + nota) y C = el
+    USD informativo gris; (3) «Cómo se calcula: » + `_como_se_calcula_
+    reserva(b)` (combinada y envuelta): «18.20 h voladas en el periodo × 2
+    motores × 55.00 USD/hr = 2,002.00 USD» y, con T.C., « · en pesos al T.C.
+    oficial del 30-sep-2026 (18.0243)» (`cierre_mes.fecha_corta` +
+    `_tc_txt`); con `reserva_overhaul_incompleta`,
+    `_NOTA_RESERVA_OVERHAUL_INCOMPLETA` = «Sin tarifa de reserva de overhaul
+    configurada para este avión (ficha del avión → reserva de overhaul): no
+    se puede calcular lo que debe aportar.»; (4) nota al pie
+    `_NOTA_RESERVA_OVERHAUL` (`_pinta_nota_envuelta`) = «Es la aportación
+    del periodo para el overhaul de los motores de este avión: horas voladas
+    × tarifa por hora de cada motor. No se resta en la utilidad de este
+    balance; el reparto a socios sí la descuenta antes de repartir. No es
+    dinero guardado en una cuenta ni un acumulado.» Ningún texto dice «se
+    resta». Devuelve la siguiente fila libre (el general apila igual). Pie
+    de la hoja en pesos: con la llave, `_NOTA_BALANCE_PESOS_RESERVA`
+    (`_nota_balance_pesos`; en el general, si ALGÚN avión la trae): la
+    columna USD va por gasto (T.C. propio o el oficial del día en que se
+    pagó) y la reserva es un bloque informativo al T.C. oficial del cierre;
+    sin la llave, `_NOTA_BALANCE_PESOS` literal.
+  - **Bandera `usd_por_gasto` (regla B del API 0.0.98)**: raíz ADITIVA de
+    `BalanceAvionRequest` (libro individual y cada `aviones[]`; el
+    consolidado FLOTA puede traerla o no: `_usd_por_gasto_general` = la del
+    consolidado o la de cualquier avión), solo un `true` JSON
+    (`_usd_por_gasto`). Con ella el API calcula TODO dólar gasto por gasto
+    (cada gasto a USD con su T.C. propio o, sin él, el oficial del día en
+    que se pagó: el criterio del reparto a socios) y aquí NINGUNA celda
+    deriva un USD como fórmula de pesos ÷ T.C.: van como VALOR del API con
+    `_NOTA_ENCABEZADO_USD_POR_GASTO` («USD calculado gasto por gasto: cada
+    gasto a dólares con su T.C. propio o el oficial del día en que se pagó
+    (criterio del reparto a socios); no es el total en pesos ÷ T.C.
+    promedio.») en el encabezado. (a) Hojas de gastos (`_hoja_gastos`:
+    'Gastos Indirectos', 'refacciones', 'permisos'; en el general 'otros
+    gastos' (`_USD_TC_CELDA`), 'repartidos a aviones' y el fallback
+    'refacciones') y 'combustible' (`_hoja_combustible`, individual y
+    flota): TOTAL USD (C5 / E5) como valor + nota en el encabezado de la
+    fila 4; USD X HR sigue `ROUND(C5/D5,2)`; 'Otros ingresos' no cambia (ya
+    va por ingreso). (b) Hoja de vuelos (`_hoja_maestra`,
+    `_COLS_USD_POR_GASTO`): las filas de COSTO TOTAL USD (AE = Y/z), COSTO
+    TOTAL USD S/IVA (AF), IVA PAGADO USD (AG), IVA PAGADO MXN (AH = AG × z),
+    GANANCIA USD (AM), COSTO X HORA USD (AN) y USD S/IVA (AO) en el
+    individual / general mensual, y TOTAL PARA PROVEEDOR (DLLS), IVA TOTAL
+    PAGADO (DLLS y PESOS), COSTO X HORA (DLLS S/IVA), COSTO HR MÁS IVA e IVA
+    X HR en la variante general, como valor con la nota; en TOTALES el
+    PROMEDIO de COSTO X HORA USD (`_TOTALES_PROMEDIO`) también valor —el
+    API promedia sus números completos y el AVERAGE de celdas a centavos no
+    lo reproduce—; las Σ (GANANCIA USD, `_CPH_TOTALES_PROPIOS`) siguen como
+    fórmula (reproducen por construcción). (c) Las de pesos puros (VENTA,
+    COSTO TOTAL MXN, REMANENTE, DIF. IVA, GANANCIA MXN, TOTAL PAGADO S/IVA =
+    PESOS − IVA PESOS) y las de la VENTA (POR COBRAR USD = MXN ÷ T.C. de la
+    cotización) siguen como fórmula. (d) Hoja de vuelos del GENERAL (antes
+    de comisiones, `_fila_antes_de_comisiones(v, usd_por_gasto)`): la
+    GANANCIA USD de un vuelo con comisiones ya NO se deriva (remanente ÷
+    T.C.) —el API no manda esa cifra en dólares— y queda VACÍA, con
+    `_NOTA_ENCABEZADO_GANANCIA_USD_POR_GASTO_FLOTA` en el encabezado; los
+    demás vuelos, el valor del API; TOTALES = Σ de las filas visibles. Si
+    algún día se quiere ese número, el API debe mandar
+    `ganancia_antes_comisiones_usd` por fila.
+  - **Skew: sin la llave Y sin la bandera (API ≤ 0.0.97; también con
+    `reserva_overhaul_usd` en null, solo los metadatos, o `usd_por_gasto`
+    en false/texto) el libro es BYTE A BYTE el de hoy**, con y sin
+    `balance_en_pesos` (huellas del HEAD 16d6e2f sobre
+    `tests/_pesos_payloads.py`, .xlsx y vista en pantalla). API 0.0.98 +
+    pyservices previo ⇒ `extra="ignore"`: sin bloque, y las fórmulas USD de
+    siempre ya no reproducen al API ⇒ `finalizar` las degrada a valor (los
+    números siguen siendo los del API; solo se pierden las fórmulas
+    visibles). Orden de deploy: **pyservices ⇒ API 0.0.98 ⇒ panel**. Tests:
+    `tests/test_balance_reserva_overhaul.py` (esquema liberal, fórmulas de
+    la cascada, «Cómo se calcula», individual USD/pesos con la cascada
+    idéntica celda por celda y el bloque tras los socios, «—» sin T.C.,
+    incompleta, general USD/pesos con socios y bloque VUELATOUR intactos,
+    mixto, byte a byte sin la llave / sin la bandera, vista en pantalla,
+    rutas, `usd_por_gasto` con dólares perturbados y 0 fórmulas degradadas
+    —XB-DOS y la variante general—, GANANCIA USD vacía en el general y, sin
+    la bandera, las fórmulas de siempre).
 
 ## Conciliación
 

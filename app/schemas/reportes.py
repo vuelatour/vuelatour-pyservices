@@ -1348,6 +1348,58 @@ class BalanceAvionBalanceBloque(BaseModel):
     # Solo cuando viajan `comisiones_usd` (cascada del GENERAL).
     comisiones_mxn: float | None = None
     utilidad_antes_comisiones_mxn: float | None = None
+    # RESERVA DE OVERHAUL MARCADA en el balance, SIN RESTAR (19-oct-2026, API
+    # 0.0.98; decisión del cliente: el reparto a socios ya resta la reserva
+    # de overhaul —horas voladas del periodo × Σ `monto_por_hora_usd` de los
+    # motores— y el balance NO la resta: solo la MARCA, muy clara, para que se
+    # entienda qué debe aportar el avión para el overhaul). ADITIVAS:
+    # `reserva_overhaul_usd` es el DISCRIMINADOR (número; 0.0 si no hubo horas
+    # o no hay tarifa; None = API previo ⇒ ningún bloque y el libro de siempre
+    # byte a byte); la cascada (filas, índices y fórmulas) NO cambia con la
+    # llave: el bloque informativo va DESPUÉS de los socios.
+    # `reserva_overhaul_mxn` = round2(usd × T.C. oficial del cierre del
+    # periodo); None con la USD presente = sin T.C. oficial ⇒ «—» en pesos.
+    # Lo demás solo alimenta el texto «Cómo se calcula» (liberal: jamás un 422
+    # por un metadato): `reserva_overhaul_usd_hr` es la tarifa Σ motores
+    # (USD/hr; el texto la muestra por motor: Σ ÷ motores).
+    # `reserva_overhaul_incompleta` True = voló horas pero el avión no tiene
+    # tarifa configurada ⇒ no se puede calcular lo que debe aportar.
+    reserva_overhaul_usd: float | None = None
+    reserva_overhaul_mxn: float | None = None
+    reserva_overhaul_horas_hr: float | None = None  # horas voladas del periodo
+    reserva_overhaul_usd_hr: float | None = None  # tarifa Σ motores, USD/hr
+    reserva_overhaul_motores: int | None = None
+    reserva_overhaul_tc: float | None = None  # T.C. oficial con que salió el MXN
+    reserva_overhaul_tc_dia: str | None = None  # 'YYYY-MM-DD', día Cancún del T.C.
+    reserva_overhaul_incompleta: bool | None = None
+
+    @field_validator(
+        "reserva_overhaul_horas_hr",
+        "reserva_overhaul_usd_hr",
+        "reserva_overhaul_tc",
+        mode="before",
+    )
+    @classmethod
+    def _reserva_numeros_liberales(cls, v: Any) -> float | None:
+        return numero_cierre_liberal(v)
+
+    @field_validator("reserva_overhaul_motores", mode="before")
+    @classmethod
+    def _reserva_motores_liberal(cls, v: Any) -> int | None:
+        n = numero_cierre_liberal(v)
+        return int(n) if n is not None and n >= 0 and n.is_integer() else None
+
+    @field_validator("reserva_overhaul_tc_dia", mode="before")
+    @classmethod
+    def _reserva_tc_dia_liberal(cls, v: Any) -> str | None:
+        return _texto_liberal(v)
+
+    @field_validator("reserva_overhaul_incompleta", mode="before")
+    @classmethod
+    def _reserva_incompleta_liberal(cls, v: Any) -> bool | None:
+        """Solo un `true` JSON la enciende; lo demás (null, false, texto) ⇒
+        None = con tarifa."""
+        return True if v is True else None
 
 
 def _texto_liberal(v: Any) -> str | None:
@@ -2042,6 +2094,22 @@ class BalanceAvionRequest(BaseModel):
     # `aviones[]` del general (el consolidado no la lleva). Sin ella
     # (False/null/ausente) ⇒ libro byte a byte.
     balance_en_pesos: bool = False
+    # ADITIVO (19-oct-2026, API 0.0.98, regla B del API): con `true` el API
+    # calculó TODO dólar GASTO POR GASTO (cada gasto a USD con su T.C. propio
+    # o, sin él, el oficial del día en que se pagó: el criterio del reparto a
+    # socios) y ya no es «MXN ÷ T.C. promedio». Aquí ninguna celda deriva
+    # entonces un USD como fórmula de pesos ÷ T.C.: el TOTAL USD de las hojas
+    # de gastos y combustible y la cadena USD/IVA de la hoja de vuelos van
+    # como VALOR del API con nota en el encabezado. Raíz del libro
+    # individual y de cada `aviones[]` del general (el consolidado FLOTA
+    # puede traerla o no). Solo un `true` JSON la enciende; lo demás ⇒ None
+    # (API previo: libro byte a byte).
+    usd_por_gasto: bool | None = None
+
+    @field_validator("usd_por_gasto", mode="before")
+    @classmethod
+    def _usd_por_gasto_liberal(cls, v: Any) -> bool | None:
+        return True if v is True else None
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod
