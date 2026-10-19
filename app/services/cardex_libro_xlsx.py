@@ -10,17 +10,32 @@ con el T.C. oficial de su día. Lo único que cambia aquí es el SUBTÍTULO:
 la `nota` del API va tras «Montos en MXN» para que quien lea el libro sepa
 con qué T.C. se convirtió cada lado. Sin `nota` (API previo) el libro sale
 idéntico.
+
+18-oct-2026 (API 0.0.92; pedido del cliente: el cardex «en forma de lista
+por orden de fecha … con sus entradas, salidas y movimientos» y, en el
+Excel, «stock inicio del mes y stock final del mes y cantidad de unidades
+vendidas»): con `movimientos` en el payload el libro trae TRES hojas —la
+LISTA por fecha con una banda por mes, el RESUMEN POR MES y, al final, la
+hoja ENTRADAS | SALIDAS de siempre—. Sin `movimientos` (API previo), el
+libro de siempre byte a byte. Aquí tampoco se calcula nada: filas, stock y
+meses llegan del API (`cardexCronologicoDe` / `mesesCardexDe`); solo se
+re-suman columnas para la fila TOTAL del resumen.
 """
 
 from __future__ import annotations
 
+from datetime import date
 from io import BytesIO
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from app.schemas.cardex_libro import CardexLibroRequest
+from app.schemas.cardex_libro import (
+    CardexLibroMes,
+    CardexLibroMovimiento,
+    CardexLibroRequest,
+)
 from app.services.tabla_xlsx import BRAND, LIGHT, MONEY, WHITE, sheet_title
 
 _thin = Side(style="thin", color="D5DBE3")
@@ -66,15 +81,7 @@ def _celda(ws, row: int, col: int, value, *, money: bool = False, wrap: bool = F
     return cell
 
 
-def render_cardex_libro_xlsx(req: CardexLibroRequest) -> bytes:
-    wb = Workbook()
-    ws = wb.active
-    ws.title = sheet_title("Cardex libro")
-
-    # Título + subtítulo.
-    t = ws.cell(row=1, column=1, value=req.titulo or f"Cardex — {req.item_nombre}")
-    t.font = Font(bold=True, size=14, color=BRAND)
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=_NCOLS)
+def _subtitulo(req: CardexLibroRequest) -> str:
     partes = []
     if req.numero_parte:
         partes.append(f"Parte {req.numero_parte}")
@@ -90,7 +97,36 @@ def render_cardex_libro_xlsx(req: CardexLibroRequest) -> bytes:
         partes.append(nota)
     if req.generado:
         partes.append(f"Generado {req.generado}")
-    s = ws.cell(row=2, column=1, value=" · ".join(partes))
+    return " · ".join(partes)
+
+
+def render_cardex_libro_xlsx(req: CardexLibroRequest) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    if req.movimientos is None:
+        # API previo: el libro de siempre (una hoja ENTRADAS | SALIDAS).
+        ws.title = sheet_title("Cardex libro")
+        _hoja_entradas_salidas(ws, req)
+    else:
+        ws.title = sheet_title("Cardex")
+        _hoja_lista(ws, req)
+        _hoja_meses(wb.create_sheet(sheet_title("Resumen por mes")), req)
+        _hoja_entradas_salidas(
+            wb.create_sheet(sheet_title("Entradas y salidas")), req
+        )
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _hoja_entradas_salidas(ws, req: CardexLibroRequest) -> None:
+    """La hoja de siempre: ENTRADAS | SALIDAS lado a lado (cuaderno)."""
+    # Título + subtítulo.
+    t = ws.cell(row=1, column=1, value=req.titulo or f"Cardex — {req.item_nombre}")
+    t.font = Font(bold=True, size=14, color=BRAND)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=_NCOLS)
+    s = ws.cell(row=2, column=1, value=_subtitulo(req))
     s.font = Font(italic=True, size=10, color="5B6470")
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=_NCOLS)
 
@@ -159,6 +195,308 @@ def render_cardex_libro_xlsx(req: CardexLibroRequest) -> bytes:
 
     ws.freeze_panes = ws.cell(row=crow + 1, column=1)
 
-    buf = BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+
+# ---------------------------------------------------------------------------
+# Formato nuevo (18-oct-2026, API 0.0.92): LISTA por fecha + RESUMEN POR MES.
+# ---------------------------------------------------------------------------
+
+_VERDE = "1F7A3F"
+_ROJO = "B42318"
+_GRIS = "5B6470"
+
+# Lista por fecha: (encabezado, ancho).
+_COLS_LISTA = [
+    ("Fecha", 12),
+    ("Movimiento", 15),
+    ("Detalle", 42),
+    ("Entra", 10),
+    ("Sale", 10),
+    ("Existencia\n(después)", 12),
+    ("Precio unitario", 14),
+    ("Total", 14),
+    ("Ganancia", 13),
+]
+_N_LISTA = len(_COLS_LISTA)  # 9
+
+# Resumen por mes: (encabezado, ancho).
+_COLS_MESES = [
+    ("Mes", 24),
+    ("Stock al inicio\ndel mes", 14),
+    ("Entradas", 11),
+    ("Unidades\nvendidas", 11),
+    ("Stock al final\ndel mes", 14),
+    ("Movimientos", 12),
+    ("Vendido", 14),
+    ("Utilidad", 14),
+]
+_N_MESES = len(_COLS_MESES)  # 8
+
+_MESES_ES = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio",
+    "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+]
+
+_NOTA_LISTA = (
+    "Movimientos en orden de fecha (el orden del cardex). «Entra» y «Sale» en "
+    "unidades; «Existencia» = stock después del movimiento. En una venta, "
+    "«Precio unitario» es el precio al que se vendió (o el costo, si salió a "
+    "costo) y «Ganancia» = venta − costo."
+)
+_NOTA_MESES = (
+    "Stock al final del mes = stock al inicio + entradas − unidades vendidas. "
+    "«Unidades vendidas» cuenta todas las salidas a los aviones (con precio o a "
+    "costo); «Entradas» incluye compras, devoluciones y ajustes. Un mes sin "
+    "movimientos arrastra el stock del anterior; el mes en curso muestra el "
+    "stock de hoy, no un cierre."
+)
+
+
+def _etiqueta_mes(mes: str) -> str:
+    """'2026-08' ⇒ 'Agosto 2026' (respaldo si el API no manda la etiqueta)."""
+    try:
+        anio, m = mes.split("-")[:2]
+        return f"{_MESES_ES[int(m) - 1]} {int(anio)}"
+    except (ValueError, IndexError):
+        return mes or "Sin fecha"
+
+
+def _fecha_celda(fecha: str):
+    """'2026-08-29' ⇒ date (Excel la filtra y ordena); otra cosa, tal cual."""
+    try:
+        return date.fromisoformat((fecha or "")[:10])
+    except ValueError:
+        return fecha or None
+
+
+def _cantidad(n: float | None):
+    """10.0 ⇒ 10 (entero a la vista); 7.5 se queda."""
+    if n is None:
+        return None
+    return int(n) if float(n).is_integer() else n
+
+
+def _movimiento_txt(m: CardexLibroMovimiento) -> str:
+    if m.tipo == "SALIDA":
+        return "Salida a costo" if m.a_costo else "Venta"
+    return {
+        "ENTRADA": "Compra",
+        "DEVOLUCION": "Devolución",
+        "AJUSTE": "Ajuste",
+    }.get(m.tipo, m.tipo.capitalize() if m.tipo else "")
+
+
+def _titulo(ws, req: CardexLibroRequest, titulo: str, ncols: int) -> None:
+    t = ws.cell(row=1, column=1, value=titulo)
+    t.font = Font(bold=True, size=14, color=BRAND)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
+    s = ws.cell(row=2, column=1, value=_subtitulo(req))
+    s.font = Font(italic=True, size=10, color=_GRIS)
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncols)
+
+
+def _encabezado(ws, row: int, cols: list[tuple[str, int]]) -> None:
+    for col, (label, width) in enumerate(cols, start=1):
+        cell = ws.cell(row=row, column=col, value=label)
+        cell.font = Font(bold=True, color=WHITE)
+        cell.fill = PatternFill("solid", fgColor=BRAND)
+        cell.alignment = Alignment(
+            horizontal="center", vertical="center", wrap_text=True
+        )
+        cell.border = _border
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.row_dimensions[row].height = 30
+
+
+def _nota_pie(ws, row: int, texto: str, ncols: int) -> None:
+    n = ws.cell(row=row, column=1, value=texto)
+    n.font = Font(italic=True, size=9, color=_GRIS)
+    n.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ncols)
+    # Alto estimado: ~150 caracteres por renglón en el ancho de la tabla.
+    ws.row_dimensions[row].height = 13 * (len(texto) // 150 + 1)
+
+
+def _texto_banda(mes: str, info: CardexLibroMes | None) -> str:
+    if info is None:
+        return _etiqueta_mes(mes)
+    partes = [
+        info.etiqueta or _etiqueta_mes(mes),
+        f"Stock al inicio: {_cantidad(info.stock_inicio)}",
+        f"Entradas: {_cantidad(info.entradas)}",
+        f"Vendidas: {_cantidad(info.unidades_vendidas)}",
+        f"Stock al final: {_cantidad(info.stock_final)}",
+    ]
+    if info.movimientos == 0:
+        partes.append("sin movimientos")
+    return " · ".join(partes)
+
+
+def _hoja_lista(ws, req: CardexLibroRequest) -> None:
+    """Hoja 1: todos los movimientos en orden de fecha, con una banda por mes."""
+    nombre = req.item_nombre or ""
+    _titulo(ws, req, req.titulo or f"Cardex — {nombre}", _N_LISTA)
+    hrow = 4
+    _encabezado(ws, hrow, _COLS_LISTA)
+
+    movs = req.movimientos or []
+    info_mes = {m.mes: m for m in req.meses if m.mes}
+    # Meses en orden: los del resumen (también los que no tuvieron
+    # movimientos) y, por si acaso, cualquier mes de un movimiento.
+    claves = sorted(set(info_mes) | {m.mes for m in movs if m.mes})
+    sin_mes = [m for m in movs if not m.mes]
+
+    r = hrow + 1
+    if not movs and not claves:
+        c = ws.cell(row=r, column=1, value="Sin movimientos.")
+        c.font = Font(italic=True, color=_GRIS)
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=_N_LISTA)
+        r += 1
+
+    def banda(texto: str) -> None:
+        nonlocal r
+        c = ws.cell(row=r, column=1, value=texto)
+        c.font = Font(bold=True, color=BRAND)
+        c.alignment = Alignment(vertical="center")
+        for col in range(1, _N_LISTA + 1):
+            x = ws.cell(row=r, column=col)
+            x.fill = PatternFill("solid", fgColor=LIGHT)
+            x.border = _border
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=_N_LISTA)
+        ws.row_dimensions[r].height = 18
+        r += 1
+
+    def fila(m: CardexLibroMovimiento) -> None:
+        nonlocal r
+        f = ws.cell(row=r, column=1, value=_fecha_celda(m.fecha))
+        f.number_format = "dd/mm/yyyy"
+        f.border = _border
+        ws.cell(row=r, column=2, value=_movimiento_txt(m)).border = _border
+        d = ws.cell(row=r, column=3, value=m.detalle or None)
+        d.border = _border
+        d.alignment = Alignment(wrap_text=True, vertical="top")
+        e = ws.cell(row=r, column=4, value=_cantidad(m.entra))
+        e.border = _border
+        if m.entra is not None:
+            e.font = Font(bold=True, color=_VERDE)
+        s = ws.cell(row=r, column=5, value=_cantidad(m.sale))
+        s.border = _border
+        if m.sale is not None:
+            s.font = Font(bold=True, color=_ROJO)
+        x = ws.cell(row=r, column=6, value=_cantidad(m.existencia))
+        x.border = _border
+        x.font = Font(bold=True)
+        for col, v in ((7, m.precio_unitario), (8, m.total), (9, m.ganancia)):
+            c = ws.cell(row=r, column=col, value=v)
+            c.border = _border
+            if v is not None:
+                c.number_format = MONEY
+                if col == 9 and v < 0:
+                    c.font = Font(color=_ROJO)
+        r += 1
+
+    for mes in claves:
+        banda(_texto_banda(mes, info_mes.get(mes)))
+        for m in movs:
+            if m.mes == mes:
+                fila(m)
+    if sin_mes:
+        banda("Sin fecha")
+        for m in sin_mes:
+            fila(m)
+
+    # Totales (los manda el API) y la existencia de hoy.
+    r += 1
+    existencia = (
+        req.meses[-1].stock_final
+        if req.meses
+        else (movs[-1].existencia if movs else 0)
+    )
+    for etiqueta, col, valor, money in (
+        ("TOTAL COMPRAS", 8, req.total_compra, True),
+        ("TOTAL VENTAS / GANANCIA", 8, req.total_venta, True),
+        ("EXISTENCIA ACTUAL", 6, _cantidad(existencia), False),
+    ):
+        for c in range(1, _N_LISTA + 1):
+            x = ws.cell(row=r, column=c)
+            x.fill = PatternFill("solid", fgColor=LIGHT)
+            x.border = _border
+            x.font = Font(bold=True)
+        ws.cell(row=r, column=3, value=etiqueta)
+        v = ws.cell(row=r, column=col, value=valor)
+        if money:
+            v.number_format = MONEY
+        if etiqueta.startswith("TOTAL VENTAS"):
+            g = ws.cell(row=r, column=9, value=req.total_ganancia)
+            g.number_format = MONEY
+        r += 1
+
+    _nota_pie(ws, r + 1, _NOTA_LISTA, _N_LISTA)
+    ws.freeze_panes = ws.cell(row=hrow + 1, column=1)
+
+
+def _hoja_meses(ws, req: CardexLibroRequest) -> None:
+    """Hoja 2: stock al inicio, entradas, vendidas y stock al final, por mes."""
+    nombre = req.item_nombre or ""
+    _titulo(ws, req, f"Resumen por mes — {nombre}".rstrip(" —"), _N_MESES)
+    hrow = 4
+    _encabezado(ws, hrow, _COLS_MESES)
+
+    r = hrow + 1
+    if not req.meses:
+        c = ws.cell(row=r, column=1, value="Sin movimientos.")
+        c.font = Font(italic=True, color=_GRIS)
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=_N_MESES)
+        r += 1
+
+    for m in req.meses:
+        valores = [
+            m.etiqueta or _etiqueta_mes(m.mes),
+            _cantidad(m.stock_inicio),
+            _cantidad(m.entradas),
+            _cantidad(m.unidades_vendidas),
+            _cantidad(m.stock_final),
+            m.movimientos,
+            m.vendido,
+            m.ganancia,
+        ]
+        for col, v in enumerate(valores, start=1):
+            c = ws.cell(row=r, column=col, value=v)
+            c.border = _border
+            if col >= 7 and v is not None:
+                c.number_format = MONEY
+                if v < 0:
+                    c.font = Font(color=_ROJO)
+            if col in (2, 5):
+                c.font = Font(bold=True)
+            if m.movimientos == 0 and col != 7 and col != 8:
+                c.font = Font(color=_GRIS, bold=col in (2, 5))
+            if m.en_curso and col == 1:
+                c.font = Font(italic=True)
+        r += 1
+
+    # Fila TOTAL: re-suma de columnas (solo para mostrar; el stock no se suma).
+    if req.meses:
+        def suma(vals):
+            vals = [v for v in vals if v is not None]
+            return round(sum(vals), 2) if vals else None
+
+        tot = {
+            1: "TOTAL",
+            3: _cantidad(round(sum(m.entradas for m in req.meses), 3)),
+            4: _cantidad(round(sum(m.unidades_vendidas for m in req.meses), 3)),
+            5: _cantidad(req.meses[-1].stock_final),
+            6: sum(m.movimientos for m in req.meses),
+            7: suma([m.vendido for m in req.meses]),
+            8: suma([m.ganancia for m in req.meses]),
+        }
+        for col in range(1, _N_MESES + 1):
+            cell = ws.cell(row=r, column=col, value=tot.get(col))
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill("solid", fgColor=LIGHT)
+            cell.border = _border
+            if col >= 7 and tot.get(col) is not None:
+                cell.number_format = MONEY
+        r += 1
+
+    _nota_pie(ws, r + 1, _NOTA_MESES, _N_MESES)
+    ws.freeze_panes = ws.cell(row=hrow + 1, column=1)

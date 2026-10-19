@@ -185,6 +185,30 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   («Último precio de compra» número + «Moneda» + Valor/Vendido/Utilidad en
   MXN). Tests: `tests/test_balance_inventario_xlsx.py` (sección «ÚLTIMO
   PRECIO»), `tests/test_cardex_libro_xlsx.py`.
+- **Cardex del producto como LISTA por fecha + RESUMEN POR MES**
+  (18-oct-2026, API 0.0.92). Pedido del cliente: «cambiar el formato del
+  Cardex del producto en forma de lista por orden de fecha … con sus
+  entradas, salidas y movimientos» y «en el Excel que se descarga debería
+  venir stock inicio del mes y stock final del mes y cantidad de unidades
+  vendidas». Campos ADITIVOS de `CardexLibroRequest`: `movimientos`
+  (`CardexLibroMovimiento`: fecha, mes, tipo, detalle, entra, sale,
+  existencia, precio_unitario, total, ganancia, a_costo; `None` por default)
+  y `meses` (`CardexLibroMes`: etiqueta, stock_inicio, entradas, compras,
+  unidades_vendidas, stock_final, movimientos, vendido, ganancia, en_curso;
+  null ⇒ []). **La PRESENCIA de `movimientos` manda** (aunque venga vacía):
+  el libro trae tres hojas — «Cardex» (la lista en el orden del cardex, con
+  una banda por mes «Agosto 2026 · Stock al inicio: 0 · Entradas: 10 ·
+  Vendidas: 3 · Stock al final: 7», también los meses sin movimientos;
+  fecha REAL `dd/mm/yyyy`, «Compra / Devolución / Ajuste / Venta / Salida a
+  costo», entra en verde y sale en rojo, totales del API y existencia
+  actual), «Resumen por mes» (stock al inicio, entradas, unidades vendidas,
+  stock al final, movimientos, vendido y utilidad, con fila TOTAL que solo
+  RE-SUMA columnas) y, al final, «Entradas y salidas» = la hoja de siempre
+  (`_hoja_entradas_salidas`, mismo código). **Aquí no se calcula nada**:
+  filas, stock y meses salen del API (`cardexCronologicoDe` /
+  `mesesCardexDe`). **Sin `movimientos` (API previo), el libro de siempre
+  byte a byte** (`_MIEMBROS_SIN_MOVIMIENTOS`, huella de miembros del .xlsx
+  calculada con HEAD 46b2a50). Tests: `tests/test_cardex_libro_lista.py`.
 - **Hoja 'inventario': COSTO UNITARIO** (13-oct-2026, API 0.0.74; decisión
   6 del lote del cliente: ver el último precio de compra de cada producto
   en el Balance general). Campos ADITIVOS de fila `costo_unitario_mxn`
