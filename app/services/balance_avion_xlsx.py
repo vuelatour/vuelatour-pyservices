@@ -4242,8 +4242,16 @@ def _hoja_combustible(
 
 
 def _hoja_balance(
-    ws: Worksheet, req: BalanceAvionRequest, refs: dict[str, str] | None = None
+    ws: Worksheet,
+    req: BalanceAvionRequest,
+    refs: dict[str, str] | None = None,
+    refs_mxn: dict[str, str] | None = None,
 ) -> None:
+    # Balance EN PESOS (18-oct-2026, API 0.0.93): con la bandera, la hoja de
+    # pesos (dólares informativos); sin ella, la de siempre, byte a byte.
+    if req.balance_en_pesos:
+        _hoja_balance_pesos(ws, req, refs_usd=refs, refs_mxn=refs_mxn)
+        return
     _title(ws, f"Balance — {req.matricula}".strip(" —"), 1, 3)
     periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'} (todo en USD)"
     ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
@@ -4383,6 +4391,10 @@ class _CeldaSocioEmpresa:
     porcentaje: float | None
     celda: str  # «C15» (misma hoja)
     monto_usd: float | None
+    # Balance EN PESOS (18-oct-2026): ahí `celda` es la MONTO MXN del socio y
+    # `celda_usd` la columna USD informativa de al lado. Sin la bandera, None.
+    celda_usd: str | None = None
+    monto_mxn: float | None = None
 
 
 def _bloque_balance(
@@ -4712,6 +4724,58 @@ def _pct_socio(pct: float | None) -> str:
     return "" if pct is None else f" · {pct:.2f} %"
 
 
+def _etiquetas_empresa_propios(afac_en_filas: bool, afac_por_vuelo: bool) -> tuple[str, str]:
+    """Etiquetas de INGRESOS / EGRESOS PROPIOS del bloque VUELATOUR (empresa):
+    con AFAC por vuelo (API 0.0.89, manda), con AFAC en filas (API 0.0.74) o
+    las de siempre. Fuente única del bloque en dólares y del de pesos."""
+    if afac_por_vuelo:
+        return _EMPRESA_INGRESOS_AFAC_VUELO, _EMPRESA_PAGOS_AFAC_VUELO
+    if afac_en_filas:
+        return _EMPRESA_INGRESOS_AFAC, _EMPRESA_PAGOS_AFAC
+    return _EMPRESA_INGRESOS, _EMPRESA_PAGOS
+
+
+def _base_nota_empresa(
+    regla_vigente: str | None,
+    *,
+    cubre_avion: bool,
+    sin_provision: bool,
+    solo_gasto_real: bool,
+    afac_en_filas: bool,
+    afac_por_vuelo: bool,
+) -> str:
+    """Base del pie del bloque VUELATOUR (empresa): qué son los ingresos y
+    egresos propios de 'otros movimientos' + la regla de comisiones del
+    periodo. Fuente única del bloque en dólares y del de pesos (texto puro:
+    mismo resultado que tenía `_bloque_empresa` inline)."""
+    if cubre_avion and solo_gasto_real:
+        # API 0.0.74 (invariante 61): los pagos «(avión)» los carga el avión.
+        regla_empresa = _EMPRESA_REGLA_COMISIONES_GASTO_REAL
+    elif cubre_avion and sin_provision:
+        regla_empresa = _EMPRESA_REGLA_COMISIONES_CUBRE_AVION_SIN_PROVISION
+    elif cubre_avion:
+        regla_empresa = _EMPRESA_REGLA_COMISIONES_CUBRE_AVION
+    else:
+        regla_empresa = _EMPRESA_REGLA_COMISIONES
+    # Con la bandera del API 0.0.74 (dos categorías) la base dice cuál pago
+    # al vendedor egresa aquí; con la del 0.0.73, ya no dice «o
+    # provisionado» (los egresos propios no traen provisión del vendedor).
+    # Con `afac_en_filas` (API 0.0.74) la base dice además que incluye las
+    # filas «AFAC · matrícula» (antes de la regla); con `afac_por_vuelo` (API
+    # 0.0.89, manda) las filas AFAC por vuelo; sin ellas, byte a byte.
+    if solo_gasto_real:
+        base_om = _NOTA_EMPRESA_BASE_DOS_CATEGORIAS
+    elif sin_provision:
+        base_om = _NOTA_EMPRESA_BASE_SIN_PROVISION
+    else:
+        base_om = _NOTA_EMPRESA_BASE
+    if afac_por_vuelo:
+        base_om += _EMPRESA_AFAC_POR_VUELO
+    elif afac_en_filas:
+        base_om += _EMPRESA_AFAC_EN_FILAS
+    return base_om + (regla_empresa.format(regla=regla_vigente) if regla_vigente else "")
+
+
 def _bloque_empresa(
     ws: Worksheet,
     emp: BalanceEmpresaBloque,
@@ -4820,12 +4884,7 @@ def _bloque_empresa(
         ws.cell(row=row, column=2).border = _border
         row += 1
 
-    if afac_por_vuelo:
-        texto_ing, texto_pag = _EMPRESA_INGRESOS_AFAC_VUELO, _EMPRESA_PAGOS_AFAC_VUELO
-    elif afac_en_filas:
-        texto_ing, texto_pag = _EMPRESA_INGRESOS_AFAC, _EMPRESA_PAGOS_AFAC
-    else:
-        texto_ing, texto_pag = _EMPRESA_INGRESOS, _EMPRESA_PAGOS
+    texto_ing, texto_pag = _etiquetas_empresa_propios(afac_en_filas, afac_por_vuelo)
     fila_ing = row
     etiqueta(row, texto_ing)
     monto(row, None, emp.ingresos_propios_usd, nota=_NOTA_EMPRESA_OTROS_MOVIMIENTOS)
@@ -4871,32 +4930,14 @@ def _bloque_empresa(
 
     # Pie: la `nota` del API (base de cada línea con sus números) + la base
     # de 'otros movimientos'; sin `nota`, el pie fijo completo.
-    if cubre_avion and solo_gasto_real:
-        # API 0.0.74 (invariante 61): los pagos «(avión)» los carga el avión.
-        regla_empresa = _EMPRESA_REGLA_COMISIONES_GASTO_REAL
-    elif cubre_avion and sin_provision:
-        regla_empresa = _EMPRESA_REGLA_COMISIONES_CUBRE_AVION_SIN_PROVISION
-    elif cubre_avion:
-        regla_empresa = _EMPRESA_REGLA_COMISIONES_CUBRE_AVION
-    else:
-        regla_empresa = _EMPRESA_REGLA_COMISIONES
-    # Con la bandera del API 0.0.74 (dos categorías) la base dice cuál pago
-    # al vendedor egresa aquí; con la del 0.0.73, ya no dice «o
-    # provisionado» (los egresos propios no traen provisión del vendedor).
-    # Con `afac_en_filas` (API 0.0.74) la base dice además que incluye las
-    # filas «AFAC · matrícula» (antes de la regla); con `afac_por_vuelo` (API
-    # 0.0.89, manda) las filas AFAC por vuelo; sin ellas, byte a byte.
-    if solo_gasto_real:
-        base_om = _NOTA_EMPRESA_BASE_DOS_CATEGORIAS
-    elif sin_provision:
-        base_om = _NOTA_EMPRESA_BASE_SIN_PROVISION
-    else:
-        base_om = _NOTA_EMPRESA_BASE
-    if afac_por_vuelo:
-        base_om += _EMPRESA_AFAC_POR_VUELO
-    elif afac_en_filas:
-        base_om += _EMPRESA_AFAC_EN_FILAS
-    base = base_om + (regla_empresa.format(regla=regla_vigente) if regla_vigente else "")
+    base = _base_nota_empresa(
+        regla_vigente,
+        cubre_avion=cubre_avion,
+        sin_provision=sin_provision,
+        solo_gasto_real=solo_gasto_real,
+        afac_en_filas=afac_en_filas,
+        afac_por_vuelo=afac_por_vuelo,
+    )
     if emp.nota:
         for texto in (emp.nota, base):
             _pinta_nota_envuelta(ws, row, texto, 3, _ANCHO_HOJA_BALANCE)
@@ -4906,6 +4947,688 @@ def _bloque_empresa(
         _pinta_nota_envuelta(ws, row, pie, 3, _ANCHO_HOJA_BALANCE)
         row += 1
     return row
+
+
+# ===== BALANCE EN PESOS (18-oct-2026, API 0.0.93) =====
+# Pedido del cliente: «En los balances (balance general y por avión) debe
+# venir todo en pesos porque casi siempre se les transfiere a los socios en
+# pesos mexicanos, y que los dólares solo sean informativos pero no los que
+# llamen primero la atención.» Con la bandera `balance_en_pesos` (raíz del
+# libro individual y del general) la hoja 'balance' pinta la MISMA cascada en
+# PESOS REALES —los `*_mxn` que calcula el API con lo que el libro ya tiene
+# en pesos— como lo principal (columna B) y los dólares a la derecha como
+# INFORMATIVOS (columna C; en los socios, D), en gris, cursiva y letra más
+# chica. Aquí no se convierte NADA: un `*_mxn` en None se pinta «—» con una
+# nota (jamás un 0 ni un USD × T.C.). Fórmulas: la misma cascada, citando en
+# el libro individual las celdas TOTAL MXN de cada hoja (las que suman
+# `monto_mxn`); si no reproducen al API, `xlsx_formulas` las vuelve valor.
+# Sin la bandera, nada de esta sección se usa: libro byte a byte.
+
+# Columna USD informativa: gris claro, cursiva, letra 9.
+_USD_INFO_COLOR = "94A3B8"
+_USD_INFO_FONT = {"size": 9, "italic": True, "color": _USD_INFO_COLOR}
+_ENCABEZADO_USD_INFO = "USD (informativo)"
+_ENCABEZADO_PESOS = "PESOS (MXN)"
+_SIN_PESOS = "—"
+# Anchos de la hoja 'balance' en pesos (A etiqueta, B pesos, C USD de la
+# cascada / MONTO MXN de los socios, D USD de los socios).
+_ANCHOS_BALANCE_PESOS = [56, 18, 17, 16]
+_ANCHO_HOJA_BALANCE_PESOS = sum(_ANCHOS_BALANCE_PESOS)
+# Caracteres en MAYÚSCULAS que caben en la columna A (ancho 56).
+_ANCHO_ETIQUETA_BALANCE_PESOS = 48
+_PERIODO_PESOS = "(en pesos MXN; los dólares solo informativos)"
+
+# Rótulos de la cascada en pesos.
+_FILA_ANTES_PESOS = "UTILIDAD ANTES DE GASTOS (MXN)"
+_FILA_COMBUSTIBLE_PESOS = "(−) COMBUSTIBLE DEL MES (MXN)"
+_FILA_INDIRECTOS_PESOS = "(−) GASTOS INDIRECTOS (MXN)"
+_FILA_REFACCIONES_PESOS = "(−) REFACCIONES (INVENTARIO) (MXN)"
+_FILA_PERMISOS_PESOS = "(−) PERMISOS (MXN)"
+_FILA_OTROS_INGRESOS_PESOS = "(+) OTROS INGRESOS (MXN)"
+_FILA_DESPUES_PESOS = "UTILIDAD DESPUÉS DE GASTOS (MXN)"
+_FILA_POR_COBRAR_PESOS = "(−) PENDIENTE DE PAGO (COBRANZA PENDIENTE) (MXN)"
+_FILA_COBRADA_PESOS = "UTILIDAD COBRADA (MXN)"
+# Las dos previas de la cascada del GENERAL (con comisiones del API).
+_FILA_ANTES_COMISIONES_PESOS = "UTILIDAD ANTES DE GASTOS, ANTES DE COMISIONES (MXN)"
+_FILA_COMISIONES_PESOS = "(−) COMISIONES BANCO + VENDEDOR (MXN)"
+_TITULO_SOCIOS_PESOS = "Reparto a socios (utilidad COBRADA en pesos × % vigente)"
+_ENCABEZADOS_SOCIOS_PESOS = ["SOCIO", "PORCENTAJE", "MONTO MXN"]
+
+# Notas de las celdas en pesos.
+_NOTA_SIN_PESOS = (
+    "Sin cifra en pesos: a alguna partida de esta línea le falta su monto en "
+    "pesos (por ejemplo, un gasto o ingreso en dólares sin tipo de cambio). "
+    "Revisa su hoja; la cifra en dólares de la derecha es solo informativa."
+)
+_NOTA_SIN_PESOS_DERIVADA = (
+    "Sin cifra en pesos: falta la cifra en pesos de alguna línea de arriba, "
+    "así que esta no se puede calcular."
+)
+_NOTA_SIN_PESOS_SOCIO = (
+    "Sin cifra en pesos: la UTILIDAD COBRADA en pesos no se pudo calcular "
+    "(ver la cascada de arriba)."
+)
+_NOTA_CASCADA_ANTES_COMISIONES_PESOS = (
+    "Utilidad en pesos de los vuelos del avión ANTES de comisiones = UTILIDAD "
+    "ANTES DE GASTOS (MXN) + COMISIONES (MXN): la hoja de vuelos de este libro "
+    "va antes de comisiones."
+)
+_NOTA_CASCADA_COMISIONES_PESOS = (
+    "Comisiones que absorbe el avión, en pesos: la suma de las COMISIONES MXN "
+    "que restaron sus vuelos (columna COMISIONES de su libro individual). La "
+    "cifra en dólares de la derecha es la del reparto a socios, solo "
+    "informativa."
+)
+_NOTA_CASCADA_OTROS_INGRESOS_PESOS = (
+    "Otros ingresos asignados a este avión (registrados en Ingresos), en "
+    "pesos: la suma del NETO MXN de sus filas (monto menos la comisión "
+    "bancaria; un ingreso en dólares, a su tipo de cambio)."
+)
+# Pie de la hoja: qué son los pesos y qué es la columna USD.
+_NOTA_BALANCE_PESOS = (
+    "Cifras en pesos (MXN): cada línea suma lo que el libro ya tiene en pesos "
+    "—la venta del avión al tipo de cambio de su cotización y los gastos en "
+    "pesos tal cual (los de dólares, a su tipo de cambio)—; no es la cifra en "
+    "dólares convertida con un tipo de cambio único. El reparto a socios "
+    "es la utilidad COBRADA en pesos × el % de cada socio. La columna «USD "
+    "(informativo)» es la misma cascada en dólares, solo de referencia."
+)
+_NOTA_EMPRESA_INGRESOS_PESOS = (
+    "Suma de la columna INGRESO MXN de la hoja 'otros movimientos' (en pesos, "
+    "tal cual)"
+)
+_NOTA_EMPRESA_EGRESOS_PESOS = (
+    "Suma de la columna EGRESO MXN de la hoja 'otros movimientos' (en pesos, "
+    "tal cual)"
+)
+_NOTA_EMPRESA_OTROS_PESOS = "TOTAL MXN de la hoja 'otros gastos'"
+_NOTA_EMPRESA_TIENDA_PESOS = "utilidad en pesos de la hoja 'inventario'"
+_PREFIJO_NOTA_EMPRESA_USD = "Columna USD (informativa): "
+
+
+def _etiqueta_pesos(etiqueta: str) -> str:
+    """La etiqueta del bloque VUELATOUR en dólares, en pesos:
+    «… INGRESOS PROPIOS USD (TUAs…)» ⇒ «… INGRESOS PROPIOS MXN (TUAs…)» y
+    «… USD» al final ⇒ «… (MXN)»."""
+    if " USD (" in etiqueta:
+        return etiqueta.replace(" USD (", " MXN (", 1)
+    if etiqueta.endswith(" USD"):
+        return etiqueta[: -len(" USD")] + " (MXN)"
+    return etiqueta
+
+
+def _suma_estricta(a: float | None, b: float | None) -> float | None:
+    """Suma de dos montos en pesos que YA manda el API (solo para mostrarlos
+    juntos): cualquiera en None ⇒ None. En pesos un None significa «a la
+    hoja le falta un monto en pesos» (no «API viejo»): sumar solo el otro
+    inventaría una cifra incompleta."""
+    if a is None or b is None:
+        return None
+    return round(a + b, 2)
+
+
+def _encabezado_info(ws: Worksheet, row: int, col: int) -> None:
+    """Encabezado de la columna USD informativa: gris, cursiva, sin el azul de
+    los encabezados principales (no debe llamar primero la atención)."""
+    c = ws.cell(row=row, column=col, value=_ENCABEZADO_USD_INFO)
+    c.font = Font(italic=True, size=9, color="64748B")
+    c.fill = PatternFill("solid", fgColor="F1F5F9")
+    c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    c.border = _border
+
+
+def _etiqueta_fila_pesos(
+    ws: Worksheet, row: int, texto: str, *, bold: bool = False, detalle: bool = False
+) -> None:
+    c = ws.cell(row=row, column=1, value=texto)
+    c.font = Font(bold=bold, italic=detalle, color=NAVY if bold else MUTED)
+    c.border = _border
+    lineas = math.ceil(len(texto) / _ANCHO_ETIQUETA_BALANCE_PESOS)
+    if lineas > 1:
+        c.alignment = Alignment(wrap_text=True, vertical="center")
+        ws.row_dimensions[row].height = 15 * lineas + 1
+
+
+def _celda_pesos(
+    ws: Worksheet,
+    row: int,
+    col: int,
+    formula: str | None,
+    valor: float | None,
+    *,
+    nota_sin: str | None,
+    bold: bool = False,
+    italic: bool = False,
+    color: str | None = None,
+):
+    """Celda PRINCIPAL en pesos: la fórmula (verificada) con el número del
+    API, o «—» con `nota_sin` cuando el API no manda pesos (jamás un 0).
+    `nota_sin` None = un None que NO es «faltan pesos» (la tienda sin hoja
+    'inventario': el API la cuenta como 0) ⇒ celda vacía, como en dólares."""
+    if valor is None and nota_sin is None:
+        c = _formula(ws, row, col, None, None, MONEY)
+        c.border = _border
+        return c
+    if valor is None:
+        c = ws.cell(row=row, column=col, value=_SIN_PESOS)
+        c.font = Font(bold=bold, italic=italic, color=MUTED)
+        c.alignment = Alignment(horizontal="right")
+        c.comment = _comentario_cobro(nota_sin)
+        c.border = _border
+        return c
+    c = _formula(
+        ws,
+        row,
+        col,
+        formula,
+        valor,
+        MONEY,
+        bold=bold,
+        italic=italic,
+        color=color or ("000000" if bold else MUTED),
+    )
+    c.border = _border
+    return c
+
+
+def _celda_usd_info(ws: Worksheet, row: int, col: int, formula: str | None, valor: float | None):
+    """Celda USD INFORMATIVA (gris, cursiva, letra 9). None ⇒ vacía, como en
+    el balance en dólares de siempre."""
+    c = _formula(ws, row, col, formula, valor, MONEY, **_USD_INFO_FONT)
+    c.border = _border
+    return c
+
+
+def _nota_otros_en_indirectos_pesos(otros_mxn: float, general: bool) -> Comment:
+    """Nota de «(−) GASTOS INDIRECTOS (MXN)» cuando parte del monto es
+    reparto manual (`otros_mxn` ≠ 0): cuánto, en pesos, y dónde está."""
+    monto = f"-${abs(otros_mxn):,.2f}" if otros_mxn < 0 else f"${otros_mxn:,.2f}"
+    texto = (
+        f"Incluye {monto} MXN repartidos a mano a este avión (detalle en la "
+        "hoja repartidos a aviones)."
+        if general
+        else f"Incluye {monto} MXN de gastos administrativos repartidos a "
+        "mano (filas reparto manual de la hoja Gastos Indirectos)."
+    )
+    return _nota_celda(texto)
+
+
+def _refs_balance_individual_mxn(
+    maestra: _Maestra, con_refacciones: bool, con_otros_ingresos: bool = False
+) -> dict[str, str]:
+    """Celdas que la cascada EN PESOS del libro INDIVIDUAL cita: GANANCIA MXN
+    y POR COBRAR MXN de la fila TOTALES de la hoja maestra y el TOTAL MXN
+    (A5) de las hojas combustible / Gastos Indirectos / refacciones /
+    permisos / Otros ingresos — los mismos números que el API suma en pesos
+    (`utilidad_antes_mxn` = Σ ganancia MXN; cada hoja, su total MXN)."""
+    refs = {
+        "antes": maestra.total("ganancia_mxn"),
+        "combustible": _ref_hoja("combustible", "$A$5"),
+        "indirectos": _ref_hoja("Gastos Indirectos", "$A$5"),
+        "permisos": _ref_hoja("permisos", "$A$5"),
+        "por_cobrar": maestra.total("por_cobrar_mxn"),
+    }
+    if con_refacciones:
+        refs["refacciones"] = _ref_hoja("refacciones", "$A$5")
+    if con_otros_ingresos:
+        refs["otros_ingresos_avion"] = _ref_hoja("Otros ingresos", "$A$5")
+    return {clave: ref for clave, ref in refs.items() if ref is not None}
+
+
+# Una línea de la cascada en pesos: (clave, rótulo, pesos, dólares,
+# negritas, derivada —una fórmula de líneas de arriba—).
+_FilaCascadaPesos = tuple[str, str, float | None, float | None, bool, bool]
+
+
+def _bloque_balance_pesos(
+    ws: Worksheet,
+    req: BalanceAvionRequest,
+    row: int,
+    *,
+    general: bool = False,
+    refs_mxn: dict[str, str] | None = None,
+    refs_usd: dict[str, str] | None = None,
+    celdas_empresa: list[_CeldaSocioEmpresa] | None = None,
+) -> int:
+    """La cascada y el reparto a socios de UN avión EN PESOS (gemelo de
+    `_bloque_balance`): columna B = pesos (lo principal), C = dólares
+    informativos; socios A nombre · B % · C MONTO MXN · D USD informativo.
+    Mismas filas y mismo orden que la cascada en dólares (con las dos
+    previas de comisiones en el GENERAL y la línea de otros ingresos con la
+    hoja); mismas fórmulas en las dos columnas (B en pesos, C en dólares).
+    `celdas_empresa` acumula la celda MONTO MXN (y la USD) de cada socio
+    `es_empresa`: el bloque VUELATOUR en pesos la cita. Devuelve la
+    siguiente fila libre."""
+    b = req.balance
+    refs_mxn = refs_mxn or {}
+    refs_usd = refs_usd or {}
+    _header_row(ws, row, ["CONCEPTO", _ENCABEZADO_PESOS])
+    _encabezado_info(ws, row, 3)
+    row += 1
+    fila_ini = row
+    con_oi = req.otros_ingresos_avion is not None
+    con_previas = general and _cascada_con_comisiones(b)
+    n_previas = 2 if con_previas else 0
+    k = fila_ini + n_previas
+    if con_oi:
+        fila_despues, fila_cobrada = k + 6, k + 8
+    else:
+        fila_despues, fila_cobrada = k + 5, k + 7
+
+    def formulas(letra: str) -> dict[str, str]:
+        if con_oi:
+            despues = (
+                f"ROUND({letra}{k}-{letra}{k + 1}-{letra}{k + 2}-{letra}{k + 3}"
+                f"-{letra}{k + 4}+{letra}{k + 5},2)"
+            )
+        else:
+            despues = (
+                f"ROUND({letra}{k}-{letra}{k + 1}-{letra}{k + 2}-{letra}{k + 3}"
+                f"-{letra}{k + 4},2)"
+            )
+        cobrada = f"ROUND({letra}{fila_despues}-{letra}{fila_despues + 1},2)"
+        propias = {"despues": despues, "cobrada": cobrada}
+        if con_previas:
+            propias["antes"] = f"ROUND({letra}{fila_ini}-{letra}{fila_ini + 1},2)"
+        return propias
+
+    propias_mxn, propias_usd = formulas("B"), formulas("C")
+    def fila(clave, label, mxn, usd, *, bold=False, derivada=False) -> _FilaCascadaPesos:
+        return (clave, label, mxn, usd, bold, derivada)
+
+    filas: list[_FilaCascadaPesos] = []
+    if con_previas:
+        filas += [
+            fila(
+                "antes_comisiones",
+                _FILA_ANTES_COMISIONES_PESOS,
+                b.utilidad_antes_comisiones_mxn,
+                b.utilidad_antes_comisiones_usd,
+            ),
+            fila("comisiones", _FILA_COMISIONES_PESOS, b.comisiones_mxn, b.comisiones_usd),
+        ]
+    filas.append(
+        fila(
+            "antes",
+            _FILA_ANTES_PESOS,
+            b.utilidad_antes_mxn,
+            b.utilidad_antes_usd,
+            derivada=con_previas,
+        )
+    )
+    filas.append(fila("combustible", _FILA_COMBUSTIBLE_PESOS, b.combustible_mxn, b.combustible_usd))
+    filas.append(
+        fila(
+            "indirectos",
+            _FILA_INDIRECTOS_PESOS,
+            _suma_estricta(b.gastos_indirectos_mxn, b.otros_mxn),
+            _suma_none(b.gastos_indirectos_usd, b.otros_usd),
+        )
+    )
+    filas.append(
+        fila("refacciones", _FILA_REFACCIONES_PESOS, b.refacciones_mxn, b.refacciones_usd)
+    )
+    filas.append(fila("permisos", _FILA_PERMISOS_PESOS, b.permisos_mxn, b.permisos_usd))
+    if con_oi:
+        filas.append(
+            fila(
+                "otros_ingresos_avion",
+                _FILA_OTROS_INGRESOS_PESOS,
+                b.otros_ingresos_avion_mxn,
+                b.otros_ingresos_avion_usd,
+            )
+        )
+    filas += [
+        fila(
+            "despues",
+            _FILA_DESPUES_PESOS,
+            b.utilidad_despues_mxn,
+            b.utilidad_despues_usd,
+            bold=True,
+            derivada=True,
+        ),
+        fila("por_cobrar", _FILA_POR_COBRAR_PESOS, b.por_cobrar_mxn, b.por_cobrar_usd),
+        fila(
+            "cobrada",
+            _FILA_COBRADA_PESOS,
+            b.utilidad_cobrada_mxn,
+            b.utilidad_cobrada_usd,
+            bold=True,
+            derivada=True,
+        ),
+    ]
+    notas_mxn = {
+        "antes_comisiones": _NOTA_CASCADA_ANTES_COMISIONES_PESOS,
+        "comisiones": _NOTA_CASCADA_COMISIONES_PESOS,
+        "otros_ingresos_avion": _NOTA_CASCADA_OTROS_INGRESOS_PESOS,
+    }
+    for clave, label, mxn, usd, bold, derivada in filas:
+        _etiqueta_fila_pesos(ws, row, label, bold=bold)
+        color = None
+        if clave == "cobrada" and mxn is not None:
+            color = GREEN if mxn >= 0 else RED
+        cell = _celda_pesos(
+            ws,
+            row,
+            2,
+            propias_mxn.get(clave, refs_mxn.get(clave)),
+            mxn,
+            nota_sin=_NOTA_SIN_PESOS_DERIVADA if derivada else _NOTA_SIN_PESOS,
+            bold=bold,
+            color=color,
+        )
+        if mxn is not None:
+            if clave in ("antes_comisiones", "antes", "despues", "cobrada"):
+                _rojo_si_negativo(ws, cell.coordinate)
+            if clave == "indirectos" and b.otros_mxn:
+                cell.comment = _nota_otros_en_indirectos_pesos(b.otros_mxn, general)
+            if clave in notas_mxn:
+                cell.comment = _comentario_cobro(notas_mxn[clave])
+        _celda_usd_info(ws, row, 3, propias_usd.get(clave, refs_usd.get(clave)), usd)
+        row += 1
+
+    row += 1
+    _title(ws, _TITULO_SOCIOS_PESOS, row, 4, size=11)
+    row += 1
+    _header_row(ws, row, _ENCABEZADOS_SOCIOS_PESOS)
+    _encabezado_info(ws, row, 4)
+    row += 1
+    if b.socios:
+        for s in b.socios:
+            ws.cell(row=row, column=1, value=s.nombre).border = _border
+            pc = _num(ws, row, 2, s.porcentaje, '0.00"%"')
+            pc.border = _border
+            mc = _celda_pesos(
+                ws,
+                row,
+                3,
+                f"ROUND(B{row}/100*$B${fila_cobrada},2)",
+                s.monto_mxn,
+                nota_sin=_NOTA_SIN_PESOS_SOCIO,
+                bold=True,
+                color="000000",
+            )
+            if s.monto_mxn is not None:
+                _rojo_si_negativo(ws, mc.coordinate)
+            uc = _celda_usd_info(ws, row, 4, f"ROUND(B{row}/100*$C${fila_cobrada},2)", s.monto_usd)
+            if celdas_empresa is not None and s.es_empresa:
+                celdas_empresa.append(
+                    _CeldaSocioEmpresa(
+                        req.matricula or "—",
+                        s.porcentaje,
+                        mc.coordinate,
+                        s.monto_usd,
+                        celda_usd=uc.coordinate,
+                        monto_mxn=s.monto_mxn,
+                    )
+                )
+            row += 1
+    else:
+        ws.cell(
+            row=row, column=1, value="Sin socios configurados para este avión (ver pendientes)."
+        ).font = Font(color=RED, italic=True)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
+        row += 1
+    return row
+
+
+def _hoja_balance_pesos(
+    ws: Worksheet,
+    req: BalanceAvionRequest,
+    refs_usd: dict[str, str] | None,
+    refs_mxn: dict[str, str] | None,
+) -> None:
+    """Hoja 'balance' del libro INDIVIDUAL en pesos (bandera
+    `balance_en_pesos`)."""
+    _title(ws, f"Balance — {req.matricula}".strip(" —"), 1, 4)
+    periodo = (
+        f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'} {_PERIODO_PESOS}"
+    )
+    ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
+    row = _bloque_balance_pesos(ws, req, 4, refs_mxn=refs_mxn, refs_usd=refs_usd)
+    _pinta_nota_envuelta(ws, row + 1, _NOTA_BALANCE_PESOS, 4, _ANCHO_HOJA_BALANCE_PESOS)
+    for i, w in enumerate(_ANCHOS_BALANCE_PESOS, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+
+def _bloque_empresa_pesos(
+    ws: Worksheet,
+    emp: BalanceEmpresaBloque,
+    row: int,
+    celdas: list[_CeldaSocioEmpresa],
+    regla_vigente: str | None = None,
+    *,
+    cubre_avion: bool = False,
+    sin_provision: bool = False,
+    solo_gasto_real: bool = False,
+    afac_en_filas: bool = False,
+    afac_por_vuelo: bool = False,
+) -> int:
+    """Bloque «VUELATOUR (empresa)» del GENERAL en pesos (gemelo de
+    `_bloque_empresa`): B = pesos (los `*_mxn` del API), C = dólares
+    informativos. PARTICIPACIÓN = ROUND(SUM(celdas MONTO MXN de los socios
+    `es_empresa`), 2); OTROS GASTOS = TOTAL MXN de 'otros gastos' (A5);
+    RESULTADO = ROUND(part + ingresos − egresos − otros + tienda, 2) en las
+    dos columnas. Pie: la `nota_pesos` del API, la `nota` de siempre
+    (explica la columna USD) y la base de 'otros movimientos'."""
+    t = ws.cell(row=row, column=1, value=_EMPRESA_TITULO)
+    t.font = Font(bold=True, size=12, color="FFFFFF")
+    t.fill = PatternFill("solid", fgColor=NAVY)
+    row += 1
+    _header_row(ws, row, ["CONCEPTO", _ENCABEZADO_PESOS])
+    _encabezado_info(ws, row, 3)
+    row += 1
+
+    def montos(
+        r: int,
+        f_mxn: str | None,
+        mxn: float | None,
+        f_usd: str | None,
+        usd: float | None,
+        *,
+        bold: bool = False,
+        detalle: bool = False,
+        color: str | None = None,
+        nota: str | None = None,
+        nota_sin: str | None = _NOTA_SIN_PESOS,
+    ) -> None:
+        cell = _celda_pesos(
+            ws, r, 2, f_mxn, mxn, nota_sin=nota_sin, bold=bold, italic=detalle, color=color
+        )
+        if nota and mxn is not None:
+            cell.comment = _nota_celda(nota)
+        _celda_usd_info(ws, r, 3, f_usd, usd)
+
+    fila_part = row
+    _etiqueta_fila_pesos(ws, row, _etiqueta_pesos(_EMPRESA_PARTICIPACION))
+    if celdas:
+        refs_mxn = ",".join(c.celda for c in celdas)
+        refs_usd = ",".join(c.celda_usd for c in celdas if c.celda_usd)
+        montos(
+            row,
+            f"ROUND(SUM({refs_mxn}),2)",
+            emp.participacion_mxn,
+            f"ROUND(SUM({refs_usd}),2)" if refs_usd else None,
+            emp.participacion_usd,
+            nota_sin=_NOTA_SIN_PESOS_DERIVADA,
+        )
+    else:
+        montos(row, None, emp.participacion_mxn, None, emp.participacion_usd)
+    row += 1
+    if celdas:
+        for c in celdas:
+            _etiqueta_fila_pesos(
+                ws, row, f"   {c.matricula}{_pct_socio(c.porcentaje)}", detalle=True
+            )
+            montos(
+                row,
+                c.celda,
+                c.monto_mxn,
+                c.celda_usd,
+                c.monto_usd,
+                detalle=True,
+                nota_sin=_NOTA_SIN_PESOS_SOCIO,
+            )
+            row += 1
+    elif emp.participaciones:
+        for p in emp.participaciones:
+            _etiqueta_fila_pesos(
+                ws, row, f"   {p.matricula or '—'}{_pct_socio(p.porcentaje)}", detalle=True
+            )
+            montos(row, None, p.monto_mxn, None, p.monto_usd, detalle=True)
+            row += 1
+    else:
+        _etiqueta_fila_pesos(ws, row, _EMPRESA_SIN_PARTICIPACION, detalle=True)
+        ws.cell(row=row, column=2).border = _border
+        ws.cell(row=row, column=3).border = _border
+        row += 1
+
+    texto_ing, texto_pag = _etiquetas_empresa_propios(afac_en_filas, afac_por_vuelo)
+    fila_ing = row
+    _etiqueta_fila_pesos(ws, row, _etiqueta_pesos(texto_ing))
+    montos(
+        row,
+        None,
+        emp.ingresos_propios_mxn,
+        None,
+        emp.ingresos_propios_usd,
+        nota=_NOTA_EMPRESA_INGRESOS_PESOS,
+    )
+    row += 1
+
+    fila_pag = row
+    _etiqueta_fila_pesos(ws, row, _etiqueta_pesos(texto_pag))
+    montos(
+        row,
+        None,
+        emp.pagos_vendedor_mxn,
+        None,
+        emp.pagos_vendedor_usd,
+        nota=_NOTA_EMPRESA_EGRESOS_PESOS,
+    )
+    row += 1
+
+    fila_otros = row
+    _etiqueta_fila_pesos(ws, row, _etiqueta_pesos(_EMPRESA_OTROS))
+    hoja_otros = "otros gastos" in ws.parent.sheetnames
+    montos(
+        row,
+        _ref_hoja("otros gastos", "$A$5") if hoja_otros else None,
+        emp.otros_gastos_empresa_mxn,
+        _ref_hoja("otros gastos", "$C$5") if hoja_otros else None,
+        emp.otros_gastos_empresa_usd,
+        nota=_NOTA_EMPRESA_OTROS_PESOS,
+    )
+    row += 1
+
+    fila_tienda = row
+    _etiqueta_fila_pesos(ws, row, _etiqueta_pesos(_EMPRESA_TIENDA))
+    # Sin hoja 'inventario' el API manda la tienda en null y la cuenta como
+    # 0 en el RESULTADO: celda vacía (como en dólares), no «—».
+    montos(
+        row,
+        None,
+        emp.tienda_utilidad_mxn,
+        None,
+        emp.tienda_utilidad_usd,
+        nota=_NOTA_EMPRESA_TIENDA_PESOS,
+        nota_sin=None,
+    )
+    row += 1
+
+    _etiqueta_fila_pesos(ws, row, _etiqueta_pesos(_EMPRESA_RESULTADO), bold=True)
+    res = emp.resultado_mxn
+
+    def resultado(letra: str) -> str:
+        return (
+            f"ROUND({letra}{fila_part}+{letra}{fila_ing}-{letra}{fila_pag}"
+            f"-{letra}{fila_otros}+{letra}{fila_tienda},2)"
+        )
+
+    montos(
+        row,
+        resultado("B"),
+        res,
+        resultado("C"),
+        emp.resultado_usd,
+        bold=True,
+        color=None if res is None else (GREEN if res >= 0 else RED),
+        nota_sin=_NOTA_SIN_PESOS_DERIVADA,
+    )
+    if res is not None:
+        _rojo_si_negativo(ws, f"B{row}")
+    row += 2
+
+    base = _base_nota_empresa(
+        regla_vigente,
+        cubre_avion=cubre_avion,
+        sin_provision=sin_provision,
+        solo_gasto_real=solo_gasto_real,
+        afac_en_filas=afac_en_filas,
+        afac_por_vuelo=afac_por_vuelo,
+    )
+    textos: list[str] = []
+    if emp.nota_pesos:
+        textos.append(emp.nota_pesos)
+    if emp.nota:
+        textos += [_PREFIJO_NOTA_EMPRESA_USD + emp.nota, base]
+    else:
+        textos.append(_NOTA_BLOQUE_EMPRESA.replace(_NOTA_EMPRESA_BASE, base))
+    for texto in textos:
+        _pinta_nota_envuelta(ws, row, texto, 4, _ANCHO_HOJA_BALANCE_PESOS)
+        row += 1
+    return row
+
+
+def _hoja_balance_general_pesos(
+    ws: Worksheet,
+    req: BalanceGeneralRequest,
+    cons: BalanceAvionRequest,
+    regla_vigente: str | None,
+    *,
+    cubre_avion: bool,
+) -> None:
+    """Hoja 'balance' del GENERAL en pesos (bandera RAÍZ `balance_en_pesos`):
+    un bloque por avión con su cascada en pesos (dólares informativos) y,
+    hasta el final, el bloque VUELATOUR (empresa) en pesos. Mismo orden y
+    mismos títulos teñidos que la hoja de siempre."""
+    _title(ws, "Balance por avión — Balance general VuelaTour", 1, 4)
+    ws.cell(
+        row=2,
+        column=1,
+        value=f"Periodo: {req.periodo_desde or '—'} a "
+        f"{req.periodo_hasta or '—'} {_PERIODO_PESOS} · los socios son POR avión",
+    ).font = Font(italic=True, size=10, color=MUTED)
+    row = 4
+    celdas_empresa: list[_CeldaSocioEmpresa] = []
+    for avion in req.aviones:
+        tc = ws.cell(row=row, column=1, value=avion.matricula or "—")
+        tc.font = Font(bold=True, size=12, color=NAVY)
+        swatch = _hex(avion.avion_color)
+        if swatch:
+            tc.fill = PatternFill("solid", fgColor=swatch)
+        row = (
+            _bloque_balance_pesos(
+                ws, avion, row + 1, general=True, celdas_empresa=celdas_empresa
+            )
+            + 2
+        )
+    if req.empresa is not None:
+        row = _bloque_empresa_pesos(
+            ws,
+            req.empresa,
+            row,
+            celdas_empresa,
+            regla_vigente,
+            cubre_avion=cubre_avion,
+            sin_provision=_sin_provision_vendedor(cons.otros_movimientos),
+            solo_gasto_real=_solo_gasto_real_om(cons.otros_movimientos),
+            afac_en_filas=_afac_en_filas(cons.otros_movimientos),
+            afac_por_vuelo=_afac_por_vuelo(cons.otros_movimientos),
+        )
+    _pinta_nota_envuelta(ws, row, _NOTA_BALANCE_PESOS, 4, _ANCHO_HOJA_BALANCE_PESOS)
+    for i, w in enumerate(_ANCHOS_BALANCE_PESOS, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
 
 
 def _hoja_pendientes(ws: Worksheet, req: BalanceAvionRequest) -> None:
@@ -5785,6 +6508,15 @@ def construir_balance_avion(req: BalanceAvionRequest) -> Workbook:
         wb.create_sheet("balance"),
         req,
         refs=_refs_balance_individual(maestra, req.refacciones is not None, con_otros_ingresos),
+        # Balance EN PESOS (18-oct-2026): la cascada en pesos cita el TOTAL
+        # MXN de cada hoja. Sin la bandera, nada.
+        refs_mxn=(
+            _refs_balance_individual_mxn(
+                maestra, req.refacciones is not None, con_otros_ingresos
+            )
+            if req.balance_en_pesos
+            else None
+        ),
     )
     _hoja_pendientes(wb.create_sheet("pendientes de captura"), req)
 
@@ -6891,56 +7623,64 @@ def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
                 nota=_NOTA_REFACCIONES_GENERAL,
                 maestra=maestra,
             )
-        # Hoja balance: un BLOQUE por avión (título teñido con su color).
-        ws_b = wb.create_sheet("balance")
-        _title(ws_b, "Balance por avión — Balance general VuelaTour", 1, 3)
-        ws_b.cell(
-            row=2,
-            column=1,
-            value=f"Periodo: {req.periodo_desde or '—'} a "
-            f"{req.periodo_hasta or '—'} (todo en USD) · los socios son POR avión",
-        ).font = Font(italic=True, size=10, color=MUTED)
-        row = 4
-        # Celdas MONTO USD de los socios `es_empresa` de cada bloque: las cita
-        # el bloque «VUELATOUR (empresa)» del final (6-oct-2026).
-        celdas_empresa: list[_CeldaSocioEmpresa] = []
-        for avion in req.aviones:
-            tc = ws_b.cell(row=row, column=1, value=avion.matricula or "—")
-            tc.font = Font(bold=True, size=12, color=NAVY)
-            # Solo la celda de la matrícula lleva el color (como su libro).
-            swatch = _hex(avion.avion_color)
-            if swatch:
-                tc.fill = PatternFill("solid", fgColor=swatch)
-            # Con el API 0.0.66 la cascada abre antes de comisiones y las
-            # resta en una línea (`_cascada_con_comisiones`, 7-oct-2026).
-            row = (
-                _bloque_balance(
-                    ws_b,
-                    avion,
-                    row + 1,
-                    general=True,
-                    celdas_empresa=celdas_empresa,
-                    regla=_regla_del_general(req),
+        # Balance EN PESOS (18-oct-2026, API 0.0.93): con la bandera RAÍZ la
+        # hoja 'balance' va en pesos (dólares informativos); sin ella, la de
+        # siempre, byte a byte.
+        if req.balance_en_pesos:
+            _hoja_balance_general_pesos(
+                wb.create_sheet("balance"), req, cons, regla_vigente, cubre_avion=cubre_avion
+            )
+        else:
+            # Hoja balance: un BLOQUE por avión (título teñido con su color).
+            ws_b = wb.create_sheet("balance")
+            _title(ws_b, "Balance por avión — Balance general VuelaTour", 1, 3)
+            ws_b.cell(
+                row=2,
+                column=1,
+                value=f"Periodo: {req.periodo_desde or '—'} a "
+                f"{req.periodo_hasta or '—'} (todo en USD) · los socios son POR avión",
+            ).font = Font(italic=True, size=10, color=MUTED)
+            row = 4
+            # Celdas MONTO USD de los socios `es_empresa` de cada bloque: las cita
+            # el bloque «VUELATOUR (empresa)» del final (6-oct-2026).
+            celdas_empresa: list[_CeldaSocioEmpresa] = []
+            for avion in req.aviones:
+                tc = ws_b.cell(row=row, column=1, value=avion.matricula or "—")
+                tc.font = Font(bold=True, size=12, color=NAVY)
+                # Solo la celda de la matrícula lleva el color (como su libro).
+                swatch = _hex(avion.avion_color)
+                if swatch:
+                    tc.fill = PatternFill("solid", fgColor=swatch)
+                # Con el API 0.0.66 la cascada abre antes de comisiones y las
+                # resta en una línea (`_cascada_con_comisiones`, 7-oct-2026).
+                row = (
+                    _bloque_balance(
+                        ws_b,
+                        avion,
+                        row + 1,
+                        general=True,
+                        celdas_empresa=celdas_empresa,
+                        regla=_regla_del_general(req),
+                    )
+                    + 2
                 )
-                + 2
-            )
-        # Balance de la EMPRESA hasta el final (6-oct-2026): solo con el API
-        # 0.0.59+; sin `empresa` el libro es byte-idéntico al de antes.
-        if req.empresa is not None:
-            _bloque_empresa(
-                ws_b,
-                req.empresa,
-                row,
-                celdas_empresa,
-                regla_vigente,
-                cubre_avion=cubre_avion,
-                sin_provision=_sin_provision_vendedor(cons.otros_movimientos),
-                solo_gasto_real=_solo_gasto_real_om(cons.otros_movimientos),
-                afac_en_filas=_afac_en_filas(cons.otros_movimientos),
-                afac_por_vuelo=_afac_por_vuelo(cons.otros_movimientos),
-            )
-        for i, w in enumerate([46, 14, 16], start=1):
-            ws_b.column_dimensions[get_column_letter(i)].width = w
+            # Balance de la EMPRESA hasta el final (6-oct-2026): solo con el API
+            # 0.0.59+; sin `empresa` el libro es byte-idéntico al de antes.
+            if req.empresa is not None:
+                _bloque_empresa(
+                    ws_b,
+                    req.empresa,
+                    row,
+                    celdas_empresa,
+                    regla_vigente,
+                    cubre_avion=cubre_avion,
+                    sin_provision=_sin_provision_vendedor(cons.otros_movimientos),
+                    solo_gasto_real=_solo_gasto_real_om(cons.otros_movimientos),
+                    afac_en_filas=_afac_en_filas(cons.otros_movimientos),
+                    afac_por_vuelo=_afac_por_vuelo(cons.otros_movimientos),
+                )
+            for i, w in enumerate([46, 14, 16], start=1):
+                ws_b.column_dimensions[get_column_letter(i)].width = w
 
         _hoja_pendientes(wb.create_sheet("pendientes de captura"), cons)
 

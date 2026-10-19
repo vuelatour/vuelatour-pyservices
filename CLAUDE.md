@@ -1981,6 +1981,95 @@ Reglas de este microservicio (FastAPI, Python 3.12).
     seguro. Tests: sección 8 de `tests/test_cierre_mes.py` (helpers,
     esquemas liberales, línea del libro por motivo, títulos, bloque del
     balance, Libro Dinero, PDF y Excel del reparto).
+- **Balances y reparto en pesos (18-oct-2026, API 0.0.93).** Pedido del
+  cliente: «En los balances (balance general y por avión) debe venir todo en
+  pesos porque casi siempre se les transfiere a los socios en pesos
+  mexicanos, y que los dólares solo sean informativos pero no los que llamen
+  primero la atención». **Los pesos los calcula el API** (cálculo NATIVO en
+  MXN, no USD × T.C.); aquí solo se PINTAN y **jamás se convierte un USD a
+  pesos**: un `*_mxn` en null se pinta «—» con nota, nunca 0 ni un cálculo
+  desde dólares. Regla única: **con la bandera, MXN principal y USD
+  informativo; sin la bandera, byte a byte**.
+  - **Banderas** (`bandera_liberal` de `schemas/reportes.py`: SOLO un `true`
+    JSON enciende; texto, 1 o null ⇒ False, jamás un 422):
+    `BalanceAvionRequest.balance_en_pesos` (libro individual),
+    `BalanceGeneralRequest.balance_en_pesos` (RAÍZ del general: es la que
+    decide el layout; la de cada `aviones[]` no basta) y
+    `RepartoPdfRequest.reparto_en_pesos`. Llaves ADITIVAS (todas `float |
+    None = None`): cascada `BalanceAvionBalanceBloque.*_mxn`
+    (`utilidad_antes`, `combustible`, `gastos_indirectos`, `refacciones`,
+    `otros`, `permisos`, `otros_ingresos_avion`, `utilidad_despues`,
+    `por_cobrar`, `utilidad_cobrada`, `comisiones`,
+    `utilidad_antes_comisiones`), `BalanceAvionSocio.monto_mxn`, bloque
+    VUELATOUR `BalanceEmpresaBloque.{participacion, ingresos_propios,
+    pagos_vendedor, otros_gastos_empresa, tienda_utilidad, resultado}_mxn` +
+    `nota_pesos` (texto del API, se pinta tal cual) y
+    `BalanceEmpresaParticipacion.monto_mxn`; reparto `RepartoAvion.*_mxn`
+    (`ingresos_cobrado`, `comisiones_venta`, `pendiente_cobro`,
+    `gastos_directos`, `gastos_indirectos`, `permisos`, `otros`,
+    `reserva_overhaul`, `otros_ingresos_avion`, `saldo`), `pesos_sin_tc_usd`,
+    `reserva_tc`, `RepartoSocioLinea.monto_mxn`,
+    `RepartoVueloLinea.{cobrado,pendiente}_mxn`, `RepartoOtroIngresoLinea.mxn`
+    y `RepartoGastoCategoriaLinea.mxn` (este último no está en el contrato
+    del 18-oct: si el API lo manda, el detalle por categoría gana columna
+    MXN).
+  - **Hoja 'balance'** (`_hoja_balance_pesos` / `_hoja_balance_general_pesos`
+    con `_bloque_balance_pesos` y `_bloque_empresa_pesos`; SOLO esa hoja
+    cambia): encabezado «CONCEPTO | PESOS (MXN) | USD (informativo)», la
+    cascada con rótulos MXN (`_FILA_*_PESOS`: «UTILIDAD ANTES DE GASTOS
+    (MXN)» … «UTILIDAD COBRADA (MXN)»; en el general, con comisiones, «UTILIDAD
+    ANTES DE GASTOS, ANTES DE COMISIONES (MXN)» y «(−) COMISIONES BANCO +
+    VENDEDOR (MXN)»), columna B en pesos y C con los MISMOS números USD de
+    siempre en gris cursiva 9 pt (`_USD_INFO_FONT`, `94A3B8`). **Las fórmulas
+    de B citan los TOTAL MXN**: en el individual UTILIDAD ANTES =
+    `maestra.total("ganancia_mxn")`, cada resta `'<hoja>'!$A$5`, pendiente =
+    `maestra.total("por_cobrar_mxn")`, DESPUÉS/COBRADA = `ROUND(…,2)` de la
+    columna; en el general las líneas van como valor (igual que la cascada
+    USD) y DESPUÉS/COBRADA (y ANTES, tras las comisiones) como fórmula. Socios
+    «Reparto a socios (utilidad COBRADA en pesos × % vigente)»: SOCIO |
+    PORCENTAJE | MONTO MXN (`ROUND(B/100*$B$<cobrada>,2)`) | USD
+    (informativo). Bloque VUELATOUR: mismas filas con rótulo MXN
+    (`_etiqueta_pesos`), PARTICIPACIÓN = Σ de las celdas MONTO MXN de los
+    socios empresa, OTROS GASTOS = `'otros gastos'!$A$5`, RESULTADO con
+    fórmula en las dos columnas; tienda null = sin inventario (celda vacía,
+    el API la cuenta 0); pie = `nota_pesos` + «Columna USD (informativa): »
+    + la nota de siempre. Todo por `_formula`/`finalizar`: lo que no
+    reproduce el centavo del API vuelve a valor. La vista en pantalla
+    (`libro_json`) hereda la hoja sola.
+  - **Reparto PDF** (`_tabla_resumen_pesos`, `_bloque_avion_pesos`,
+    `_resumen_socios_pesos`): leyenda «Cifras en pesos (MXN); dólares solo
+    informativos» en la portada, resumen con la fila MXN grande y la USD
+    chica gris, cascada «Pesos (MXN) | USD (informativo)», reserva
+    «(-) Reserva overhaul (al T.C. 17.25)» (`reserva_tc` con `_tc_txt`),
+    reparto «Socio | % | Monto MXN | USD (inf.)», vuelos con «Cobrado avión
+    MXN»/«Pendiente avión MXN» + USD, resumen por socio «Total a recibir
+    (MXN)» y pie `_PIE_FIN_PESOS`. Con `pesos_sin_tc_usd > 0`, AVISO en rojo
+    tras la cascada: `aviso_pesos_sin_tc` = «$X USD no se pudieron pasar a
+    pesos (sin tipo de cambio): el saldo en pesos está incompleto.». Lo que
+    solo existe en dólares (otros ingresos de VuelaTour, deuda del cliente,
+    sección «Cierre del mes») va rotulado USD.
+  - **Reparto Excel** (`_render_reparto_xlsx_pesos`): tabla principal con
+    `encabezados_pesos` («Venta del avión cobrada (MXN)» … «Saldo
+    disponible (MXN)»; la reserva con comentario del T.C.) y fila TOTAL que
+    solo re-suma (con un «—» en la columna, el total también es «—»); avisos
+    en rojo («AVISO <matrícula>: …»); debajo la tabla gris «Las mismas
+    cifras en dólares (informativo)»; «Reparto por socio (en pesos)» con
+    «Monto MXN» + «Monto USD (informativo)»; detalle de vuelos con «Cobrado
+    avión MXN» / «Pendiente avión MXN» + USD informativo; «Cierre del mes»
+    sin cambio.
+  - **Sin la bandera (ausente/null/false/no-`true`), BYTE A BYTE**: huellas
+    del HEAD 3b893f1 sobre `tests/_pesos_payloads.py` (individual, las dos
+    variantes del general, reparto PDF por flujos y XLSX por miembros) y
+    captura de las 777 salidas de render de toda la suite antes/después:
+    cero diferencias. Ojo: openpyxl numera los estilos de todo el libro, así
+    que con la bandera el XML de las demás hojas cambia de índices sin
+    cambiar de contenido (los tests comparan contenido).
+  - Skew: pyservices nuevo + API ≤ 0.0.92 ⇒ sin bandera, todo igual; API
+    0.0.93 + pyservices previo ⇒ `extra="ignore"` y salen los documentos
+    en USD de siempre. Orden de deploy: **pyservices ⇒ API 0.0.93 ⇒
+    panel**. Tests: `tests/test_balance_en_pesos.py` y
+    `tests/test_reparto_en_pesos.py` (payloads en `tests/_pesos_payloads.py`,
+    espejo de la aritmética del API).
 
 ## Conciliación
 

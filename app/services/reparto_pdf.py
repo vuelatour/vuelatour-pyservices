@@ -29,6 +29,7 @@ from app.schemas.reparto import (
     RepartoVueloLinea,
 )
 from app.services import cierre_mes
+from app.services._formato import _tc_txt
 from app.services.reparto_comisiones import (
     ETIQUETA_FILA,
     LINEA_COMISION_VENDEDOR,
@@ -119,13 +120,15 @@ def _pct(factor: float | None) -> str:
     return "—" if factor is None else f"{round(factor * 100, 2):g} %"
 
 
-def _desglose_txt(d: RepartoOtrosIngresosDesglose | None) -> str | None:
+def _desglose_txt(d: RepartoOtrosIngresosDesglose | None, moneda: str = "") -> str | None:
     """'TUAs $100.00 · comisión del vendedor $1,000.00 · IVA $176.00' con la
-    composición COTIZADA de otros ingresos VuelaTour; None si no hay nada."""
+    composición COTIZADA de otros ingresos VuelaTour; None si no hay nada.
+    `moneda` (reparto EN PESOS, 18-oct-2026): « USD» tras cada monto, para
+    que un dólar no se lea como peso; sin él, el texto de siempre."""
     if d is None:
         return None
     partes = [
-        f"{label} {_usd(val)}"
+        f"{label} {_usd(val)}{moneda}"
         for label, val in (
             ("TUAs", d.tuas_usd),
             ("extras", d.extras_usd),
@@ -155,6 +158,11 @@ _PIE_COMISION_VENDEDOR = (
     "(detalle en 'otros movimientos' del Balance general)."
 )
 _PIE_FIN = " Montos en USD. Vuela Tour · Aero Charter Cancún."
+# Reparto EN PESOS (18-oct-2026, bandera `reparto_en_pesos`): el pie lo dice.
+_PIE_FIN_PESOS = (
+    " Montos en pesos (MXN); las cifras en dólares (USD) son solo informativas."
+    " Vuela Tour · Aero Charter Cancún."
+)
 # Línea gris bajo «Otros ingresos VuelaTour» cuando el avión NO absorbe
 # comisiones (la de siempre; con comisiones, `linea_comision_vendedor(req)`:
 # «su provisión…» o, con el API 0.0.74, «pago «(avión)» resta…»).
@@ -167,12 +175,13 @@ def _pie(req: RepartoPdfRequest) -> str:
     """Pie del PDF. Con comisiones a cargo del avión (regla de septiembre
     2026) la frase «el pago de la comisión al vendedor sale de VuelaTour, no
     del avión» ya no es verdad: dice qué absorbe el avión y dónde resta."""
+    fin = _PIE_FIN_PESOS if req.reparto_en_pesos else _PIE_FIN
     if not comisiones_al_avion(req):
-        return _PIE_INICIO + _PIE_COMISION_VENDEDOR + _PIE_FIN
+        return _PIE_INICIO + _PIE_COMISION_VENDEDOR + fin
     return (
         f"{_PIE_INICIO}. {frase_regla(req)}: restan antes del saldo en "
         f"{ETIQUETA_FILA} (detalle en 'otros movimientos' del Balance "
-        f"general).{_PIE_FIN}"
+        f"general).{fin}"
     )
 
 
@@ -210,7 +219,7 @@ def _nota_otros_ingresos(req: RepartoPdfRequest, desglose_txt: str) -> str:
 _ANCHO_FOLIO_PT = 60 * mm - 12
 
 
-def _folio_vuelo(v: RepartoVueloLinea) -> str:
+def _folio_vuelo(v: RepartoVueloLinea, ancho_pt: float | None = None) -> str:
     """'#105 · 50 % (CUN-MID)' cuando el vuelo fue MULTI-AVIÓN (regla B,
     28-ago-2026: la venta del avión se repartió por tramo); '#105' si no.
     Helvetica no dibuja '→' (sale una caja): se sustituye por '-'. Con la
@@ -224,7 +233,7 @@ def _folio_vuelo(v: RepartoVueloLinea) -> str:
             texto += f" ({v.tramos_avion.replace('→', '-')})"
     if v.cierre_marca:
         renglones = simpleSplit(
-            v.cierre_marca.replace("→", "-"), "Helvetica", 7.5, _ANCHO_FOLIO_PT
+            v.cierre_marca.replace("→", "-"), "Helvetica", 7.5, ancho_pt or _ANCHO_FOLIO_PT
         )
         texto += "\n" + "\n".join(renglones)
     return texto
@@ -237,7 +246,7 @@ def _folio_vuelo(v: RepartoVueloLinea) -> str:
 # `pendientes_que_pasarian`), ya con montos; aquí solo se imprimen: al final
 # de cada avión sus vuelos y, en la portada, el sello del cierre. Sin `cierre`
 # el PDF es el de siempre (flujos de contenido idénticos).
-def _linea_vuelo_cierre(v: RepartoCierreVuelo) -> str:
+def _linea_vuelo_cierre(v: RepartoCierreVuelo, dinero=_usd) -> str:
     """«#316 Mike Nelson $2,076.40 (cobrado $0.00, por cobrar $2,076.40)» —
     las partes que no vienen se omiten; '→' no se dibuja en Helvetica. Va
     dentro de un Paragraph: el texto del API se ESCAPA (un «&» o «<» en el
@@ -248,14 +257,14 @@ def _linea_vuelo_cierre(v: RepartoCierreVuelo) -> str:
     if v.cliente:
         partes.append(v.cliente)
     if v.venta_usd is not None:
-        partes.append(_usd(v.venta_usd))
+        partes.append(dinero(v.venta_usd))
     detalle = cierre_mes.detalle_cobro(
         v,
         cobrado=v.cobrado_usd,
         por_cobrar=v.por_cobrar_usd,
         despues=v.cobrado_posterior_usd,
         fecha_despues=v.fecha_cobro_posterior,
-        dinero=_usd,
+        dinero=dinero,
     )
     texto = " ".join(partes)
     if detalle:
@@ -264,7 +273,7 @@ def _linea_vuelo_cierre(v: RepartoCierreVuelo) -> str:
 
 
 def _parrafos_cierre_avion(
-    cierre: RepartoCierre | None, matricula: str | None, estilo: ParagraphStyle
+    cierre: RepartoCierre | None, matricula: str | None, estilo: ParagraphStyle, dinero=_usd
 ) -> list[Paragraph]:
     """Las líneas del cierre que tocan a ESTE avión (por `matricula`), una por
     lista con vuelos; `matricula` None ⇒ las que no son de ningún avión del
@@ -277,7 +286,7 @@ def _parrafos_cierre_avion(
         if not items:
             continue
         titulo = cierre_mes.titulo_lista_reparto(plantilla, items, mes_attr)
-        lineas = " · ".join(_linea_vuelo_cierre(v) for v in items)
+        lineas = " · ".join(_linea_vuelo_cierre(v, dinero) for v in items)
         parrafos.append(Paragraph(f"<b>{titulo}:</b> {lineas}", estilo))
     return parrafos
 
@@ -414,6 +423,7 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
                 Paragraph(
                     f"Periodo: {req.periodo_desde} a {req.periodo_hasta}<br/>"
                     f"Generado: {req.generado} (hora de Cancún, UTC−5)"
+                    + (f"<br/>{LEYENDA_PESOS}" if req.reparto_en_pesos else "")
                     + (f"<br/><b>{escape(sello_cierre)}</b>" if sello_cierre else ""),
                     s_meta,
                 ),
@@ -435,84 +445,97 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
     story.append(Spacer(1, 5 * mm))
 
     # ---- Resumen global ----
-    total_ingresos = sum(a.ingresos_cobrado_usd for a in req.aviones)
-    total_saldo = sum(a.saldo_usd for a in req.aviones)
-    # comisiones_venta_usd: 0 desde el 28-ago-2026 (regla A) y, desde la
-    # regla de septiembre 2026 (API 0.0.65), las comisiones que absorbe cada
-    # avión (banco + lo del vendedor: su provisión hasta el API 0.0.73, el
-    # pago «Comisión del vendedor (avión)» desde el 0.0.74): restan antes del
-    # saldo, así que «Gastos del periodo» las incluye y venta − gastos =
-    # saldo.
-    total_gastos = sum(
-        _gastos_avion(a) + a.comisiones_venta_usd for a in req.aviones
-    )
-    # Otros ingresos de VuelaTour (TUAs/extras/pernocta cobrados): solo
-    # informativo, FUERA del saldo y del reparto. Viene del API; si un API
-    # viejo no manda el global, se re-suman los por avión solo para mostrar.
-    total_otros = req.otros_ingresos_vuelatour_total_usd or sum(
-        a.otros_ingresos_vuelatour_usd for a in req.aviones
-    )
-    # Otros ingresos ASIGNADOS a los aviones (13-oct-2026, API 0.0.75): ya
-    # van dentro de cada `saldo_usd`; con ellos el resumen gana su columna
-    # para que venta + otros ingresos de aviones − gastos = saldo. Sin ellos
-    # (0), las 4 columnas de siempre, byte a byte.
-    total_oi = sum(a.otros_ingresos_avion_usd for a in req.aviones)
-    if total_oi:
-        resumen = Table(
-            [
-                list(ENCABEZADOS_RESUMEN_CON_OTROS_INGRESOS),
-                [
-                    _usd(total_ingresos),
-                    _usd(total_oi),
-                    _usd(total_otros),
-                    _usd(total_gastos),
-                    _usd(total_saldo),
-                ],
-            ],
-            colWidths=[34 * mm] * 5,
-        )
-        gris_otros = 2
+    # Reparto EN PESOS (18-oct-2026, API 0.0.93): con la bandera, el
+    # resumen en pesos con los dólares debajo como informativos; sin
+    # ella, el de siempre (flujos idénticos).
+    if req.reparto_en_pesos:
+        story.append(_tabla_resumen_pesos(req))
     else:
-        resumen = Table(
-            [
-                [
-                    "Venta del avión cobrada",
-                    "Otros ingresos VuelaTour",
-                    "Gastos del periodo",
-                    "Saldo a repartir",
-                ],
-                [_usd(total_ingresos), _usd(total_otros), _usd(total_gastos), _usd(total_saldo)],
-            ],
-            colWidths=[42.5 * mm, 42.5 * mm, 42.5 * mm, 42.5 * mm],
+        total_ingresos = sum(a.ingresos_cobrado_usd for a in req.aviones)
+        total_saldo = sum(a.saldo_usd for a in req.aviones)
+        # comisiones_venta_usd: 0 desde el 28-ago-2026 (regla A) y, desde la
+        # regla de septiembre 2026 (API 0.0.65), las comisiones que absorbe cada
+        # avión (banco + lo del vendedor: su provisión hasta el API 0.0.73, el
+        # pago «Comisión del vendedor (avión)» desde el 0.0.74): restan antes del
+        # saldo, así que «Gastos del periodo» las incluye y venta − gastos =
+        # saldo.
+        total_gastos = sum(
+            _gastos_avion(a) + a.comisiones_venta_usd for a in req.aviones
         )
-        gris_otros = 1
-    estilo_resumen: list = [
-        ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
-        ("TEXTCOLOR", (0, 0), (-1, 0), MUTED),
-        ("FONTSIZE", (0, 0), (-1, 0), 8),
-        ("FONTSIZE", (0, 1), (-1, 1), 13),
-        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
-        ("TEXTCOLOR", (0, 1), (-1, 1), BRAND),
-        # Otros ingresos VuelaTour: informativo (gris), no se reparte.
-        ("TEXTCOLOR", (gris_otros, 1), (gris_otros, 1), MUTED),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ("BOX", (0, 0), (-1, -1), 0.5, LIGHT),
-        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.white),
-    ]
-    if total_oi:
-        # 5 columnas de 34 mm: los encabezados de 8 pt («Otros ingresos de
-        # aviones» mide 93 pt) caben con menos relleno lateral.
-        estilo_resumen += [
-            ("LEFTPADDING", (0, 0), (-1, -1), 2),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+        # Otros ingresos de VuelaTour (TUAs/extras/pernocta cobrados): solo
+        # informativo, FUERA del saldo y del reparto. Viene del API; si un API
+        # viejo no manda el global, se re-suman los por avión solo para mostrar.
+        total_otros = req.otros_ingresos_vuelatour_total_usd or sum(
+            a.otros_ingresos_vuelatour_usd for a in req.aviones
+        )
+        # Otros ingresos ASIGNADOS a los aviones (13-oct-2026, API 0.0.75): ya
+        # van dentro de cada `saldo_usd`; con ellos el resumen gana su columna
+        # para que venta + otros ingresos de aviones − gastos = saldo. Sin ellos
+        # (0), las 4 columnas de siempre, byte a byte.
+        total_oi = sum(a.otros_ingresos_avion_usd for a in req.aviones)
+        if total_oi:
+            resumen = Table(
+                [
+                    list(ENCABEZADOS_RESUMEN_CON_OTROS_INGRESOS),
+                    [
+                        _usd(total_ingresos),
+                        _usd(total_oi),
+                        _usd(total_otros),
+                        _usd(total_gastos),
+                        _usd(total_saldo),
+                    ],
+                ],
+                colWidths=[34 * mm] * 5,
+            )
+            gris_otros = 2
+        else:
+            resumen = Table(
+                [
+                    [
+                        "Venta del avión cobrada",
+                        "Otros ingresos VuelaTour",
+                        "Gastos del periodo",
+                        "Saldo a repartir",
+                    ],
+                    [
+                        _usd(total_ingresos),
+                        _usd(total_otros),
+                        _usd(total_gastos),
+                        _usd(total_saldo),
+                    ],
+                ],
+                colWidths=[42.5 * mm, 42.5 * mm, 42.5 * mm, 42.5 * mm],
+            )
+            gris_otros = 1
+        estilo_resumen: list = [
+            ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
+            ("TEXTCOLOR", (0, 0), (-1, 0), MUTED),
+            ("FONTSIZE", (0, 0), (-1, 0), 8),
+            ("FONTSIZE", (0, 1), (-1, 1), 13),
+            ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+            ("TEXTCOLOR", (0, 1), (-1, 1), BRAND),
+            # Otros ingresos VuelaTour: informativo (gris), no se reparte.
+            ("TEXTCOLOR", (gris_otros, 1), (gris_otros, 1), MUTED),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("BOX", (0, 0), (-1, -1), 0.5, LIGHT),
+            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.white),
         ]
-    resumen.setStyle(TableStyle(estilo_resumen))
-    story.append(resumen)
+        if total_oi:
+            # 5 columnas de 34 mm: los encabezados de 8 pt («Otros ingresos de
+            # aviones» mide 93 pt) caben con menos relleno lateral.
+            estilo_resumen += [
+                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+            ]
+        resumen.setStyle(TableStyle(estilo_resumen))
+        story.append(resumen)
     # Composición cotizada de "Otros ingresos VuelaTour" (regla A: incluye la
     # comisión del vendedor) — solo si el API manda el desglose.
-    desglose_txt = _desglose_txt(req.otros_ingresos_vuelatour_desglose)
+    desglose_txt = _desglose_txt(
+        req.otros_ingresos_vuelatour_desglose, " USD" if req.reparto_en_pesos else ""
+    )
     if desglose_txt:
         story.append(Spacer(1, 2 * mm))
         story.append(Paragraph(_nota_otros_ingresos(req, desglose_txt), s_sub))
@@ -534,14 +557,26 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
         story.append(Paragraph("Sin aeronaves en el periodo.", s_sub))
 
     for avion in req.aviones:
-        story.append(
-            _bloque_avion(
-                avion,
-                s_avion,
-                linea_comision=linea_comision_vendedor(req),
-                cierre=_parrafos_cierre_avion(req.cierre, avion.matricula, s_cierre),
+        if req.reparto_en_pesos:
+            story.append(
+                _bloque_avion_pesos(
+                    avion,
+                    s_avion,
+                    linea_comision=linea_comision_vendedor(req),
+                    cierre=_parrafos_cierre_avion(
+                        req.cierre, avion.matricula, s_cierre, dinero=_usd_texto
+                    ),
+                )
             )
-        )
+        else:
+            story.append(
+                _bloque_avion(
+                    avion,
+                    s_avion,
+                    linea_comision=linea_comision_vendedor(req),
+                    cierre=_parrafos_cierre_avion(req.cierre, avion.matricula, s_cierre),
+                )
+            )
         story.append(Spacer(1, 6 * mm))
     # Vuelos del cierre cuya matrícula no tiene bloque arriba (externos o un
     # avión sin dinero en el periodo): no se pierden en silencio.
@@ -554,45 +589,55 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
         for matricula in fuera:
             if matricula:
                 bloque_fuera.append(Paragraph(f"<b>{escape(matricula)}</b>", s_sub))
-            bloque_fuera += _parrafos_cierre_avion(req.cierre, matricula, s_cierre)
+            bloque_fuera += _parrafos_cierre_avion(
+                req.cierre,
+                matricula,
+                s_cierre,
+                dinero=_usd_texto if req.reparto_en_pesos else _usd,
+            )
         story.append(KeepTogether(bloque_fuera))
         story.append(Spacer(1, 6 * mm))
 
     # ---- Resumen por socio ----
-    por_socio: dict[str, float] = {}
-    for avion in req.aviones:
-        for linea in avion.reparto:
-            por_socio[linea.socio_nombre] = (
-                por_socio.get(linea.socio_nombre, 0.0) + linea.monto_usd
+    # Reparto EN PESOS (18-oct-2026): lo que se transfiere en pesos a
+    # cada socio, con los dólares a un lado como informativos.
+    if req.reparto_en_pesos:
+        story += _resumen_socios_pesos(req, s_seccion)
+    else:
+        por_socio: dict[str, float] = {}
+        for avion in req.aviones:
+            for linea in avion.reparto:
+                por_socio[linea.socio_nombre] = (
+                    por_socio.get(linea.socio_nombre, 0.0) + linea.monto_usd
+                )
+        if por_socio:
+            story.append(_regla())
+            story.append(Spacer(1, 3 * mm))
+            story.append(Paragraph("Resumen por socio", s_seccion))
+            story.append(Spacer(1, 2 * mm))
+            filas = [["Socio", "Total a recibir"]]
+            for nombre, monto in sorted(
+                por_socio.items(), key=lambda kv: kv[1], reverse=True
+            ):
+                filas.append([nombre, _usd(monto)])
+            tabla = Table(filas, colWidths=[120 * mm, 50 * mm])
+            tabla.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), BRAND),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 9),
+                        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                        ("TOPPADDING", (0, 0), (-1, -1), 5),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
+                    ]
+                )
             )
-    if por_socio:
-        story.append(_regla())
-        story.append(Spacer(1, 3 * mm))
-        story.append(Paragraph("Resumen por socio", s_seccion))
-        story.append(Spacer(1, 2 * mm))
-        filas = [["Socio", "Total a recibir"]]
-        for nombre, monto in sorted(
-            por_socio.items(), key=lambda kv: kv[1], reverse=True
-        ):
-            filas.append([nombre, _usd(monto)])
-        tabla = Table(filas, colWidths=[120 * mm, 50 * mm])
-        tabla.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), BRAND),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
-                    ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-                    ("TOPPADDING", (0, 0), (-1, -1), 5),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
-                ]
-            )
-        )
-        story.append(tabla)
+            story.append(tabla)
 
     story.append(Spacer(1, 10 * mm))
     story.append(_regla())
@@ -829,6 +874,565 @@ def _bloque_avion(
         bloque.append(parrafo)
 
     return KeepTogether(bloque)
+
+
+# ===== REPARTO EN PESOS (18-oct-2026, API 0.0.93) =====
+# Pedido del cliente: «… debe venir todo en pesos porque casi siempre se les
+# transfiere a los socios en pesos mexicanos, y que los dólares solo sean
+# informativos pero no los que llamen primero la atención.» Con la bandera
+# `reparto_en_pesos` la cascada de cada avión, el saldo, el reparto por socio,
+# los vuelos y los otros ingresos van en PESOS (los `*_mxn` que calcula el
+# API) y los dólares en una columna gris, cursiva y más chica. Aquí no se
+# convierte NADA: un `*_mxn` que no llega se imprime «—». Los montos que solo
+# existen en dólares (otros ingresos VuelaTour, deuda total, cierre) dicen
+# «USD» para que nadie los lea como pesos. Sin la bandera, nada de esto se
+# usa (flujos del PDF idénticos).
+
+LEYENDA_PESOS = "Cifras en pesos (MXN); dólares solo informativos"
+ENCABEZADO_PESOS = "Pesos (MXN)"
+ENCABEZADO_USD_INFO = "USD (informativo)"
+# Columna USD informativa: gris claro y cursiva.
+GRIS_INFO = colors.HexColor("#94A3B8")
+ROJO_AVISO = colors.HexColor("#b91c1c")
+# Anchos de la cascada en pesos: etiqueta · pesos · USD informativo (170 mm).
+_COLS_CASCADA_PESOS = [112 * mm, 32 * mm, 26 * mm]
+_ANCHO_ETIQUETA_PESOS_PT = 112 * mm - 12
+# Detalle de vuelos en pesos: el folio y el cliente se recortan a su celda.
+_COLS_VUELOS_PESOS = [44 * mm, 40 * mm, 24 * mm, 24 * mm, 19 * mm, 19 * mm]
+_ANCHO_FOLIO_PESOS_PT = 44 * mm - 12
+_ANCHO_CLIENTE_PESOS_PT = 40 * mm - 12
+LINEA_OTROS_INGRESOS_SIN_TC_PESOS = (
+    "Otros ingresos del avión en MXN sin tipo de cambio (fuera del saldo en USD)"
+)
+
+
+def aviso_pesos_sin_tc(usd: float) -> str:
+    """Aviso del avión con dólares que no llegaron a pesos (texto del
+    contrato, sin el «AVISO:» que agrega quien lo pinta)."""
+    return (
+        f"{_usd(usd)} USD no se pudieron pasar a pesos (sin tipo de cambio): "
+        "el saldo en pesos está incompleto."
+    )
+
+
+def _usd_texto(value: float) -> str:
+    """Dólares dentro de un TEXTO del reparto en pesos: «$1,234.56 USD»."""
+    return f"{_usd(value)} USD"
+
+
+def _dinero(value: float | None) -> str:
+    """Pesos de una celda principal: «$1,234.56» o «—» si el API no lo
+    mandó (jamás un 0 inventado)."""
+    return "—" if value is None else _usd(value)
+
+
+def _dinero_neg(value: float | None) -> str:
+    """Una deducción de la cascada en pesos, con signo como la de dólares."""
+    return "—" if value is None else _usd(-value)
+
+
+def _suma_pesos(valores: list[float | None]) -> float | None:
+    """Re-suma de una columna en pesos para MOSTRAR (lo único permitido aquí);
+    un None ⇒ None (una suma incompleta no se imprime)."""
+    if any(v is None for v in valores):
+        return None
+    return round(sum(v for v in valores if v is not None), 2)
+
+
+def _gastos_avion_pesos(a: RepartoAvion) -> float | None:
+    """Gastos del periodo del avión EN PESOS (+ comisiones), para el resumen."""
+    return _suma_pesos(
+        [
+            a.gastos_directos_mxn,
+            a.gastos_indirectos_mxn,
+            a.permisos_mxn,
+            a.otros_mxn,
+            a.reserva_overhaul_mxn,
+            a.comisiones_venta_mxn if a.comisiones_venta_usd or a.comisiones_venta_mxn else 0.0,
+        ]
+    )
+
+
+def _tabla_resumen_pesos(req: RepartoPdfRequest) -> Table:
+    """Resumen global en pesos (fila grande) con los dólares debajo
+    (renglón chico y gris). «Otros ingresos VuelaTour» solo existe en
+    dólares: se imprime chico, con «USD»."""
+    aviones = req.aviones
+    total_ingresos = _suma_pesos([a.ingresos_cobrado_mxn for a in aviones])
+    total_saldo = _suma_pesos([a.saldo_mxn for a in aviones])
+    total_gastos = _suma_pesos([_gastos_avion_pesos(a) for a in aviones])
+    total_otros = req.otros_ingresos_vuelatour_total_usd or sum(
+        a.otros_ingresos_vuelatour_usd for a in aviones
+    )
+    usd_ingresos = sum(a.ingresos_cobrado_usd for a in aviones)
+    usd_saldo = sum(a.saldo_usd for a in aviones)
+    usd_gastos = sum(_gastos_avion(a) + a.comisiones_venta_usd for a in aviones)
+    con_oi = any(a.otros_ingresos_avion_usd or a.otros_ingresos_avion_mxn for a in aviones)
+    if con_oi:
+        total_oi = _suma_pesos([a.otros_ingresos_avion_mxn or 0.0 for a in aviones])
+        usd_oi = sum(a.otros_ingresos_avion_usd for a in aviones)
+        filas = [
+            list(ENCABEZADOS_RESUMEN_CON_OTROS_INGRESOS),
+            [
+                _dinero(total_ingresos),
+                _dinero(total_oi),
+                _usd_texto(total_otros),
+                _dinero(total_gastos),
+                _dinero(total_saldo),
+            ],
+            [
+                _usd_texto(usd_ingresos),
+                _usd_texto(usd_oi),
+                "",
+                _usd_texto(usd_gastos),
+                _usd_texto(usd_saldo),
+            ],
+        ]
+        anchos, col_vt = [34 * mm] * 5, 2
+    else:
+        filas = [
+            [
+                "Venta del avión cobrada",
+                "Otros ingresos VuelaTour",
+                "Gastos del periodo",
+                "Saldo a repartir",
+            ],
+            [
+                _dinero(total_ingresos),
+                _usd_texto(total_otros),
+                _dinero(total_gastos),
+                _dinero(total_saldo),
+            ],
+            [_usd_texto(usd_ingresos), "", _usd_texto(usd_gastos), _usd_texto(usd_saldo)],
+        ]
+        anchos, col_vt = [42.5 * mm] * 4, 1
+    tabla = Table(filas, colWidths=anchos)
+    estilo: list = [
+        ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
+        ("TEXTCOLOR", (0, 0), (-1, 0), MUTED),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("FONTSIZE", (0, 1), (-1, 1), 13),
+        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+        ("TEXTCOLOR", (0, 1), (-1, 1), BRAND),
+        # Otros ingresos VuelaTour: informativo y en dólares (chico, gris).
+        ("TEXTCOLOR", (col_vt, 1), (col_vt, 1), MUTED),
+        ("FONTSIZE", (col_vt, 1), (col_vt, 1), 9),
+        ("FONTNAME", (col_vt, 1), (col_vt, 1), "Helvetica"),
+        # Renglón de dólares: informativo.
+        ("FONTSIZE", (0, 2), (-1, 2), 7.5),
+        ("FONTNAME", (0, 2), (-1, 2), "Helvetica-Oblique"),
+        ("TEXTCOLOR", (0, 2), (-1, 2), GRIS_INFO),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 2), (-1, 2), 0),
+        ("BOX", (0, 0), (-1, -1), 0.5, LIGHT),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.white),
+    ]
+    if con_oi:
+        estilo += [
+            ("LEFTPADDING", (0, 0), (-1, -1), 2),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+        ]
+    tabla.setStyle(TableStyle(estilo))
+    return tabla
+
+
+def _filas_otros_ingresos_avion_pesos(
+    avion: RepartoAvion,
+) -> tuple[list[list[str]], list[int]]:
+    """Gemelo de `_filas_otros_ingresos_avion` con tres columnas: la fila
+    (+) en pesos y dólares, el detalle por ingreso (pesos o «sin T.C.») y los
+    MXN sin tipo de cambio."""
+    filas: list[list[str]] = []
+    grises: list[int] = []
+    if avion.otros_ingresos_avion_usd or avion.otros_ingresos_avion_mxn:
+        filas.append(
+            [
+                FILA_OTROS_INGRESOS_AVION,
+                _dinero(avion.otros_ingresos_avion_mxn),
+                _usd(avion.otros_ingresos_avion_usd),
+            ]
+        )
+    lineas = avion.otros_ingresos_avion
+    for linea in lineas[:MAX_LINEAS_OTROS_INGRESOS]:
+        partes = [
+            x.strip() for x in (linea.clave, linea.categoria, linea.concepto) if x and x.strip()
+        ]
+        texto = "   " + " · ".join(partes).replace("→", "-")
+        grises.append(len(filas))
+        filas.append(
+            [
+                _recortar(texto, _ANCHO_ETIQUETA_PESOS_PT, *_FUENTE_GRIS),
+                _usd(linea.mxn) if linea.mxn is not None else "sin T.C.",
+                _usd(linea.usd) if linea.usd is not None else "sin T.C.",
+            ]
+        )
+    if len(lineas) > MAX_LINEAS_OTROS_INGRESOS:
+        grises.append(len(filas))
+        filas.append([f"   y {len(lineas) - MAX_LINEAS_OTROS_INGRESOS} más", "", ""])
+    if avion.otros_ingresos_avion_sin_tc_mxn:
+        grises.append(len(filas))
+        filas.append(
+            [
+                LINEA_OTROS_INGRESOS_SIN_TC_PESOS,
+                _usd(avion.otros_ingresos_avion_sin_tc_mxn),
+                "",
+            ]
+        )
+    return filas, grises
+
+
+def _etiqueta_reserva_pesos(avion: RepartoAvion) -> str:
+    """«(-) Reserva overhaul (al T.C. 17.25)»: el T.C. oficial del cierre con
+    que el API pasó la reserva a pesos; sin él, la etiqueta de siempre."""
+    if avion.reserva_tc:
+        return f"(-) Reserva overhaul (al T.C. {_tc_txt(avion.reserva_tc)})"
+    return "(-) Reserva overhaul"
+
+
+def _bloque_avion_pesos(
+    avion: RepartoAvion,
+    estilo_titulo: ParagraphStyle,
+    *,
+    linea_comision: str = LINEA_COMISION_VENDEDOR,
+    cierre: list[Paragraph] | None = None,
+) -> KeepTogether:
+    """Gemelo de `_bloque_avion` EN PESOS: cascada etiqueta · pesos · USD
+    informativo, el aviso de dólares sin pesos, vuelos con pesos y dólares,
+    gastos por categoría (con pesos si el API los manda) y el reparto por
+    socio en pesos."""
+    titulo = Paragraph(f"{avion.matricula} — {avion.modelo}", estilo_titulo)
+
+    filas: list[list[str]] = [
+        ["", ENCABEZADO_PESOS, ENCABEZADO_USD_INFO],
+        ["Horas voladas del periodo", f"{avion.horas_voladas_hr:.1f} hr", ""],
+        [
+            "Venta del avión cobrada",
+            _dinero(avion.ingresos_cobrado_mxn),
+            _usd(avion.ingresos_cobrado_usd),
+        ],
+    ]
+    info_rows: list[int] = []
+    if avion.otros_ingresos_vuelatour_usd:
+        info_rows.append(len(filas))
+        filas.append(
+            [
+                "Otros ingresos VuelaTour (TUAs/extras/pernocta/comisión vendedor)"
+                " — no se reparten",
+                "",
+                _usd(avion.otros_ingresos_vuelatour_usd),
+            ]
+        )
+    desg = avion.otros_ingresos_vuelatour_desglose
+    if desg is not None and desg.comision_usd:
+        info_rows.append(len(filas))
+        filas.append(
+            [
+                linea_comision
+                if absorbe_comisiones(avion)
+                else _LINEA_COMISION_VENDEDOR_VUELATOUR,
+                "",
+                _usd(desg.comision_usd),
+            ]
+        )
+    pendiente = avion.pendiente_cobro_usd or 0.0
+    bruto = avion.pendiente_bruto_usd or 0.0
+    if pendiente or bruto or avion.pendiente_cobro_mxn:
+        texto = "Pendiente de cobro (parte avión) — se reparte al cobrar"
+        if bruto > pendiente + 0.005:
+            texto = (
+                "Pendiente de cobro (parte avión) — deuda total del cliente "
+                f"{_usd_texto(bruto)}"
+            )
+        info_rows.append(len(filas))
+        filas.append([texto, _dinero(avion.pendiente_cobro_mxn), _usd(pendiente)])
+    filas_oi, grises_oi = _filas_otros_ingresos_avion_pesos(avion)
+    info_rows += [len(filas) + i for i in grises_oi]
+    filas += filas_oi
+    if avion.comisiones_venta_usd or avion.comisiones_venta_mxn:
+        filas.append(
+            [
+                ETIQUETA_FILA,
+                _dinero_neg(avion.comisiones_venta_mxn),
+                _usd(-avion.comisiones_venta_usd),
+            ]
+        )
+    filas += [
+        [
+            "(-) Gastos directos",
+            _dinero_neg(avion.gastos_directos_mxn),
+            _usd(-avion.gastos_directos_usd),
+        ],
+        [
+            "(-) Gastos indirectos",
+            _dinero_neg(avion.gastos_indirectos_mxn),
+            _usd(-avion.gastos_indirectos_usd),
+        ],
+        ["(-) Permisos", _dinero_neg(avion.permisos_mxn), _usd(-avion.permisos_usd)],
+        [
+            "(-) Fijos (prorrateo + reparto manual)",
+            _dinero_neg(avion.otros_mxn),
+            _usd(-avion.otros_usd),
+        ],
+        [
+            _etiqueta_reserva_pesos(avion),
+            _dinero_neg(avion.reserva_overhaul_mxn),
+            _usd(-avion.reserva_overhaul_usd),
+        ],
+        ["Saldo disponible", _dinero(avion.saldo_mxn), _usd(avion.saldo_usd)],
+    ]
+    cascada = Table(filas, colWidths=_COLS_CASCADA_PESOS)
+    estilo: list = [
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        # Encabezado de columnas: chico y gris.
+        ("FONTSIZE", (0, 0), (-1, 0), 7.5),
+        ("TEXTCOLOR", (0, 0), (-1, 0), MUTED),
+        ("FONTNAME", (1, 0), (1, 0), "Helvetica-Bold"),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.4, LIGHT),
+        ("FONTNAME", (0, 1), (1, 1), "Helvetica-Bold"),
+        # Columna de dólares: informativa (gris, cursiva, más chica).
+        ("TEXTCOLOR", (2, 1), (2, -1), GRIS_INFO),
+        ("FONTSIZE", (2, 1), (2, -1), 7.5),
+        ("FONTNAME", (2, 1), (2, -1), "Helvetica-Oblique"),
+        # Saldo: pesos en negritas y azul; los dólares siguen informativos.
+        ("LINEABOVE", (0, -1), (-1, -1), 0.6, MUTED),
+        ("FONTNAME", (0, -1), (1, -1), "Helvetica-Bold"),
+        ("TEXTCOLOR", (0, -1), (1, -1), BRAND),
+        ("BACKGROUND", (0, -1), (-1, -1), LIGHT),
+    ]
+    for info_idx in info_rows:
+        estilo += [
+            ("TEXTCOLOR", (0, info_idx), (1, info_idx), MUTED),
+            ("FONTSIZE", (0, info_idx), (-1, info_idx), 7.5),
+            ("FONTNAME", (0, info_idx), (-1, info_idx), "Helvetica-Oblique"),
+        ]
+    cascada.setStyle(TableStyle(estilo))
+
+    bloque: list = [titulo, Spacer(1, 2 * mm), cascada]
+
+    # Dólares que no llegaron a pesos: el saldo en pesos está incompleto. Va
+    # pegado a la cascada, en rojo: es lo primero que hay que ver.
+    if (avion.pesos_sin_tc_usd or 0) > 0:
+        estilo_rojo = ParagraphStyle(
+            "aviso_pesos", fontSize=8, textColor=ROJO_AVISO, leading=11
+        )
+        bloque.append(Spacer(1, 1 * mm))
+        bloque.append(
+            Paragraph(f"<b>AVISO: {aviso_pesos_sin_tc(avion.pesos_sin_tc_usd)}</b>", estilo_rojo)
+        )
+
+    if avion.vuelos:
+        vfilas = [
+            [
+                "Vuelo",
+                "Cliente",
+                "Cobrado avión\nMXN",
+                "Pendiente avión\nMXN",
+                "Cobrado\nUSD",
+                "Pendiente\nUSD",
+            ]
+        ]
+        for v in avion.vuelos:
+            vfilas.append(
+                [
+                    _folio_vuelo(v, _ANCHO_FOLIO_PESOS_PT),
+                    _recortar(v.cliente or "", _ANCHO_CLIENTE_PESOS_PT, "Helvetica", 7.5),
+                    _dinero(v.cobrado_mxn),
+                    _dinero(v.pendiente_mxn),
+                    _usd(v.cobrado_usd or 0.0),
+                    _usd(v.pendiente_usd or 0.0),
+                ]
+            )
+        vtabla = Table(vfilas, colWidths=_COLS_VUELOS_PESOS)
+        vtabla.setStyle(
+            TableStyle(
+                [
+                    ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+                    ("TEXTCOLOR", (0, 0), (-1, -1), MUTED),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("TEXTCOLOR", (4, 1), (5, -1), GRIS_INFO),
+                    ("FONTNAME", (4, 1), (5, -1), "Helvetica-Oblique"),
+                    ("FONTSIZE", (4, 0), (5, -1), 6.5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                    ("LINEBELOW", (0, 0), (-1, 0), 0.4, LIGHT),
+                ]
+            )
+        )
+        bloque.append(Spacer(1, 2 * mm))
+        bloque.append(vtabla)
+
+    if avion.gastos_por_categoria:
+        con_mxn = any(g.mxn is not None for g in avion.gastos_por_categoria)
+        if con_mxn:
+            gfilas = [["Categoría de gasto", "Grupo", "#", "MXN", "USD"]]
+            for g in avion.gastos_por_categoria:
+                gfilas.append(
+                    [
+                        g.etiqueta or g.categoria,
+                        _GRUPO_LABEL.get(g.grupo or "", g.grupo or ""),
+                        str(g.count),
+                        _dinero(g.mxn),
+                        _usd(g.usd),
+                    ]
+                )
+            gtabla = Table(gfilas, colWidths=[72 * mm, 30 * mm, 12 * mm, 32 * mm, 24 * mm])
+            extra = [
+                ("TEXTCOLOR", (4, 1), (4, -1), GRIS_INFO),
+                ("FONTNAME", (4, 1), (4, -1), "Helvetica-Oblique"),
+            ]
+        else:
+            gfilas = [["Categoría de gasto", "Grupo", "#", "USD"]]
+            gfilas += _filas_gastos_categoria(avion.gastos_por_categoria)
+            gtabla = Table(gfilas, colWidths=[85 * mm, 35 * mm, 15 * mm, 35 * mm])
+            extra = []
+        gtabla.setStyle(
+            TableStyle(
+                [
+                    ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+                    ("TEXTCOLOR", (0, 0), (-1, -1), MUTED),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                    ("LINEBELOW", (0, 0), (-1, 0), 0.4, LIGHT),
+                    *extra,
+                ]
+            )
+        )
+        bloque.append(Spacer(1, 2 * mm))
+        bloque.append(gtabla)
+
+    avisos = []
+    if avion.gastos_sin_tc_mxn > 0:
+        avisos.append(
+            f"Gastos MXN sin tipo de cambio por ${avion.gastos_sin_tc_mxn:,.2f} MXN: "
+            "excluidos de las cifras en USD."
+        )
+    if avion.cobros_sin_tc_mxn > 0:
+        avisos.append(
+            f"Cobros MXN sin tipo de cambio por ${avion.cobros_sin_tc_mxn:,.2f} MXN: "
+            "excluidos del ingreso en USD."
+        )
+    if avion.reserva_incompleta:
+        avisos.append("Sin tarifa de reserva de overhaul configurada pese a horas voladas.")
+    if avion.reparto and round(avion.reparto_porcentaje_total, 2) != 100:
+        avisos.append(
+            f"Los porcentajes de socios suman {avion.reparto_porcentaje_total:g}% (no 100%): "
+            "revisar vigencias en el catálogo de socios antes de dispersar."
+        )
+    if avisos:
+        aviso_style = ParagraphStyle(
+            "aviso", fontSize=7.5, textColor=colors.HexColor("#b45309"), leading=10
+        )
+        for a in avisos:
+            bloque.append(Spacer(1, 1 * mm))
+            bloque.append(Paragraph(f"AVISO: {a}", aviso_style))
+
+    nota_tc = _nota_tc_oficial(avion)
+    if nota_tc:
+        nota_style = ParagraphStyle("nota_tc", fontSize=7.5, textColor=MUTED, leading=10)
+        bloque.append(Spacer(1, 1 * mm))
+        bloque.append(Paragraph(f"Nota: {nota_tc}", nota_style))
+
+    if avion.reparto:
+        rfilas = [["Socio", "%", "Monto MXN", "USD (inf.)"]]
+        for linea in avion.reparto:
+            rfilas.append(
+                [
+                    linea.socio_nombre,
+                    f"{linea.porcentaje:g}%",
+                    _dinero(linea.monto_mxn),
+                    _usd(linea.monto_usd),
+                ]
+            )
+        rtabla = Table(rfilas, colWidths=[90 * mm, 22 * mm, 34 * mm, 24 * mm])
+        rtabla.setStyle(
+            TableStyle(
+                [
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), MUTED),
+                    ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                    ("FONTNAME", (2, 1), (2, -1), "Helvetica-Bold"),
+                    ("TEXTCOLOR", (3, 1), (3, -1), GRIS_INFO),
+                    ("FONTNAME", (3, 1), (3, -1), "Helvetica-Oblique"),
+                    ("FONTSIZE", (3, 1), (3, -1), 7),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                    ("LINEBELOW", (0, 0), (-1, 0), 0.4, LIGHT),
+                ]
+            )
+        )
+        bloque.append(Spacer(1, 2 * mm))
+        bloque.append(rtabla)
+
+    for parrafo in cierre or []:
+        bloque.append(Spacer(1, 1.5 * mm))
+        bloque.append(parrafo)
+
+    return KeepTogether(bloque)
+
+
+def _resumen_socios_pesos(req: RepartoPdfRequest, estilo_seccion: ParagraphStyle) -> list:
+    """«Resumen por socio» en pesos: lo que se le transfiere a cada socio
+    (Σ de sus `monto_mxn`; «—» si a alguna línea le faltan pesos) con los
+    dólares a un lado, informativos. Vacío sin reparto."""
+    pesos: dict[str, float | None] = {}
+    dolares: dict[str, float] = {}
+    for avion in req.aviones:
+        for linea in avion.reparto:
+            nombre = linea.socio_nombre
+            previo = pesos.get(nombre, 0.0)
+            pesos[nombre] = (
+                None
+                if previo is None or linea.monto_mxn is None
+                else previo + linea.monto_mxn
+            )
+            dolares[nombre] = dolares.get(nombre, 0.0) + linea.monto_usd
+    if not pesos:
+        return []
+    orden = sorted(
+        pesos,
+        key=lambda n: (pesos[n] if pesos[n] is not None else float("-inf"), dolares[n]),
+        reverse=True,
+    )
+    filas = [["Socio", "Total a recibir (MXN)", ENCABEZADO_USD_INFO]]
+    for nombre in orden:
+        filas.append([nombre, _dinero(pesos[nombre]), _usd(dolares[nombre])])
+    tabla = Table(filas, colWidths=[100 * mm, 40 * mm, 30 * mm])
+    tabla.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), BRAND),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("FONTNAME", (1, 1), (1, -1), "Helvetica-Bold"),
+                ("TEXTCOLOR", (2, 1), (2, -1), GRIS_INFO),
+                ("FONTNAME", (2, 1), (2, -1), "Helvetica-Oblique"),
+                ("FONTSIZE", (2, 1), (2, -1), 7.5),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
+            ]
+        )
+    )
+    return [
+        _regla(),
+        Spacer(1, 3 * mm),
+        Paragraph("Resumen por socio", estilo_seccion),
+        Spacer(1, 2 * mm),
+        tabla,
+    ]
 
 
 def _regla() -> Table:

@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.reportes import (
+    bandera_liberal,
     lista_cierre_liberal,
     numero_cierre_liberal,
     regla_comisiones_liberal,
@@ -16,6 +17,10 @@ class RepartoSocioLinea(BaseModel):
     socio_nombre: str
     porcentaje: float
     monto_usd: float
+    # ADITIVO (18-oct-2026, API 0.0.93; reparto EN PESOS): mismo reparto por
+    # porcentaje sobre el saldo en pesos (residuo en centavos lo decide el
+    # API). Solo se pinta con `reparto_en_pesos`; None = sin pesos.
+    monto_mxn: float | None = None
 
 
 class RepartoOtrosIngresosDesglose(BaseModel):
@@ -53,6 +58,11 @@ class RepartoVueloLinea(BaseModel):
     # Parte de la venta del avión cobrada / pendiente que toca a ESTE avión.
     cobrado_usd: float | None = None
     pendiente_usd: float | None = None
+    # ADITIVOS (18-oct-2026, API 0.0.93): lo mismo EN PESOS (venta del avión
+    # al T.C. de su cotización). None = sin T.C. ⇒ «—» (jamás se convierte
+    # aquí).
+    cobrado_mxn: float | None = None
+    pendiente_mxn: float | None = None
     participacion: float | None = None
     multi_avion: bool | None = None
     # Tramos de este avión en el vuelo (p. ej. "CUN→MID"); informativo.
@@ -198,6 +208,11 @@ class RepartoGastoCategoriaLinea(BaseModel):
     sin_tc_mxn: float = 0.0
     tc_oficial_count: int = 0
     tc_oficial_mxn: float = 0.0
+    # ADITIVO (18-oct-2026; `detalle.gastos_por_categoria[i].mxn` del API
+    # 0.0.93): el total EN PESOS de la categoría. Con `reparto_en_pesos` y
+    # este dato la tabla «Gastos por categoría» gana la columna MXN; sin él,
+    # la tabla de siempre.
+    mxn: float | None = None
 
 
 class RepartoOtroIngresoLinea(BaseModel):
@@ -217,6 +232,9 @@ class RepartoOtroIngresoLinea(BaseModel):
     moneda: str | None = None
     comision: float | None = None
     usd: float | None = None
+    # ADITIVO (18-oct-2026, API 0.0.93): lo que sumó EN PESOS (neto). None =
+    # un ingreso en USD sin T.C. (no llegó a pesos).
+    mxn: float | None = None
 
     @field_validator("clave", mode="before")
     @classmethod
@@ -297,6 +315,26 @@ class RepartoAvion(BaseModel):
     otros_ingresos_avion_usd: float = 0.0
     otros_ingresos_avion_sin_tc_mxn: float = 0.0
     otros_ingresos_avion: list[RepartoOtroIngresoLinea] = Field(default_factory=list)
+    # REPARTO EN PESOS (18-oct-2026, API 0.0.93; pedido del cliente: «casi
+    # siempre se les transfiere a los socios en pesos mexicanos»). La MISMA
+    # cascada en PESOS REALES (venta al T.C. de la cotización, gastos MXN tal
+    # cual, USD a su T.C.), calculada por el API. ADITIVAS: solo se pintan con
+    # la bandera raíz `reparto_en_pesos`; None = el API no la mandó (⇒ «—»).
+    ingresos_cobrado_mxn: float | None = None
+    comisiones_venta_mxn: float | None = None
+    pendiente_cobro_mxn: float | None = None
+    gastos_directos_mxn: float | None = None
+    gastos_indirectos_mxn: float | None = None
+    permisos_mxn: float | None = None
+    otros_mxn: float | None = None
+    reserva_overhaul_mxn: float | None = None
+    otros_ingresos_avion_mxn: float | None = None
+    saldo_mxn: float | None = None
+    # Dólares que SÍ entraron al saldo USD pero no se pudieron pasar a pesos
+    # (sin ningún T.C.). > 0 ⇒ el saldo en pesos está INCOMPLETO: se avisa.
+    pesos_sin_tc_usd: float | None = None
+    # T.C. oficial del cierre con que se pasó la reserva de overhaul a pesos.
+    reserva_tc: float | None = None
 
     @field_validator(
         "otros_ingresos_avion_usd", "otros_ingresos_avion_sin_tc_mxn", mode="before"
@@ -340,8 +378,17 @@ class RepartoPdfRequest(BaseModel):
     # mes del reparto (ver `RepartoCierre`). None (API previo) ⇒ el PDF y el
     # Excel de siempre, byte a byte.
     cierre: RepartoCierre | None = None
+    # ADITIVO (18-oct-2026, API 0.0.93): el PDF y el Excel del reparto van EN
+    # PESOS (cascada, saldo, socios, vuelos y otros ingresos con los `*_mxn`);
+    # los dólares quedan como informativos. Sin ella ⇒ byte a byte.
+    reparto_en_pesos: bool = False
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod
     def _regla_liberal(cls, v: Any) -> str | None:
         return regla_comisiones_liberal(v)
+
+    @field_validator("reparto_en_pesos", mode="before")
+    @classmethod
+    def _reparto_en_pesos_liberal(cls, v: Any) -> bool:
+        return bandera_liberal(v)

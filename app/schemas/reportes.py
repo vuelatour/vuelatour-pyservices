@@ -1271,6 +1271,16 @@ class BalanceAvionSocio(BaseModel):
     # (empresa)» del Balance general para citar la celda MONTO USD de este
     # socio; la fila del socio se pinta igual. None = API viejo.
     es_empresa: bool | None = None
+    # ADITIVO (18-oct-2026, API 0.0.93; balances EN PESOS): lo que le toca
+    # en pesos = round2(pct/100 × `utilidad_cobrada_mxn`). Solo se pinta con
+    # la bandera `balance_en_pesos`; None = sin pesos (o API viejo).
+    monto_mxn: float | None = None
+
+
+def bandera_liberal(v: Any) -> bool:
+    """Bandera ADITIVA del API: SOLO un `true` JSON la enciende; null, texto
+    o cualquier otra cosa ⇒ False (jamás un 422 por una bandera)."""
+    return v is True
 
 
 class BalanceAvionBalanceBloque(BaseModel):
@@ -1317,6 +1327,27 @@ class BalanceAvionBalanceBloque(BaseModel):
     # vacía (y la utilidad también, el null se propaga en el API). OJO: NO es
     # `otros_ingresos_usd` de los vuelos/totales (TUAs/extras de VuelaTour).
     otros_ingresos_avion_usd: float | None = None
+    # BALANCE EN PESOS (18-oct-2026, API 0.0.93; pedido del cliente: «en los
+    # balances … debe venir todo en pesos porque casi siempre se les
+    # transfiere a los socios en pesos mexicanos, y que los dólares solo
+    # sean informativos»). La MISMA cascada en PESOS REALES, calculada por el
+    # API con lo que el libro ya tiene en pesos (GANANCIA MXN de las filas, el
+    # TOTAL MXN de cada hoja, el POR COBRAR MXN). ADITIVAS: solo se pintan
+    # con la bandera raíz `balance_en_pesos`; None = sin pesos (alguna fila
+    # sin monto en pesos) ⇒ «—», jamás un 0 ni una conversión aquí.
+    utilidad_antes_mxn: float | None = None
+    combustible_mxn: float | None = None
+    gastos_indirectos_mxn: float | None = None
+    refacciones_mxn: float | None = None
+    otros_mxn: float | None = None
+    permisos_mxn: float | None = None
+    otros_ingresos_avion_mxn: float | None = None
+    utilidad_despues_mxn: float | None = None
+    por_cobrar_mxn: float | None = None
+    utilidad_cobrada_mxn: float | None = None
+    # Solo cuando viajan `comisiones_usd` (cascada del GENERAL).
+    comisiones_mxn: float | None = None
+    utilidad_antes_comisiones_mxn: float | None = None
 
 
 def _texto_liberal(v: Any) -> str | None:
@@ -2005,6 +2036,12 @@ class BalanceAvionRequest(BaseModel):
     # usa (los pagos van en `afac_resumen` de 'otros movimientos'). None ⇒
     # libro byte a byte.
     pagos_afac: BalanceAvionHojaGastos | None = None
+    # ADITIVO (18-oct-2026, API 0.0.93): la hoja 'balance' de ESTE libro se
+    # pinta EN PESOS (cascada y socios con los `*_mxn` del bloque `balance`;
+    # los dólares como columna informativa). Libro individual y cada
+    # `aviones[]` del general (el consolidado no la lleva). Sin ella
+    # (False/null/ausente) ⇒ libro byte a byte.
+    balance_en_pesos: bool = False
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod
@@ -2015,6 +2052,11 @@ class BalanceAvionRequest(BaseModel):
     @classmethod
     def _vinculos_gasto_liberal(cls, v: Any) -> bool | None:
         return True if v is True else None
+
+    @field_validator("balance_en_pesos", mode="before")
+    @classmethod
+    def _balance_en_pesos_liberal(cls, v: Any) -> bool:
+        return bandera_liberal(v)
 
 
 class BalanceGeneralResumenFila(BaseModel):
@@ -2227,6 +2269,9 @@ class BalanceEmpresaParticipacion(BaseModel):
     matricula: str | None = None
     porcentaje: float | None = None
     monto_usd: float | None = None
+    # ADITIVO (18-oct-2026, API 0.0.93): el `monto_mxn` del socio `es_empresa`
+    # de ese avión (balances en pesos). None = sin pesos.
+    monto_mxn: float | None = None
 
 
 class BalanceEmpresaBloque(BaseModel):
@@ -2255,12 +2300,31 @@ class BalanceEmpresaBloque(BaseModel):
     resultado_usd: float | None = None
     tc_promedio: float | None = None  # TC promedio de la flota
     nota: str | None = None  # base de cada línea (texto corto del API)
+    # BALANCE EN PESOS (18-oct-2026, API 0.0.93), ADITIVAS: el MISMO bloque en
+    # pesos reales (Σ INGRESO / EGRESO MXN de 'otros movimientos', TOTAL MXN
+    # de 'otros gastos', utilidad MXN del inventario). Solo se pintan con la
+    # bandera `balance_en_pesos` del general; None = sin pesos (null se
+    # propaga al resultado). `nota_pesos` = base en pesos (texto corto del
+    # API); la `nota` de siempre sigue explicando la columna USD.
+    participacion_mxn: float | None = None
+    ingresos_propios_mxn: float | None = None
+    pagos_vendedor_mxn: float | None = None
+    otros_gastos_empresa_mxn: float | None = None
+    tienda_utilidad_mxn: float | None = None
+    resultado_mxn: float | None = None
+    nota_pesos: str | None = None
 
     @field_validator("participaciones", mode="before")
     @classmethod
     def _participaciones_liberal(cls, v: Any) -> Any:
         """NestJS puede mandar null en una lista vacía: jamás un 422."""
         return [] if v is None else v
+
+    @field_validator("nota_pesos", mode="before")
+    @classmethod
+    def _nota_pesos_liberal(cls, v: Any) -> str | None:
+        """Texto informativo: blanco o no-texto ⇒ None (jamás un 422)."""
+        return _texto_liberal(v)
 
 
 # Variantes del libro de flota (6-oct-2026, API 0.0.64). Pedido del cliente:
@@ -2324,6 +2388,11 @@ class BalanceGeneralRequest(BaseModel):
     # resumen por avión de lo que pasa/viene. None ⇒ RESUMEN de siempre.
     cierre: BalanceCierre | None = None
     resumen_cierre: BalanceCierreResumen | None = None
+    # ADITIVO (18-oct-2026, API 0.0.93): la hoja 'balance' del general (los
+    # bloques de cada avión y el de VUELATOUR) se pinta EN PESOS; dólares
+    # informativos. La RAÍZ manda el layout de toda la hoja (un avión sin
+    # pesos sale con «—»). Sin ella ⇒ libro byte a byte.
+    balance_en_pesos: bool = False
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod
@@ -2334,6 +2403,11 @@ class BalanceGeneralRequest(BaseModel):
     @classmethod
     def _vinculos_gasto_liberal(cls, v: Any) -> bool | None:
         return True if v is True else None
+
+    @field_validator("balance_en_pesos", mode="before")
+    @classmethod
+    def _balance_en_pesos_liberal(cls, v: Any) -> bool:
+        return bandera_liberal(v)
 
     @field_validator("variante", mode="before")
     @classmethod
