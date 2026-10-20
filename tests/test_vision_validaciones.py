@@ -138,6 +138,41 @@ def test_ticket_prompt_pide_comisariato_para_pasajeros(claude_fake) -> None:
     assert "señales de PASAJEROS mandan a OTRO" not in texto
 
 
+def test_ticket_paqueteria_se_entrega(claude_fake) -> None:
+    """Paquetería (20-oct-2026, pedido del cliente): los envíos de mensajería
+    (DHL, FedEx, Estafeta) tienen categoría propia PAQUETERIA (gasto de
+    VuelaTour). `valid_cats` y el Literal la dejan pasar; antes caían en
+    OTRO. OTROS_DIRECTOS_VUELO no se sugiere pero se tolera (reanálisis)."""
+    payload = {
+        **TICKET_OK,
+        "concepto": "Envío de documentos a Mérida",
+        "categoria_sugerida": "PAQUETERIA",
+        "conceptos": [],
+        "monto": 389.0,
+        "proveedor": "DHL Express",
+    }
+    claude_fake(anthropic_vision, payload)
+    res = leer_ticket_gasto(_ticket())
+    assert res.categoria_sugerida == "PAQUETERIA"
+    assert res.monto == 389.0 and res.proveedor == "DHL Express"
+    claude_fake(
+        anthropic_vision, {**payload, "categoria_sugerida": "OTROS_DIRECTOS_VUELO"}
+    )
+    assert leer_ticket_gasto(_ticket()).categoria_sugerida == "OTROS_DIRECTOS_VUELO"
+
+
+def test_ticket_prompt_pide_paqueteria_para_envios(claude_fake) -> None:
+    """El prompt lista PAQUETERIA, la define para mensajería/envíos y OTRO ya
+    no menciona la paquetería. OTROS_DIRECTOS_VUELO no se ofrece."""
+    cliente = claude_fake(anthropic_vision, TICKET_OK)
+    leer_ticket_gasto(_ticket())
+    texto = cliente.texto_system()
+    assert "PERMISO, FIJO, PAQUETERIA, OTRO" in texto
+    assert "PAQUETERIA = envíos de mensajería o paquetería" in texto
+    assert "mensajería/paquetería, papelería" not in texto
+    assert "OTROS_DIRECTOS_VUELO" not in texto
+
+
 # --- TUA sistémica (13-oct-2026, API 0.0.75): `tua_monto` leído aparte ------
 
 

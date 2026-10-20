@@ -173,6 +173,10 @@ CategoriaGasto = Literal[
     # sugiere (está en el prompt); antes caía en OTRO. Sin ella pydantic
     # devolvería None/422 en el reanálisis de un gasto COMISARIATO.
     "COMISARIATO",
+    # Otros gastos directos del vuelo (20-oct-2026, API 0.0.99): columna OTROS
+    # del balance del avión, como el comisariato. La IA no la sugiere (no se
+    # distingue desde un ticket); aditiva para que el reanálisis no truene.
+    "OTROS_DIRECTOS_VUELO",
     "HOTEL",
     "TAXI",
     "REFACCION",
@@ -195,6 +199,10 @@ CategoriaGasto = Literal[
     # directamente al avión — la IA SÍ puede sugerirla (está en el prompt).
     "SERVICIOS",
     "OTRO",
+    # Paquetería (20-oct-2026, API 0.0.99): mensajería y envíos (DHL, FedEx,
+    # Estafeta…), gasto de VuelaTour. La IA SÍ la sugiere (está en el prompt);
+    # antes caía en OTRO.
+    "PAQUETERIA",
 ]
 
 

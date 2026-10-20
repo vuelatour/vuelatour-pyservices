@@ -298,7 +298,7 @@ _TICKET_SYSTEM = (
     '  "concepto": descripción breve de lo comprado, o null.\n'
     '  "categoria_sugerida": una de GAS, GASOLINA, OPERACIONES, ATERRIZAJE, '
     "TUAS, FBO, COMIDA, COMISARIATO, HOTEL, TAXI, REFACCION, SERVICIOS, "
-    "PERMISO, FIJO, OTRO (la más probable), o "
+    "PERMISO, FIJO, PAQUETERIA, OTRO (la más probable), o "
     "null. Guía: SERVICIOS = servicio/mano de obra contratada al AVIÓN "
     "(taller, mantenimiento, lavado, inspección — factura de servicio, no de "
     "piezas; si el ticket es de PIEZAS/refacciones usa REFACCION). "
@@ -317,10 +317,11 @@ _TICKET_SYSTEM = (
     "= snacks, botanas, bebidas, agua, hielo y comisariato para los "
     "PASAJEROS (súper, OXXO, minisúper, comedor o tienda del aeropuerto "
     "cuando el ticket o la nota dicen «comisariato», «pax», «pasajeros» o "
-    "«para el vuelo»); es gasto directo del vuelo, NO es OTRO. OTRO es solo "
-    "para lo que no es de la tripulación ni de los pasajeros: "
-    "mensajería/paquetería, papelería, compras de oficina y varios sin "
-    "categoría clara. Desempate: si el ticket no deja ver para quién es "
+    "«para el vuelo»); es gasto directo del vuelo, NO es OTRO. PAQUETERIA = "
+    "envíos de mensajería o paquetería (DHL, FedEx, Estafeta, Redpack, UPS, "
+    "paquete exprés); NO es OTRO. OTRO es solo para lo que no es de la "
+    "tripulación ni de los pasajeros: papelería, compras de oficina y varios "
+    "sin categoría clara. Desempate: si el ticket no deja ver para quién es "
     "(súper/OXXO, ferry, restaurante sin más señas), asume TRIPULACIÓN "
     "(COMIDA/TAXI/HOTEL); señales de PASAJEROS mandan a COMISARIATO (varios "
     "boletos en el mismo ticket, consumo a nombre del cliente, leyendas que "
@@ -512,6 +513,12 @@ def leer_ticket_gasto(req: GastoTicketRequest) -> GastoTicketResponse:
         # COMISARIATO (13-oct-2026): snacks/bebidas de los PASAJEROS — SÍ
         # está en el prompt (antes caía en OTRO). Gasto directo del vuelo.
         "COMISARIATO",
+        # PAQUETERIA (20-oct-2026): mensajería y envíos — SÍ está en el
+        # prompt (antes caía en OTRO). Gasto de VuelaTour.
+        "PAQUETERIA",
+        # OTROS_DIRECTOS_VUELO (20-oct-2026) no está en el prompt; se tolera
+        # si el modelo la eco-devuelve en un reanálisis.
+        "OTROS_DIRECTOS_VUELO",
         # No están en el prompt (no se leen de un ticket) pero se toleran
         # si el modelo las eco-devuelve en un reanálisis: VISITA (gasto de
         # visitante, 27-ago), PERSONAL_DUENO y NOMINA (sueldos, 29-ago).
