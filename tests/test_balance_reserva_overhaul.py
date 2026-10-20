@@ -37,6 +37,7 @@ from app.main import app
 from app.schemas.reportes import (
     BalanceAvionBalanceBloque,
     BalanceAvionRequest,
+    BalanceAvionVuelo,
     BalanceGeneralRequest,
 )
 from app.services import libro_json, xlsx_formulas
@@ -259,15 +260,36 @@ def con_usd_por_gasto(libro: dict) -> dict:
     return p
 
 
-def general_usd_por_gasto(variante: str, *, en_consolidado: bool) -> dict:
+def _con_comisiones(vuelos: list[dict]) -> list[dict]:
+    """Las filas con comisiones del avión y ganancia en dólares (las que en la
+    hoja del general van antes de comisiones)."""
+    return [
+        v
+        for v in vuelos
+        if (v.get("comisiones_mxn") or 0) != 0 and v.get("ganancia_usd") is not None
+    ]
+
+
+def general_usd_por_gasto(
+    variante: str, *, en_consolidado: bool, antes_comisiones: str | None = None
+) -> dict:
     """El general sin pesos con la regla B: la bandera en el consolidado (y
-    sus dólares perturbados) o solo en los `aviones[]`."""
+    sus dólares perturbados) o solo en los `aviones[]`. `antes_comisiones`:
+    None = sin `ganancia_antes_comisiones_usd` (API sin la llave); 'todas' =
+    cada fila con comisiones la trae (= ganancia + un número cualquiera: es
+    un valor del API); 'una-null' = la primera en null."""
     p = pp.general(variante, bandera=None)
     cons = con_usd_por_gasto(p["consolidado"])
     if not en_consolidado:
         cons.pop("usd_por_gasto")
         for a in p["aviones"]:
             a["usd_por_gasto"] = True
+    if antes_comisiones is not None:
+        filas = _con_comisiones(cons["vuelos"])
+        for v in filas:
+            v["ganancia_antes_comisiones_usd"] = r2(v["ganancia_usd"] + 12.34)
+        if antes_comisiones == "una-null":
+            filas[0]["ganancia_antes_comisiones_usd"] = None
     p["consolidado"] = cons
     ge = p["gastos_empresa"]
     ge["usd"] = r2(ge["usd"] + 1.23)
@@ -733,7 +755,7 @@ def _columnas_valor(ws, disp, vuelos: list[dict]) -> None:
                 con_hr = v.get("costo_hr_usd") is not None
                 esperado = r2(v["costo_hr_usd"] - v["costo_hr_usd_siva"]) if con_hr else None
             if attr == "ganancia_usd" and disp.comision_col is None and v.get("comisiones_mxn"):
-                esperado = None
+                esperado = v.get("ganancia_antes_comisiones_usd")
             assert celda.value == esperado, (attr, celda.coordinate)
 
 
@@ -866,6 +888,79 @@ def test_usd_por_gasto_general_mensual_ganancia_usd_vacia_con_comisiones(registr
     assert ws[f"{_DISP_FLOTA.letra['costo_hr_usd']}{3 + len(vuelos)}"].value == (
         p["consolidado"]["totales"]["costo_hr_prom_usd"]
     )
+
+
+def test_ganancia_antes_comisiones_usd_es_aditiva() -> None:
+    assert BalanceAvionVuelo().ganancia_antes_comisiones_usd is None
+    fila = BalanceAvionVuelo.model_validate({"ganancia_antes_comisiones_usd": 12.5})
+    assert fila.ganancia_antes_comisiones_usd == 12.5
+    fila = BalanceAvionVuelo.model_validate({"ganancia_antes_comisiones_usd": None})
+    assert fila.ganancia_antes_comisiones_usd is None
+
+
+def test_usd_por_gasto_general_mensual_ganancia_antes_comisiones_pintada(registros) -> None:
+    """Con `ganancia_antes_comisiones_usd` en cada fila con comisiones: se
+    pinta como VALOR, el encabezado lleva la nota genérica (ninguna celda
+    quedó vacía) y TOTALES = Σ de las celdas visibles, con fórmula viva."""
+    p = general_usd_por_gasto("mensual", en_consolidado=True, antes_comisiones="todas")
+    data = render_balance_general_xlsx(BalanceGeneralRequest.model_validate(p))
+    assert registros[-1].degradadas() == [(MAESTRA_FLOTA, "U9")]
+    verificar_libro(data)
+    wb, wv = tp._libros(data)
+    ws = wb[MAESTRA_FLOTA]
+    vuelos = p["consolidado"]["vuelos"]
+    _columnas_valor(ws, _DISP_FLOTA, vuelos)
+    letra = _DISP_FLOTA.letra["ganancia_usd"]
+    assert ws[f"{letra}2"].comment.text == NOTA_USD_POR_GASTO
+    filas = _con_comisiones(vuelos)
+    assert filas
+    visibles = []
+    for i, v in enumerate(vuelos):
+        celda = ws[f"{letra}{3 + i}"]
+        if v in filas:
+            assert celda.value == v["ganancia_antes_comisiones_usd"]
+            assert celda.value == r2(v["ganancia_usd"] + 12.34)
+        if celda.value is not None:
+            visibles.append(celda.value)
+    fila_tot = 3 + len(vuelos)
+    assert ws[f"{letra}{fila_tot}"].value == f"=ROUND(SUM({letra}3:{letra}{fila_tot - 1}),2)"
+    assert wv[MAESTRA_FLOTA][f"{letra}{fila_tot}"].value == xlsx_formulas.redondear_excel(
+        sum(visibles), 2
+    )
+
+
+def test_usd_por_gasto_general_mensual_una_fila_sin_la_llave_vacia_y_nota(registros) -> None:
+    """La llave en null en UNA fila con comisiones: solo esa celda queda
+    vacía y el encabezado lo explica; las demás, el valor del API."""
+    p = general_usd_por_gasto("mensual", en_consolidado=True, antes_comisiones="una-null")
+    data = render_balance_general_xlsx(BalanceGeneralRequest.model_validate(p))
+    assert registros[-1].degradadas() == [(MAESTRA_FLOTA, "U9")]
+    verificar_libro(data)
+    ws = load_workbook(BytesIO(data))[MAESTRA_FLOTA]
+    vuelos = p["consolidado"]["vuelos"]
+    _columnas_valor(ws, _DISP_FLOTA, vuelos)
+    letra = _DISP_FLOTA.letra["ganancia_usd"]
+    assert ws[f"{letra}2"].comment.text == _NOTA_ENCABEZADO_GANANCIA_USD_POR_GASTO_FLOTA
+    filas = _con_comisiones(vuelos)
+    vacias = [ws[f"{letra}{3 + vuelos.index(v)}"].value for v in filas]
+    assert vacias[0] is None and all(x is not None for x in vacias[1:])
+
+
+def test_ganancia_antes_comisiones_usd_sin_la_bandera_se_ignora() -> None:
+    """Sin `usd_por_gasto` la llave no mueve nada: la hoja del general deriva
+    la GANANCIA USD como hoy (fórmula) y el libro es byte a byte el de
+    siempre."""
+    p = pp.general("mensual", bandera=None)
+    for v in _con_comisiones(p["consolidado"]["vuelos"]):
+        v["ganancia_antes_comisiones_usd"] = r2(v["ganancia_usd"] + 12.34)
+    data = render_balance_general_xlsx(BalanceGeneralRequest.model_validate(p))
+    assert tp._huella_xlsx(data) == _HUELLAS_HEAD[("general-mensual", None)][0]
+    ws = load_workbook(BytesIO(data))[MAESTRA_FLOTA]
+    letra = _DISP_FLOTA.letra["ganancia_usd"]
+    vuelos = p["consolidado"]["vuelos"]
+    primera = vuelos.index(_con_comisiones(vuelos)[0])
+    assert str(ws[f"{letra}{3 + primera}"].value).startswith("=ROUND(")
+    assert ws[f"{letra}2"].comment is None
 
 
 def test_usd_por_gasto_sin_bandera_las_formulas_de_siempre() -> None:

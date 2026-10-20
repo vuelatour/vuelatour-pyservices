@@ -1078,6 +1078,14 @@ class BalanceAvionVuelo(BaseModel):
     # multi-avión, `_nota_participacion`). None = API previo.
     comision_vendedor_real_mxn: float | None = None
     comision_vendedor_real_pagos: int | None = None
+    # ADITIVO (19-oct-2026, API 0.0.98, regla B): en las filas con
+    # `comisiones_detalle`, la ganancia en dólares ANTES de comisiones
+    # (= `ganancia_usd` + comisiones USD de la fila, a centavos; null cuando
+    # `ganancia_usd` es null). Solo la usa la hoja de vuelos del Balance
+    # GENERAL (que va antes de comisiones) con `usd_por_gasto`: ahí se pinta
+    # como VALOR en GANANCIA USD; sin ella la celda va vacía. Sin la bandera
+    # se ignora (libro byte a byte).
+    ganancia_antes_comisiones_usd: float | None = None
     # --- CIERRE DE MES (16-oct-2026, API 0.0.88, invariante 89 del API) ---
     # Vuelo que PASÓ al mes siguiente por cobro pendiente al cerrar, o que
     # VINO de un mes anterior. `cierre_marca` es el texto YA armado por el

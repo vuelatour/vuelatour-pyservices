@@ -865,9 +865,10 @@ def _fila_antes_de_comisiones(
     que el API mandaba antes de la regla; sin T.C. de costos va vacía (el API
     la convierte con el T.C. promedio del libro de SU avión, que esta hoja no
     tiene: mejor vacía que un número que no es). Con `usd_por_gasto` (API
-    0.0.98, regla B) tampoco se deriva: el API no manda la ganancia en
-    dólares antes de comisiones y la celda va VACÍA (la nota del encabezado
-    lo dice). Sin comisiones, la fila tal
+    0.0.98, regla B) tampoco se deriva: se pinta la
+    `ganancia_antes_comisiones_usd` del API (= ganancia + comisiones USD de
+    la fila) y, si no viene (null o API sin la llave), la celda va VACÍA (la
+    nota del encabezado lo dice). Sin comisiones, la fila tal
     cual (su GANANCIA ya es el remanente). Con COMISIONES en 0 explícito (el
     API manda null, pero el esquema admite la «regla con 0»), una copia SIN
     la llave, que se pinta igual que la de null: si no, GANANCIA MXN citaba
@@ -880,7 +881,11 @@ def _fila_antes_de_comisiones(
     if comisiones == 0:
         return v.model_copy(update={"comisiones_mxn": None, "comision_vendedor_mxn": None})
     ganancia_usd = None
-    if not usd_por_gasto and v.remanente_mxn is not None and v.tc_costos:
+    if usd_por_gasto:
+        # Regla B (API 0.0.98): la ganancia en dólares ANTES de comisiones la
+        # manda el API; sin ella (null o API sin la llave), vacía.
+        ganancia_usd = v.ganancia_antes_comisiones_usd
+    elif v.remanente_mxn is not None and v.tc_costos:
         ganancia_usd = xlsx_formulas.redondear_excel(
             _numero_de_celda(v.remanente_mxn) / _numero_de_celda(v.tc_costos), 2
         )
@@ -930,6 +935,21 @@ def _antes_de_comisiones(
         }
     )
     return req.model_copy(update={"vuelos": vuelos, "totales": totales})
+
+
+def _hay_ganancia_usd_sin_antes_comisiones(req: BalanceAvionRequest) -> bool:
+    """¿Alguna fila con comisiones tiene ganancia en dólares pero NO
+    `ganancia_antes_comisiones_usd` (API 0.0.98, regla B)? Con `usd_por_gasto`
+    esa celda GANANCIA USD de la hoja de vuelos del GENERAL queda vacía y el
+    encabezado lo explica (`_NOTA_ENCABEZADO_GANANCIA_USD_POR_GASTO_FLOTA`).
+    Se evalúa sobre el `req` ORIGINAL (antes de `_antes_de_comisiones`, que
+    deja las comisiones en None)."""
+    return any(
+        _monto_no_cero(_comisiones(v))
+        and v.ganancia_usd is not None
+        and v.ganancia_antes_comisiones_usd is None
+        for v in req.vuelos
+    )
 
 
 class _ColumnaAusente(Exception):  # noqa: N818 - no es un error: es una señal
@@ -2309,13 +2329,17 @@ _NOTA_ENCABEZADO_USD_POR_GASTO = (
     "el oficial del día en que se pagó (criterio del reparto a socios); no es "
     "el total en pesos ÷ T.C. promedio."
 )
-# GANANCIA USD de la hoja de vuelos del GENERAL (antes de comisiones): el API
-# no manda esa cifra en dólares y aquí ya no se deriva de pesos ÷ T.C.
+# GANANCIA USD de la hoja de vuelos del GENERAL (antes de comisiones): con la
+# bandera se pinta la `ganancia_antes_comisiones_usd` que manda el API por
+# fila; aquí ya no se deriva de pesos ÷ T.C. Esta nota va SOLO cuando alguna
+# fila con comisiones quedó vacía por no traerla
+# (`_hay_ganancia_usd_sin_antes_comisiones`); si no, la genérica.
 _NOTA_ENCABEZADO_GANANCIA_USD_POR_GASTO_FLOTA = (
     _NOTA_ENCABEZADO_USD_POR_GASTO + " En esta hoja la GANANCIA va antes de "
-    "comisiones y el API no manda esa cifra en dólares: en los vuelos con "
-    "comisiones la celda queda vacía (su GANANCIA USD después de comisiones "
-    "está en el Balance mensual del avión)."
+    "comisiones: en los vuelos con comisiones es la ganancia en dólares antes "
+    "de comisiones que manda el API; donde el API no la manda, la celda queda "
+    "vacía (su GANANCIA USD después de comisiones está en el Balance mensual "
+    "del avión)."
 )
 
 
@@ -2708,7 +2732,11 @@ def _hoja_maestra(
         disp = _DISP_FLOTA
     if usd_por_gasto is None:
         usd_por_gasto = _usd_por_gasto(req)
+    # GANANCIA USD vacía en algún vuelo con comisiones (regla B sin la
+    # `ganancia_antes_comisiones_usd` del API): su encabezado lo explica.
+    ganancia_usd_vacia = False
     if disp.comision_col is None:
+        ganancia_usd_vacia = usd_por_gasto and _hay_ganancia_usd_sin_antes_comisiones(req)
         req = _antes_de_comisiones(req, usd_por_gasto=usd_por_gasto)
     cols = disp.cols
     ws.title = sheet_title(f"reporte horas {req.matricula}")
@@ -3028,12 +3056,12 @@ def _hoja_maestra(
         ws.cell(row=2, column=i).comment = nota_sis
     # USD gasto por gasto (API 0.0.98): la nota, UNA vez, en el encabezado de
     # cada columna que pasó a valor (en el general, GANANCIA USD dice además
-    # por qué queda vacía en los vuelos con comisiones).
+    # por qué queda vacía en algún vuelo con comisiones, solo si pasó).
     if usd_por_gasto:
         for i, c in enumerate(cols, start=1):
             if c[2] in _COLS_USD_POR_GASTO:
                 nota_upg = _NOTA_ENCABEZADO_USD_POR_GASTO
-                if c[2] == "ganancia_usd" and disp.comision_col is None:
+                if c[2] == "ganancia_usd" and ganancia_usd_vacia:
                     nota_upg = _NOTA_ENCABEZADO_GANANCIA_USD_POR_GASTO_FLOTA
                 ws.cell(row=2, column=i).comment = _comentario_cobro(nota_upg)
 

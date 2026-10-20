@@ -2085,8 +2085,10 @@ Reglas de este microservicio (FastAPI, Python 3.12).
     None con la USD presente = sin T.C. oficial ⇒ «—» con
     `_NOTA_SIN_PESOS_RESERVA`) y los metadatos de «Cómo se calcula», con
     validador liberal (jamás un 422): `reserva_overhaul_horas_hr`,
-    `reserva_overhaul_usd_hr` (tarifa Σ motores, USD/hr; el texto la muestra
-    POR MOTOR, Σ ÷ motores), `reserva_overhaul_motores`,
+    `reserva_overhaul_usd_hr` (**la SUMA de las tarifas de los motores**,
+    USD/hr: el API manda Σ `monto_por_hora_usd` y pyservices muestra «× N
+    motores × (Σ ÷ N) USD/hr»; con un solo motor, «× 1 motor × Σ»),
+    `reserva_overhaul_motores`,
     `reserva_overhaul_tc`, `reserva_overhaul_tc_dia` ('YYYY-MM-DD') y
     `reserva_overhaul_incompleta` (solo un `true` JSON = voló horas sin
     tarifa configurada).
@@ -2158,11 +2160,17 @@ Reglas de este microservicio (FastAPI, Python 3.12).
     cotización) siguen como fórmula. (d) Hoja de vuelos del GENERAL (antes
     de comisiones, `_fila_antes_de_comisiones(v, usd_por_gasto)`): la
     GANANCIA USD de un vuelo con comisiones ya NO se deriva (remanente ÷
-    T.C.) —el API no manda esa cifra en dólares— y queda VACÍA, con
-    `_NOTA_ENCABEZADO_GANANCIA_USD_POR_GASTO_FLOTA` en el encabezado; los
-    demás vuelos, el valor del API; TOTALES = Σ de las filas visibles. Si
-    algún día se quiere ese número, el API debe mandar
-    `ganancia_antes_comisiones_usd` por fila.
+    T.C.): se pinta como VALOR la llave ADITIVA de fila
+    `BalanceAvionVuelo.ganancia_antes_comisiones_usd` (API 0.0.98: en las
+    filas con `comisiones_detalle`, = `ganancia_usd` + comisiones USD de la
+    fila a centavos; null cuando `ganancia_usd` es null); si falta o es
+    null, la celda queda VACÍA y SOLO entonces el encabezado lleva
+    `_NOTA_ENCABEZADO_GANANCIA_USD_POR_GASTO_FLOTA`
+    (`_hay_ganancia_usd_sin_antes_comisiones`, evaluada sobre el `req`
+    original; si ninguna quedó vacía, la nota genérica); los vuelos sin
+    comisiones, el `ganancia_usd` del API; TOTALES = Σ de las celdas
+    visibles (fórmula viva). Sin la bandera la llave se ignora (libro byte
+    a byte).
   - **Skew: sin la llave Y sin la bandera (API ≤ 0.0.97; también con
     `reserva_overhaul_usd` en null, solo los metadatos, o `usd_por_gasto`
     en false/texto) el libro es BYTE A BYTE el de hoy**, con y sin
@@ -2178,8 +2186,10 @@ Reglas de este microservicio (FastAPI, Python 3.12).
     incompleta, general USD/pesos con socios y bloque VUELATOUR intactos,
     mixto, byte a byte sin la llave / sin la bandera, vista en pantalla,
     rutas, `usd_por_gasto` con dólares perturbados y 0 fórmulas degradadas
-    —XB-DOS y la variante general—, GANANCIA USD vacía en el general y, sin
-    la bandera, las fórmulas de siempre).
+    —XB-DOS y la variante general—, GANANCIA USD del general con
+    `ganancia_antes_comisiones_usd` pintada / una en null vacía con la nota
+    / sin la llave vacías / sin la bandera ignorada, y, sin la bandera, las
+    fórmulas de siempre).
 
 ## Conciliación
 
