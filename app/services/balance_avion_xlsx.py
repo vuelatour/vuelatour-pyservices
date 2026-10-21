@@ -131,6 +131,7 @@ from app.schemas.reportes import (
     BalanceAvionHojaOtrosIngresos,
     BalanceAvionOtroIngresoFila,
     BalanceAvionRequest,
+    BalanceAvionSocio,
     BalanceAvionTotales,
     BalanceAvionVuelo,
     BalanceCierre,
@@ -4390,7 +4391,19 @@ def _hoja_balance(
     periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'} (todo en USD)"
     ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
     _bloque_balance(ws, req, 4, refs=refs)
-    for i, w in enumerate([46, 14, 16], start=1):
+    _anchos_hoja_balance(ws, _ANCHOS_BALANCE_USD, _con_entregas_socios(req.balance))
+
+
+# Anchos de la hoja 'balance' en dólares (A etiqueta, B monto, C MONTO USD de
+# los socios): los de siempre.
+_ANCHOS_BALANCE_USD = [46, 14, 16]
+
+
+def _anchos_hoja_balance(ws: Worksheet, base: list[int], con_entregas: bool) -> None:
+    """Anchos de la hoja 'balance': los de siempre y, SOLO con las entregas a
+    socios del API (invariante 100), los de sus tres columnas extra."""
+    anchos = [*base, *([_ANCHO_COL_ENTREGAS] * _N_COLS_ENTREGAS)] if con_entregas else base
+    for i, w in enumerate(anchos, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
@@ -4513,6 +4526,137 @@ def _con_reserva_overhaul(b: BalanceAvionBalanceBloque) -> bool:
     Solo si el API (0.0.98+) manda `reserva_overhaul_usd` (0.0 también
     cuenta: se pinta 0.00); None = API previo ⇒ nada."""
     return b.reserva_overhaul_usd is not None
+
+
+# ENTREGAS A SOCIOS en la tabla «Reparto a socios» (21-oct-2026, invariante
+# 100 del API). Pedido del cliente: «agregar en el balance general y por
+# avión los pagos que se vayan dando a los socios». El API manda, por socio,
+# lo YA entregado «por este avión» en los meses del periodo (`entregado_mxn`
+# en pesos: lo que cada entrega descontó del saldo; `entregado_usd`
+# informativo; `entregas`) y lo que FALTA (`por_entregar_mxn` = monto a
+# recibir en pesos − entregado; negativo = se le adelantó), y por avión las
+# Σ (`entregado_socios_mxn`, el DISCRIMINADOR, y `por_entregar_socios_mxn`).
+# Aquí no se calcula nada: con el discriminador la tabla gana, DESPUÉS de las
+# columnas de siempre (que no se mueven: `celdas_empresa` y la cascada
+# siguen igual), ENTREGADO (MXN) · POR ENTREGAR (MXN) · ENTREGADO USD
+# (informativo) —también en la hoja USD: son pesos reales—, una fila de
+# totales y una nota al pie de la tabla. Sin el discriminador, byte a byte.
+_COL_ENTREGADO = "ENTREGADO (MXN)"
+_COL_POR_ENTREGAR = "POR ENTREGAR (MXN)"
+_COL_ENTREGADO_USD_INFO = "ENTREGADO USD (informativo)"
+_FILA_TOTAL_ENTREGAS = "Entregado a socios en el periodo / Por entregar"
+_NOTA_ENTREGAS_SOCIOS = (
+    "Entregas registradas en Pagos a socios que corresponden a este avión y a "
+    "los meses del periodo; por entregar = monto a recibir − entregado."
+)
+_NOTA_SIN_PESOS_POR_ENTREGAR = (
+    "Sin cifra en pesos: el monto a recibir en pesos de este socio no se pudo "
+    "calcular (ver la cascada de arriba), así que no hay de dónde restar lo "
+    "entregado."
+)
+_ANCHO_COL_ENTREGAS = 20
+_N_COLS_ENTREGAS = 3
+
+
+def _con_entregas_socios(b: BalanceAvionBalanceBloque) -> bool:
+    """¿El API mandó las entregas a socios (invariante 100)? Discriminador:
+    `entregado_socios_mxn` (número; 0.0 también cuenta: columnas en 0);
+    None = API previo o cuenta corriente sin migración ⇒ nada."""
+    return b.entregado_socios_mxn is not None
+
+
+def _encabezados_entregas(ws: Worksheet, row: int, col: int) -> None:
+    """Los tres encabezados de las entregas a partir de `col`: los dos en
+    pesos como encabezado principal y el USD informativo en gris."""
+    _header_row(ws, row, [_COL_ENTREGADO, _COL_POR_ENTREGAR], start=col)
+    _encabezado_info(ws, row, col + 2, _COL_ENTREGADO_USD_INFO)
+
+
+def _celdas_entregas_socio(
+    ws: Worksheet, row: int, col: int, s: BalanceAvionSocio, *, col_monto_mxn: str | None
+) -> None:
+    """Las tres celdas de entregas de UN socio a partir de `col`: ENTREGADO
+    (MXN) como VALOR del API (sus insumos no están en el libro); POR ENTREGAR
+    (MXN) = ROUND(MONTO MXN − ENTREGADO, 2) cuando la hoja tiene la celda
+    MONTO MXN (`col_monto_mxn`, la hoja en pesos; en la hoja USD va como
+    valor), «—» con nota si el API no pudo calcularlo; y el USD informativo
+    gris. Un dato ausente deja la celda vacía (jamás un 0). Negativos en
+    rojo (se le adelantó al socio)."""
+    ec = _celda_pesos(ws, row, col, None, s.entregado_mxn, nota_sin=None, color="000000")
+    if s.entregado_mxn is not None:
+        _rojo_si_negativo(ws, ec.coordinate)
+    formula = (
+        f"ROUND({col_monto_mxn}{row}-{get_column_letter(col)}{row},2)"
+        if col_monto_mxn is not None and s.entregado_mxn is not None
+        else None
+    )
+    pc = _celda_pesos(
+        ws,
+        row,
+        col + 1,
+        formula,
+        s.por_entregar_mxn,
+        nota_sin=_NOTA_SIN_PESOS_POR_ENTREGAR,
+        bold=True,
+        color="000000",
+    )
+    if s.por_entregar_mxn is not None:
+        _rojo_si_negativo(ws, pc.coordinate)
+    _celda_usd_info(ws, row, col + 2, None, s.entregado_usd)
+
+
+def _pie_entregas_socios(
+    ws: Worksheet,
+    b: BalanceAvionBalanceBloque,
+    row: int,
+    *,
+    col: int,
+    fila_ini: int,
+    fila_fin: int,
+    n_cols: int,
+    ancho: float,
+) -> int:
+    """Fila de totales de las entregas (ROUND(SUM(columna),2), como las Σ del
+    resto del libro, con el Σ del API; `por_entregar_socios_mxn` None ⇒ «—»)
+    y la nota al pie de la tabla de socios. Con `fila_fin` < `fila_ini` (sin socios) solo la nota.
+    Devuelve la siguiente fila libre."""
+    if fila_fin >= fila_ini:
+        lc = ws.cell(row=row, column=1, value=_FILA_TOTAL_ENTREGAS)
+        lc.font = Font(bold=True, color=NAVY)
+        lc.border = _border
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=col - 1)
+        e, p, u = (get_column_letter(col + i) for i in range(3))
+        tc = _celda_pesos(
+            ws,
+            row,
+            col,
+            f"ROUND(SUM({e}{fila_ini}:{e}{fila_fin}),2)",
+            b.entregado_socios_mxn,
+            nota_sin=None,
+            bold=True,
+            color="000000",
+        )
+        _rojo_si_negativo(ws, tc.coordinate)
+        pc = _celda_pesos(
+            ws,
+            row,
+            col + 1,
+            f"ROUND(SUM({p}{fila_ini}:{p}{fila_fin}),2)",
+            b.por_entregar_socios_mxn,
+            nota_sin=_NOTA_SIN_PESOS_DERIVADA,
+            bold=True,
+            color="000000",
+        )
+        if b.por_entregar_socios_mxn is not None:
+            _rojo_si_negativo(ws, pc.coordinate)
+        # El USD informativo solo se RE-SUMA (la columna de al lado), nunca
+        # se convierte; con un socio sin dato, vacío.
+        usd = [s.entregado_usd for s in b.socios]
+        total_usd = None if any(x is None for x in usd) else round(sum(usd), 2)
+        _celda_usd_info(ws, row, col + 2, f"ROUND(SUM({u}{fila_ini}:{u}{fila_fin}),2)", total_usd)
+        row += 1
+    _pinta_nota_envuelta(ws, row, _NOTA_ENTREGAS_SOCIOS, n_cols, ancho)
+    return row + 1
 
 
 def _como_se_calcula_reserva(b: BalanceAvionBalanceBloque) -> str:
@@ -4821,10 +4965,17 @@ def _bloque_balance(
         row += 1
 
     row += 1
-    _title(ws, "Reparto a socios (utilidad COBRADA × % vigente)", row, 3, size=11)
+    # Entregas a socios (21-oct-2026, invariante 100): con el discriminador,
+    # tres columnas más DESPUÉS de las de siempre (D..F), totales y nota.
+    con_entregas = _con_entregas_socios(b)
+    n_tabla = 3 + _N_COLS_ENTREGAS if con_entregas else 3
+    _title(ws, "Reparto a socios (utilidad COBRADA × % vigente)", row, n_tabla, size=11)
     row += 1
     _header_row(ws, row, ["SOCIO", "PORCENTAJE", "MONTO USD"])
+    if con_entregas:
+        _encabezados_entregas(ws, row, 4)
     row += 1
+    fila_socio_ini = row
     if b.socios:
         for s in b.socios:
             ws.cell(row=row, column=1, value=s.nombre).border = _border
@@ -4847,6 +4998,10 @@ def _bloque_balance(
                         req.matricula or "—", s.porcentaje, mc.coordinate, s.monto_usd
                     )
                 )
+            if con_entregas:
+                # En la hoja USD no está el MONTO MXN: POR ENTREGAR va como
+                # valor del API (pesos reales, igual que ENTREGADO).
+                _celdas_entregas_socio(ws, row, 4, s, col_monto_mxn=None)
             row += 1
     else:
         ws.cell(
@@ -4854,6 +5009,17 @@ def _bloque_balance(
         ).font = Font(color=RED, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
         row += 1
+    if con_entregas:
+        row = _pie_entregas_socios(
+            ws,
+            b,
+            row,
+            col=4,
+            fila_ini=fila_socio_ini,
+            fila_fin=fila_socio_ini + len(b.socios) - 1,
+            n_cols=n_tabla,
+            ancho=_ANCHO_HOJA_BALANCE + _ANCHO_COL_ENTREGAS * _N_COLS_ENTREGAS,
+        )
     # Reserva de overhaul (19-oct-2026, API 0.0.98): bloque INFORMATIVO al
     # final, después de los socios (nada de arriba se mueve). Solo con la
     # llave; sin ella, byte a byte.
@@ -5380,10 +5546,10 @@ def _suma_estricta(a: float | None, b: float | None) -> float | None:
     return round(a + b, 2)
 
 
-def _encabezado_info(ws: Worksheet, row: int, col: int) -> None:
+def _encabezado_info(ws: Worksheet, row: int, col: int, texto: str = _ENCABEZADO_USD_INFO) -> None:
     """Encabezado de la columna USD informativa: gris, cursiva, sin el azul de
     los encabezados principales (no debe llamar primero la atención)."""
-    c = ws.cell(row=row, column=col, value=_ENCABEZADO_USD_INFO)
+    c = ws.cell(row=row, column=col, value=texto)
     c.font = Font(italic=True, size=9, color="64748B")
     c.fill = PatternFill("solid", fgColor="F1F5F9")
     c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -5632,11 +5798,18 @@ def _bloque_balance_pesos(
         row += 1
 
     row += 1
-    _title(ws, _TITULO_SOCIOS_PESOS, row, 4, size=11)
+    # Entregas a socios (21-oct-2026, invariante 100): con el discriminador,
+    # tres columnas más DESPUÉS de las de siempre (E..G), totales y nota.
+    con_entregas = _con_entregas_socios(b)
+    n_tabla = 4 + _N_COLS_ENTREGAS if con_entregas else 4
+    _title(ws, _TITULO_SOCIOS_PESOS, row, n_tabla, size=11)
     row += 1
     _header_row(ws, row, _ENCABEZADOS_SOCIOS_PESOS)
     _encabezado_info(ws, row, 4)
+    if con_entregas:
+        _encabezados_entregas(ws, row, 5)
     row += 1
+    fila_socio_ini = row
     if b.socios:
         for s in b.socios:
             ws.cell(row=row, column=1, value=s.nombre).border = _border
@@ -5666,6 +5839,10 @@ def _bloque_balance_pesos(
                         monto_mxn=s.monto_mxn,
                     )
                 )
+            if con_entregas:
+                # POR ENTREGAR = ROUND(MONTO MXN − ENTREGADO, 2): la resta del
+                # API, visible como fórmula (C = MONTO MXN del socio).
+                _celdas_entregas_socio(ws, row, 5, s, col_monto_mxn="C")
             row += 1
     else:
         ws.cell(
@@ -5673,6 +5850,17 @@ def _bloque_balance_pesos(
         ).font = Font(color=RED, italic=True)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
         row += 1
+    if con_entregas:
+        row = _pie_entregas_socios(
+            ws,
+            b,
+            row,
+            col=5,
+            fila_ini=fila_socio_ini,
+            fila_fin=fila_socio_ini + len(b.socios) - 1,
+            n_cols=n_tabla,
+            ancho=_ANCHO_HOJA_BALANCE_PESOS + _ANCHO_COL_ENTREGAS * _N_COLS_ENTREGAS,
+        )
     # Reserva de overhaul (19-oct-2026, API 0.0.98): bloque INFORMATIVO al
     # final, después de los socios. Solo con la llave; sin ella, byte a byte.
     if _con_reserva_overhaul(b):
@@ -5696,8 +5884,7 @@ def _hoja_balance_pesos(
     row = _bloque_balance_pesos(ws, req, 4, refs_mxn=refs_mxn, refs_usd=refs_usd)
     nota = _nota_balance_pesos(_con_reserva_overhaul(req.balance))
     _pinta_nota_envuelta(ws, row + 1, nota, 4, _ANCHO_HOJA_BALANCE_PESOS)
-    for i, w in enumerate(_ANCHOS_BALANCE_PESOS, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = w
+    _anchos_hoja_balance(ws, _ANCHOS_BALANCE_PESOS, _con_entregas_socios(req.balance))
 
 
 def _bloque_empresa_pesos(
@@ -5937,8 +6124,9 @@ def _hoja_balance_general_pesos(
         )
     nota = _nota_balance_pesos(any(_con_reserva_overhaul(a.balance) for a in req.aviones))
     _pinta_nota_envuelta(ws, row, nota, 4, _ANCHO_HOJA_BALANCE_PESOS)
-    for i, w in enumerate(_ANCHOS_BALANCE_PESOS, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = w
+    _anchos_hoja_balance(
+        ws, _ANCHOS_BALANCE_PESOS, any(_con_entregas_socios(a.balance) for a in req.aviones)
+    )
 
 
 def _hoja_pendientes(ws: Worksheet, req: BalanceAvionRequest) -> None:
@@ -8008,8 +8196,11 @@ def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
                     afac_en_filas=_afac_en_filas(cons.otros_movimientos),
                     afac_por_vuelo=_afac_por_vuelo(cons.otros_movimientos),
                 )
-            for i, w in enumerate([46, 14, 16], start=1):
-                ws_b.column_dimensions[get_column_letter(i)].width = w
+            _anchos_hoja_balance(
+                ws_b,
+                _ANCHOS_BALANCE_USD,
+                any(_con_entregas_socios(a.balance) for a in req.aviones),
+            )
 
         _hoja_pendientes(wb.create_sheet("pendientes de captura"), cons)
 

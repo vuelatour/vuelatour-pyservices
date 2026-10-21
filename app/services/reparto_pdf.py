@@ -170,12 +170,277 @@ _LINEA_COMISION_VENDEDOR_VUELATOUR = (
     "   incluye comisión del vendedor cotizada (pre-IVA) — su pago no es costo del avión"
 )
 
+# ===== LA CASCADA DEL BALANCE (20-oct-2026, API 0.0.101, invariante 99) =====
+# Decisión del cliente («que cuadren»): el reparto usa la MISMA cascada del
+# balance. Con la bandera raíz `reparto_como_balance`: (1) la PROVISIÓN AFAC
+# (tarifa de la ficha del avión × horas cobradas) RESTA del saldo —el
+# `saldo_*` del API ya la trae restada: aquí solo se pinta la fila—; (2) la
+# RESERVA DE OVERHAUL ya no resta: va DESPUÉS del saldo, en gris, como lo que
+# el avión debe guardar, y se reparte por socio («Reserva a guardar»); (3) al
+# socio con `descuenta_reserva` VuelaTour se la retiene y su «A recibir» =
+# utilidad − reserva (lo calcula el API: `monto_*`). Sin la bandera nada de
+# esto se usa (flujos del PDF idénticos). Textos del contrato (es-MX); en
+# Helvetica no van «−» ni «→» (se dibujan como caja): se usa «-».
+FILA_PROVISION_AFAC = "(-) Provisión AFAC (tarifa × horas cobradas)"
+FILA_RESERVA_INFORMATIVA = (
+    "Reserva de overhaul · informativa, no se resta: lo que el avión debe guardar"
+)
+LINEA_RESERVA_RETENIDA = "   de la cual VuelaTour retiene a los socios que la descuentan"
+SUFIJO_SE_DESCUENTA = " (se descuenta)"
+ENCABEZADOS_SOCIOS_BALANCE = ["Socio", "%", "Utilidad", "Reserva a guardar", "A recibir"]
+ENCABEZADOS_SOCIOS_BALANCE_PESOS = [
+    "Socio", "%", "Utilidad (MXN)", "Reserva a guardar (MXN)", "A recibir (MXN)",
+]  # fmt: skip
+ENCABEZADOS_RESUMEN_SOCIOS_BALANCE = ["Socio", "Reserva a guardar", "Total a recibir"]
+ENCABEZADOS_RESUMEN_SOCIOS_BALANCE_PESOS = [
+    "Socio", "Reserva a guardar (MXN)", "Total a recibir (MXN)",
+]  # fmt: skip
+# Cláusula del pie con la cascada nueva (va antes de «Montos en …»).
+_PIE_CASCADA_BALANCE = (
+    " Saldo disponible = venta del avión cobrada - comisiones - gastos - fijos - provisión "
+    "AFAC (tarifa de la ficha del avión × horas cobradas) + otros ingresos del avión; la "
+    "reserva de overhaul se informa por socio (lo que debe guardar) y solo se descuenta a "
+    "quien lo pidió: VuelaTour la retiene."
+)
+# Celdas de las tablas de socios con la cascada nueva: un Paragraph envuelve
+# (un nombre largo o «$21,300.00 (se descuenta)» no se enciman con la celda
+# vecina); en pesos, el MXN arriba y el USD informativo debajo, gris y chico.
+_S_CELDA_BALANCE = ParagraphStyle("celda_balance", fontName="Helvetica", fontSize=8, leading=10)
+_S_CELDA_BALANCE_DER = ParagraphStyle(
+    "celda_balance_der", parent=_S_CELDA_BALANCE, alignment=2
+)
+_S_RESUMEN_BALANCE = ParagraphStyle(
+    "resumen_balance", fontName="Helvetica", fontSize=9, leading=11
+)
+_S_RESUMEN_BALANCE_DER = ParagraphStyle(
+    "resumen_balance_der", parent=_S_RESUMEN_BALANCE, alignment=2
+)
+
+
+def _num(x: float) -> str:
+    """Número corto para una etiqueta: «100», «112.5», «1,234.5» (hasta 2
+    decimales, sin ceros de más)."""
+    return f"{round(x, 2):,g}"
+
+
+def etiqueta_provision_afac(avion: RepartoAvion) -> str:
+    """«(-) Provisión AFAC (100 USD/hr × 3.5 h cobradas)» con la tarifa de la
+    ficha del avión y las horas cobradas que manda el API; sin tarifa
+    configurada (None ⇒ provisión 0), la etiqueta genérica."""
+    if avion.afac_tarifa_usd_hr is None or avion.afac_horas_cobradas_hr is None:
+        return FILA_PROVISION_AFAC
+    return (
+        f"(-) Provisión AFAC ({_num(avion.afac_tarifa_usd_hr)} USD/hr × "
+        f"{_num(avion.afac_horas_cobradas_hr)} h cobradas)"
+    )
+
+
+def aviso_sin_tarifa_afac(avion: RepartoAvion) -> str | None:
+    """Con la cascada del balance, un avión con horas cobradas y sin tarifa
+    AFAC en su ficha resta $0.00 de provisión: el supervisor debe verlo (el
+    balance lo lista en sus pendientes)."""
+    if avion.afac_tarifa_usd_hr is None and (avion.afac_horas_cobradas_hr or 0) > 0:
+        return (
+            "Sin tarifa AFAC configurada en la ficha del avión: la provisión AFAC es "
+            f"$0.00 pese a {_num(avion.afac_horas_cobradas_hr)} h cobradas."
+        )
+    return None
+
+
+def _retiene_reserva(avion: RepartoAvion) -> bool:
+    return (avion.reserva_retenida_usd or 0) > 0 or (avion.reserva_retenida_mxn or 0) > 0
+
+
+def _filas_reserva_informativa(avion: RepartoAvion, *, pesos: bool) -> list[list[str]]:
+    """Filas GRISES bajo el saldo: la reserva de overhaul del avión (lo que
+    debe guardar; NO se resta), en pesos su T.C. oficial del cierre (la
+    etiqueta con el T.C. no cabe en la columna de 112 mm) y, solo si > 0, lo
+    que VuelaTour retiene a los socios que la descuentan."""
+    if pesos:
+        filas = [
+            [
+                FILA_RESERVA_INFORMATIVA,
+                _dinero(avion.reserva_overhaul_mxn),
+                _usd(avion.reserva_overhaul_usd),
+            ]
+        ]
+        # El T.C. solo tiene sentido con una reserva que convertir (el API
+        # lo manda null con reserva 0; aquí se blinda igual).
+        if avion.reserva_tc and (avion.reserva_overhaul_usd or avion.reserva_overhaul_mxn):
+            filas.append(
+                [f"   en pesos al T.C. oficial del cierre ({_tc_txt(avion.reserva_tc)})", "", ""]
+            )
+        if _retiene_reserva(avion):
+            filas.append(
+                [
+                    LINEA_RESERVA_RETENIDA,
+                    _dinero(avion.reserva_retenida_mxn),
+                    _dinero(avion.reserva_retenida_usd),
+                ]
+            )
+        return filas
+    filas = [[FILA_RESERVA_INFORMATIVA, _usd(avion.reserva_overhaul_usd)]]
+    if _retiene_reserva(avion):
+        filas.append([LINEA_RESERVA_RETENIDA, _dinero(avion.reserva_retenida_usd)])
+    return filas
+
+
+def _monto_balance(
+    mxn: float | None,
+    usd: float | None,
+    *,
+    pesos: bool,
+    sufijo: str = "",
+    bold: bool = False,
+    estilo: ParagraphStyle = _S_CELDA_BALANCE_DER,
+):
+    """Celda de un monto de las tablas de socios: en dólares, texto plano
+    («$548.58 (se descuenta)»); en pesos, el MXN (principal) y debajo el USD
+    informativo en gris chico, dentro de un Paragraph. «—» si el API no mandó
+    el número (jamás un 0 inventado)."""
+    if not pesos:
+        return f"{_dinero(usd)}{sufijo}"
+    principal = escape(f"{_dinero(mxn)}{sufijo}")
+    if bold:
+        principal = f"<b>{principal}</b>"
+    return Paragraph(
+        f"{principal}<br/><font size=\"6.5\" color=\"#94A3B8\"><i>{escape(_dinero(usd))} USD"
+        "</i></font>",
+        estilo,
+    )
+
+
+def _tabla_socios_balance(avion: RepartoAvion, *, pesos: bool) -> Table:
+    """Reparto por socio con la cascada del balance: Socio · % · Utilidad
+    (su parte del saldo) · Reserva a guardar (su parte de la reserva de
+    overhaul; « (se descuenta)» si VuelaTour se la retiene) · A recibir
+    (`monto_*` del API: utilidad − reserva solo a quien la descuenta)."""
+    filas: list[list] = [
+        list(ENCABEZADOS_SOCIOS_BALANCE_PESOS if pesos else ENCABEZADOS_SOCIOS_BALANCE)
+    ]
+    for linea in avion.reparto:
+        sufijo = SUFIJO_SE_DESCUENTA if linea.descuenta_reserva else ""
+        filas.append(
+            [
+                Paragraph(escape(linea.socio_nombre), _S_CELDA_BALANCE),
+                f"{linea.porcentaje:g}%",
+                _monto_balance(linea.utilidad_mxn, linea.utilidad_usd, pesos=pesos),
+                _monto_balance(linea.reserva_mxn, linea.reserva_usd, pesos=pesos, sufijo=sufijo),
+                _monto_balance(linea.monto_mxn, linea.monto_usd, pesos=pesos, bold=True),
+            ]
+        )
+    tabla = Table(filas, colWidths=[60 * mm, 12 * mm, 30 * mm, 38 * mm, 30 * mm])
+    tabla.setStyle(
+        TableStyle(
+            [
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("TEXTCOLOR", (0, 0), (-1, 0), MUTED),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("FONTNAME", (4, 1), (4, -1), "Helvetica-Bold"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LINEBELOW", (0, 0), (-1, 0), 0.4, LIGHT),
+            ]
+        )
+    )
+    return tabla
+
+
+def _suma_opcional(acumulado: float | None, valor: float | None) -> float | None:
+    """Re-suma para MOSTRAR: un None (el API no mandó el número) ⇒ None."""
+    if acumulado is None or valor is None:
+        return None
+    return acumulado + valor
+
+
+def _resumen_socios_balance(
+    req: RepartoPdfRequest, estilo_seccion: ParagraphStyle, *, pesos: bool
+) -> list:
+    """«Resumen por socio» con la cascada del balance: Σ de su reserva a
+    guardar (`reserva_*`) y Σ de lo que recibe (`monto_*`), por socio; en
+    pesos con el USD informativo debajo de cada monto. Vacío sin reparto."""
+    reserva_usd: dict[str, float | None] = {}
+    reserva_mxn: dict[str, float | None] = {}
+    total_usd: dict[str, float] = {}
+    total_mxn: dict[str, float | None] = {}
+    for avion in req.aviones:
+        for linea in avion.reparto:
+            n = linea.socio_nombre
+            total_usd[n] = total_usd.get(n, 0.0) + linea.monto_usd
+            total_mxn[n] = _suma_opcional(total_mxn.get(n, 0.0), linea.monto_mxn)
+            reserva_usd[n] = _suma_opcional(reserva_usd.get(n, 0.0), linea.reserva_usd)
+            reserva_mxn[n] = _suma_opcional(reserva_mxn.get(n, 0.0), linea.reserva_mxn)
+    if not total_usd:
+        return []
+    if pesos:
+        orden = sorted(
+            total_usd,
+            key=lambda n: (
+                total_mxn[n] if total_mxn[n] is not None else float("-inf"),
+                total_usd[n],
+            ),
+            reverse=True,
+        )
+    else:
+        orden = sorted(total_usd, key=lambda n: total_usd[n], reverse=True)
+    encabezados = (
+        ENCABEZADOS_RESUMEN_SOCIOS_BALANCE_PESOS if pesos else ENCABEZADOS_RESUMEN_SOCIOS_BALANCE
+    )
+    filas: list[list] = [list(encabezados)]
+    for n in orden:
+        filas.append(
+            [
+                Paragraph(escape(n), _S_RESUMEN_BALANCE),
+                _monto_balance(
+                    reserva_mxn[n], reserva_usd[n], pesos=pesos, estilo=_S_RESUMEN_BALANCE_DER
+                ),
+                _monto_balance(
+                    total_mxn[n],
+                    total_usd[n],
+                    pesos=pesos,
+                    bold=True,
+                    estilo=_S_RESUMEN_BALANCE_DER,
+                ),
+            ]
+        )
+    tabla = Table(filas, colWidths=[90 * mm, 40 * mm, 40 * mm])
+    tabla.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), BRAND),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("FONTNAME", (2, 1), (2, -1), "Helvetica-Bold"),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
+            ]
+        )
+    )
+    return [
+        _regla(),
+        Spacer(1, 3 * mm),
+        Paragraph("Resumen por socio", estilo_seccion),
+        Spacer(1, 2 * mm),
+        tabla,
+    ]
+
 
 def _pie(req: RepartoPdfRequest) -> str:
     """Pie del PDF. Con comisiones a cargo del avión (regla de septiembre
     2026) la frase «el pago de la comisión al vendedor sale de VuelaTour, no
-    del avión» ya no es verdad: dice qué absorbe el avión y dónde resta."""
+    del avión» ya no es verdad: dice qué absorbe el avión y dónde resta. Con
+    la cascada del balance (20-oct-2026) dice cómo se arma el saldo y que la
+    reserva solo se informa."""
     fin = _PIE_FIN_PESOS if req.reparto_en_pesos else _PIE_FIN
+    if req.reparto_como_balance:
+        fin = _PIE_CASCADA_BALANCE + fin
     if not comisiones_al_avion(req):
         return _PIE_INICIO + _PIE_COMISION_VENDEDOR + fin
     return (
@@ -460,7 +725,8 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
         # saldo, así que «Gastos del periodo» las incluye y venta − gastos =
         # saldo.
         total_gastos = sum(
-            _gastos_avion(a) + a.comisiones_venta_usd for a in req.aviones
+            _gastos_avion(a, req.reparto_como_balance) + a.comisiones_venta_usd
+            for a in req.aviones
         )
         # Otros ingresos de VuelaTour (TUAs/extras/pernocta cobrados): solo
         # informativo, FUERA del saldo y del reparto. Viene del API; si un API
@@ -566,6 +832,7 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
                     cierre=_parrafos_cierre_avion(
                         req.cierre, avion.matricula, s_cierre, dinero=_usd_texto
                     ),
+                    como_balance=req.reparto_como_balance,
                 )
             )
         else:
@@ -575,6 +842,7 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
                     s_avion,
                     linea_comision=linea_comision_vendedor(req),
                     cierre=_parrafos_cierre_avion(req.cierre, avion.matricula, s_cierre),
+                    como_balance=req.reparto_como_balance,
                 )
             )
         story.append(Spacer(1, 6 * mm))
@@ -600,8 +868,11 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
 
     # ---- Resumen por socio ----
     # Reparto EN PESOS (18-oct-2026): lo que se transfiere en pesos a
-    # cada socio, con los dólares a un lado como informativos.
-    if req.reparto_en_pesos:
+    # cada socio, con los dólares a un lado como informativos. Con la cascada
+    # del balance (20-oct-2026): reserva a guardar y total a recibir por socio.
+    if req.reparto_como_balance:
+        story += _resumen_socios_balance(req, s_seccion, pesos=req.reparto_en_pesos)
+    elif req.reparto_en_pesos:
         story += _resumen_socios_pesos(req, s_seccion)
     else:
         por_socio: dict[str, float] = {}
@@ -648,14 +919,14 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
     return buffer.getvalue()
 
 
-def _gastos_avion(a: RepartoAvion) -> float:
-    return (
-        a.gastos_directos_usd
-        + a.gastos_indirectos_usd
-        + a.permisos_usd
-        + a.otros_usd
-        + a.reserva_overhaul_usd
-    )
+def _gastos_avion(a: RepartoAvion, como_balance: bool = False) -> float:
+    """Gastos del periodo del avión para el resumen global. Con la cascada
+    del balance (20-oct-2026) entra la provisión AFAC y sale la reserva de
+    overhaul (ya no resta), para que venta − gastos = saldo siga cuadrando."""
+    base = a.gastos_directos_usd + a.gastos_indirectos_usd + a.permisos_usd + a.otros_usd
+    if como_balance:
+        return base + (a.afac_reservado_usd or 0.0)
+    return base + a.reserva_overhaul_usd
 
 
 def _bloque_avion(
@@ -664,10 +935,13 @@ def _bloque_avion(
     *,
     linea_comision: str = LINEA_COMISION_VENDEDOR,
     cierre: list[Paragraph] | None = None,
+    como_balance: bool = False,
 ) -> KeepTogether:
     """`cierre` (16-oct-2026): los párrafos del cierre de mes de ESTE avión
     (vuelos que pasan / vienen / pasarían), al final del bloque; vacío o
-    None ⇒ el bloque de siempre."""
+    None ⇒ el bloque de siempre. `como_balance` (20-oct-2026): la cascada
+    del balance (provisión AFAC resta; reserva informativa tras el saldo;
+    socios con utilidad, reserva a guardar y a recibir)."""
     titulo = Paragraph(f"{avion.matricula} — {avion.modelo}", estilo_titulo)
 
     filas: list[list[str]] = [
@@ -733,20 +1007,32 @@ def _bloque_avion(
         ["(-) Gastos indirectos", _usd(-avion.gastos_indirectos_usd)],
         ["(-) Permisos", _usd(-avion.permisos_usd)],
         ["(-) Fijos (prorrateo + reparto manual)", _usd(-avion.otros_usd)],
-        ["(-) Reserva overhaul", _usd(-avion.reserva_overhaul_usd)],
-        ["Saldo disponible", _usd(avion.saldo_usd)],
     ]
+    # LA CASCADA DEL BALANCE (20-oct-2026): la provisión AFAC resta en lugar
+    # de la reserva; la reserva va DESPUÉS del saldo, en gris (no se resta).
+    if como_balance:
+        filas.append([etiqueta_provision_afac(avion), _dinero_neg(avion.afac_reservado_usd)])
+    else:
+        filas.append(["(-) Reserva overhaul", _usd(-avion.reserva_overhaul_usd)])
+    # El saldo se resalta por su índice: con la cascada del balance ya no es
+    # la última fila.
+    idx_saldo = len(filas)
+    filas.append(["Saldo disponible", _usd(avion.saldo_usd)])
+    if como_balance:
+        reserva = _filas_reserva_informativa(avion, pesos=False)
+        info_rows += range(len(filas), len(filas) + len(reserva))
+        filas += reserva
     cascada = Table(filas, colWidths=[120 * mm, 50 * mm])
     estilo: list = [
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("ALIGN", (1, 0), (1, -1), "RIGHT"),
         ("TOPPADDING", (0, 0), (-1, -1), 3),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LINEABOVE", (0, -1), (-1, -1), 0.6, MUTED),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("LINEABOVE", (0, idx_saldo), (-1, idx_saldo), 0.6, MUTED),
+        ("FONTNAME", (0, idx_saldo), (-1, idx_saldo), "Helvetica-Bold"),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("TEXTCOLOR", (0, -1), (-1, -1), BRAND),
-        ("BACKGROUND", (0, -1), (-1, -1), LIGHT),
+        ("TEXTCOLOR", (0, idx_saldo), (-1, idx_saldo), BRAND),
+        ("BACKGROUND", (0, idx_saldo), (-1, idx_saldo), LIGHT),
     ]
     for info_idx in info_rows:
         estilo += [
@@ -822,6 +1108,8 @@ def _bloque_avion(
         )
     if avion.reserva_incompleta:
         avisos.append("Sin tarifa de reserva de overhaul configurada pese a horas voladas.")
+    if como_balance and (aviso_afac := aviso_sin_tarifa_afac(avion)):
+        avisos.append(aviso_afac)
     # Vigencias de socios traslapadas o incompletas: el reparto impreso saldría
     # doble (o corto). La web lo delata con un badge; el papel debe decirlo igual.
     if avion.reparto and round(avion.reparto_porcentaje_total, 2) != 100:
@@ -846,7 +1134,10 @@ def _bloque_avion(
         bloque.append(Spacer(1, 1 * mm))
         bloque.append(Paragraph(f"Nota: {nota_tc}", nota_style))
 
-    if avion.reparto:
+    if avion.reparto and como_balance:
+        bloque.append(Spacer(1, 2 * mm))
+        bloque.append(_tabla_socios_balance(avion, pesos=False))
+    elif avion.reparto:
         rfilas = [["Socio", "%", "Monto"]]
         for linea in avion.reparto:
             rfilas.append(
@@ -939,15 +1230,17 @@ def _suma_pesos(valores: list[float | None]) -> float | None:
     return round(sum(v for v in valores if v is not None), 2)
 
 
-def _gastos_avion_pesos(a: RepartoAvion) -> float | None:
-    """Gastos del periodo del avión EN PESOS (+ comisiones), para el resumen."""
+def _gastos_avion_pesos(a: RepartoAvion, como_balance: bool = False) -> float | None:
+    """Gastos del periodo del avión EN PESOS (+ comisiones), para el resumen.
+    Con la cascada del balance (20-oct-2026): la provisión AFAC en lugar de
+    la reserva de overhaul (que ya no resta)."""
     return _suma_pesos(
         [
             a.gastos_directos_mxn,
             a.gastos_indirectos_mxn,
             a.permisos_mxn,
             a.otros_mxn,
-            a.reserva_overhaul_mxn,
+            a.afac_reservado_mxn if como_balance else a.reserva_overhaul_mxn,
             a.comisiones_venta_mxn if a.comisiones_venta_usd or a.comisiones_venta_mxn else 0.0,
         ]
     )
@@ -958,15 +1251,16 @@ def _tabla_resumen_pesos(req: RepartoPdfRequest) -> Table:
     (renglón chico y gris). «Otros ingresos VuelaTour» solo existe en
     dólares: se imprime chico, con «USD»."""
     aviones = req.aviones
+    como_balance = req.reparto_como_balance
     total_ingresos = _suma_pesos([a.ingresos_cobrado_mxn for a in aviones])
     total_saldo = _suma_pesos([a.saldo_mxn for a in aviones])
-    total_gastos = _suma_pesos([_gastos_avion_pesos(a) for a in aviones])
+    total_gastos = _suma_pesos([_gastos_avion_pesos(a, como_balance) for a in aviones])
     total_otros = req.otros_ingresos_vuelatour_total_usd or sum(
         a.otros_ingresos_vuelatour_usd for a in aviones
     )
     usd_ingresos = sum(a.ingresos_cobrado_usd for a in aviones)
     usd_saldo = sum(a.saldo_usd for a in aviones)
-    usd_gastos = sum(_gastos_avion(a) + a.comisiones_venta_usd for a in aviones)
+    usd_gastos = sum(_gastos_avion(a, como_balance) + a.comisiones_venta_usd for a in aviones)
     con_oi = any(a.otros_ingresos_avion_usd or a.otros_ingresos_avion_mxn for a in aviones)
     if con_oi:
         total_oi = _suma_pesos([a.otros_ingresos_avion_mxn or 0.0 for a in aviones])
@@ -1097,11 +1391,12 @@ def _bloque_avion_pesos(
     *,
     linea_comision: str = LINEA_COMISION_VENDEDOR,
     cierre: list[Paragraph] | None = None,
+    como_balance: bool = False,
 ) -> KeepTogether:
     """Gemelo de `_bloque_avion` EN PESOS: cascada etiqueta · pesos · USD
     informativo, el aviso de dólares sin pesos, vuelos con pesos y dólares,
     gastos por categoría (con pesos si el API los manda) y el reparto por
-    socio en pesos."""
+    socio en pesos. `como_balance` (20-oct-2026): la cascada del balance."""
     titulo = Paragraph(f"{avion.matricula} — {avion.modelo}", estilo_titulo)
 
     filas: list[list[str]] = [
@@ -1175,13 +1470,31 @@ def _bloque_avion_pesos(
             _dinero_neg(avion.otros_mxn),
             _usd(-avion.otros_usd),
         ],
-        [
-            _etiqueta_reserva_pesos(avion),
-            _dinero_neg(avion.reserva_overhaul_mxn),
-            _usd(-avion.reserva_overhaul_usd),
-        ],
-        ["Saldo disponible", _dinero(avion.saldo_mxn), _usd(avion.saldo_usd)],
     ]
+    # LA CASCADA DEL BALANCE (20-oct-2026): la provisión AFAC resta en lugar
+    # de la reserva; la reserva va DESPUÉS del saldo, en gris (no se resta).
+    if como_balance:
+        filas.append(
+            [
+                etiqueta_provision_afac(avion),
+                _dinero_neg(avion.afac_reservado_mxn),
+                _dinero_neg(avion.afac_reservado_usd),
+            ]
+        )
+    else:
+        filas.append(
+            [
+                _etiqueta_reserva_pesos(avion),
+                _dinero_neg(avion.reserva_overhaul_mxn),
+                _usd(-avion.reserva_overhaul_usd),
+            ]
+        )
+    idx_saldo = len(filas)
+    filas.append(["Saldo disponible", _dinero(avion.saldo_mxn), _usd(avion.saldo_usd)])
+    if como_balance:
+        reserva = _filas_reserva_informativa(avion, pesos=True)
+        info_rows += range(len(filas), len(filas) + len(reserva))
+        filas += reserva
     cascada = Table(filas, colWidths=_COLS_CASCADA_PESOS)
     estilo: list = [
         ("FONTSIZE", (0, 0), (-1, -1), 9),
@@ -1199,10 +1512,11 @@ def _bloque_avion_pesos(
         ("FONTSIZE", (2, 1), (2, -1), 7.5),
         ("FONTNAME", (2, 1), (2, -1), "Helvetica-Oblique"),
         # Saldo: pesos en negritas y azul; los dólares siguen informativos.
-        ("LINEABOVE", (0, -1), (-1, -1), 0.6, MUTED),
-        ("FONTNAME", (0, -1), (1, -1), "Helvetica-Bold"),
-        ("TEXTCOLOR", (0, -1), (1, -1), BRAND),
-        ("BACKGROUND", (0, -1), (-1, -1), LIGHT),
+        # Por su índice: con la cascada del balance ya no es la última fila.
+        ("LINEABOVE", (0, idx_saldo), (-1, idx_saldo), 0.6, MUTED),
+        ("FONTNAME", (0, idx_saldo), (1, idx_saldo), "Helvetica-Bold"),
+        ("TEXTCOLOR", (0, idx_saldo), (1, idx_saldo), BRAND),
+        ("BACKGROUND", (0, idx_saldo), (-1, idx_saldo), LIGHT),
     ]
     for info_idx in info_rows:
         estilo += [
@@ -1322,6 +1636,8 @@ def _bloque_avion_pesos(
         )
     if avion.reserva_incompleta:
         avisos.append("Sin tarifa de reserva de overhaul configurada pese a horas voladas.")
+    if como_balance and (aviso_afac := aviso_sin_tarifa_afac(avion)):
+        avisos.append(aviso_afac)
     if avion.reparto and round(avion.reparto_porcentaje_total, 2) != 100:
         avisos.append(
             f"Los porcentajes de socios suman {avion.reparto_porcentaje_total:g}% (no 100%): "
@@ -1341,7 +1657,10 @@ def _bloque_avion_pesos(
         bloque.append(Spacer(1, 1 * mm))
         bloque.append(Paragraph(f"Nota: {nota_tc}", nota_style))
 
-    if avion.reparto:
+    if avion.reparto and como_balance:
+        bloque.append(Spacer(1, 2 * mm))
+        bloque.append(_tabla_socios_balance(avion, pesos=True))
+    elif avion.reparto:
         rfilas = [["Socio", "%", "Monto MXN", "USD (inf.)"]]
         for linea in avion.reparto:
             rfilas.append(

@@ -21,6 +21,26 @@ class RepartoSocioLinea(BaseModel):
     # porcentaje sobre el saldo en pesos (residuo en centavos lo decide el
     # API). Solo se pinta con `reparto_en_pesos`; None = sin pesos.
     monto_mxn: float | None = None
+    # ADITIVOS (20-oct-2026, API 0.0.101, invariante 99 «LA CASCADA DEL
+    # BALANCE»; bandera raíz `reparto_como_balance`): `utilidad_*` = su parte
+    # del saldo ANTES de la reserva; `reserva_*` = su parte de la reserva de
+    # overhaul («lo que debe guardar», se INFORMA siempre); `descuenta_reserva`
+    # true ⇒ VuelaTour se la retiene y `monto_* = utilidad_* − reserva_*` (lo
+    # que se le entrega); false ⇒ `monto_* = utilidad_*`. Todo lo calcula el
+    # API: aquí jamás se resta. Solo se pintan con la bandera; None = el API
+    # no lo mandó (⇒ «—»).
+    utilidad_usd: float | None = None
+    utilidad_mxn: float | None = None
+    reserva_usd: float | None = None
+    reserva_mxn: float | None = None
+    descuenta_reserva: bool | None = None
+
+    @field_validator("descuenta_reserva", mode="before")
+    @classmethod
+    def _descuenta_liberal(cls, v: Any) -> bool | None:
+        """Solo un booleano JSON cuenta; null/texto/número ⇒ None (jamás un
+        422 por una marca informativa)."""
+        return v if isinstance(v, bool) else None
 
 
 class RepartoOtrosIngresosDesglose(BaseModel):
@@ -335,6 +355,23 @@ class RepartoAvion(BaseModel):
     pesos_sin_tc_usd: float | None = None
     # T.C. oficial del cierre con que se pasó la reserva de overhaul a pesos.
     reserva_tc: float | None = None
+    # ADITIVOS (20-oct-2026, API 0.0.101, invariante 99 «LA CASCADA DEL
+    # BALANCE»; bandera raíz `reparto_como_balance`). La PROVISIÓN AFAC del
+    # periodo (tarifa USD/hr de la ficha del avión × horas COBRADAS: la
+    # columna «PERMISO AFAC (PROVISIÓN)» del balance) RESTA del saldo —
+    # `saldo_usd`/`saldo_mxn` del API YA la restan: aquí jamás se vuelve a
+    # restar—; `afac_horas_cobradas_hr` y `afac_tarifa_usd_hr` solo arman la
+    # etiqueta («100 USD/hr × 3.5 h cobradas»; tarifa None = avión sin tarifa
+    # configurada ⇒ provisión 0). Con la bandera, `reserva_overhaul_*` pasa a
+    # ser INFORMATIVA (ya no resta) y `reserva_retenida_*` es la Σ de la
+    # reserva de los socios que la descuentan (VuelaTour la retiene). Sin la
+    # bandera no se pintan: los documentos de siempre.
+    afac_reservado_usd: float | None = None
+    afac_reservado_mxn: float | None = None
+    afac_horas_cobradas_hr: float | None = None
+    afac_tarifa_usd_hr: float | None = None
+    reserva_retenida_usd: float | None = None
+    reserva_retenida_mxn: float | None = None
 
     @field_validator(
         "otros_ingresos_avion_usd", "otros_ingresos_avion_sin_tc_mxn", mode="before"
@@ -382,13 +419,20 @@ class RepartoPdfRequest(BaseModel):
     # PESOS (cascada, saldo, socios, vuelos y otros ingresos con los `*_mxn`);
     # los dólares quedan como informativos. Sin ella ⇒ byte a byte.
     reparto_en_pesos: bool = False
+    # ADITIVO (20-oct-2026, API 0.0.101, invariante 99 «LA CASCADA DEL
+    # BALANCE»): la provisión AFAC resta en la cascada (`afac_reservado_*`),
+    # la reserva de overhaul solo se informa (por avión y por socio:
+    # `reparto[].reserva_*`) y se descuenta solo al socio con
+    # `descuenta_reserva` (`reserva_retenida_*`). Solo un `true` JSON la
+    # enciende; sin ella ⇒ el PDF y el Excel de siempre, byte a byte.
+    reparto_como_balance: bool = False
 
     @field_validator("regla_comisiones", mode="before")
     @classmethod
     def _regla_liberal(cls, v: Any) -> str | None:
         return regla_comisiones_liberal(v)
 
-    @field_validator("reparto_en_pesos", mode="before")
+    @field_validator("reparto_en_pesos", "reparto_como_balance", mode="before")
     @classmethod
-    def _reparto_en_pesos_liberal(cls, v: Any) -> bool:
+    def _bandera(cls, v: Any) -> bool:
         return bandera_liberal(v)

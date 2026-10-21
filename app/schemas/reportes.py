@@ -1283,6 +1283,32 @@ class BalanceAvionSocio(BaseModel):
     # en pesos = round2(pct/100 × `utilidad_cobrada_mxn`). Solo se pinta con
     # la bandera `balance_en_pesos`; None = sin pesos (o API viejo).
     monto_mxn: float | None = None
+    # ENTREGAS A SOCIOS (21-oct-2026, invariante 100 del API; pedido del
+    # cliente: «agregar en el balance general y por avión los pagos que se
+    # vayan dando a los socios»). Lo YA entregado a este socio «por este
+    # avión» en los meses del periodo —entregas vivas de Pagos a socios—, en
+    # PESOS (`entregado_mxn`: lo que cada entrega descontó del saldo), el USD
+    # informativo (`entregado_usd`), el conteo (`entregas`) y lo que FALTA
+    # (`por_entregar_mxn` = monto a recibir en pesos − entregado; NEGATIVO =
+    # se le adelantó). Todo lo calcula el API; aquí solo se pinta, y SOLO
+    # cuando el bloque trae `entregado_socios_mxn` (el discriminador). None
+    # = sin dato ⇒ celda vacía / «—», jamás un 0 ni una resta aquí. Liberal:
+    # jamás un 422 por un metadato.
+    entregado_mxn: float | None = None
+    entregado_usd: float | None = None
+    entregas: int | None = None
+    por_entregar_mxn: float | None = None
+
+    @field_validator("entregado_mxn", "entregado_usd", "por_entregar_mxn", mode="before")
+    @classmethod
+    def _entregas_numeros_liberales(cls, v: Any) -> float | None:
+        return numero_cierre_liberal(v)
+
+    @field_validator("entregas", mode="before")
+    @classmethod
+    def _entregas_conteo_liberal(cls, v: Any) -> int | None:
+        n = numero_cierre_liberal(v)
+        return int(n) if n is not None and n >= 0 and n.is_integer() else None
 
 
 def bandera_liberal(v: Any) -> bool:
@@ -1380,11 +1406,21 @@ class BalanceAvionBalanceBloque(BaseModel):
     reserva_overhaul_tc: float | None = None  # T.C. oficial con que salió el MXN
     reserva_overhaul_tc_dia: str | None = None  # 'YYYY-MM-DD', día Cancún del T.C.
     reserva_overhaul_incompleta: bool | None = None
+    # ENTREGAS A SOCIOS (21-oct-2026, invariante 100 del API): Σ de
+    # `socios[].entregado_mxn` y Σ de `socios[].por_entregar_mxn` (None si a
+    # algún socio le faltan pesos), en pesos. `entregado_socios_mxn` es el
+    # DISCRIMINADOR (`_con_entregas_socios` en el render: número, 0.0 también
+    # cuenta); None = API previo o cuenta corriente de los socios sin su
+    # migración ⇒ ni columnas, ni totales, ni nota: libro byte a byte.
+    entregado_socios_mxn: float | None = None
+    por_entregar_socios_mxn: float | None = None
 
     @field_validator(
         "reserva_overhaul_horas_hr",
         "reserva_overhaul_usd_hr",
         "reserva_overhaul_tc",
+        "entregado_socios_mxn",
+        "por_entregar_socios_mxn",
         mode="before",
     )
     @classmethod

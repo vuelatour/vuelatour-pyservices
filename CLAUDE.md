@@ -2075,8 +2075,9 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   (horas voladas del periodo × Σ `monto_por_hora_usd` de los motores) NO se
   resta en el Balance por avión ni en el Balance general; solo queda
   MARCADA, muy clara, para que se entienda qué debe aportar el avión para el
-  overhaul (el reparto a socios sigue restándola). **Aquí no se calcula
-  nada**: se pinta un bloque informativo y, con la regla B, se dejan de
+  overhaul (el reparto a socios la restaba hasta el API 0.0.100; desde el
+  0.0.101 tampoco: bandera `reparto_como_balance`, bullet siguiente). **Aquí
+  no se calcula nada**: se pinta un bloque informativo y, con la regla B, se dejan de
   derivar dólares.
   - **Contrato ADITIVO en `BalanceAvionBalanceBloque`** (todo con default
     None): `reserva_overhaul_usd` (el DISCRIMINADOR del bloque: número, 0.0
@@ -2190,6 +2191,91 @@ Reglas de este microservicio (FastAPI, Python 3.12).
     `ganancia_antes_comisiones_usd` pintada / una en null vacía con la nota
     / sin la llave vacías / sin la bandera ignorada, y, sin la bandera, las
     fórmulas de siempre).
+
+- **Reparto COMO BALANCE: provisión AFAC en la cascada, reserva informativa
+  por socio y «¿se descuenta?» (20-oct-2026, API 0.0.101, invariante 99 del
+  API).** Pedido del cliente: la reserva de overhaul «no se resta» y debe
+  verse «cuánto debe guardar cada socio», con la opción por avión y socio de
+  restársela o solo darle el dato; y el reparto debe cuadrar con el balance
+  (la provisión AFAC sí resta). Todo lo calcula el API; aquí solo se pinta.
+  - **Contrato ADITIVO** (`app/schemas/reparto.py`, todo con default None;
+    solo un `true` JSON enciende la bandera raíz `reparto_como_balance`,
+    validador `bandera_liberal` compartido con `reparto_en_pesos`): por avión
+    `afac_reservado_usd/_mxn` (ya restados en `saldo_*`: jamás se vuelven a
+    restar), `afac_horas_cobradas_hr`, `afac_tarifa_usd_hr` (None = avión sin
+    tarifa ⇒ provisión 0 y AVISO), `reserva_retenida_usd/_mxn`; por socio
+    (`RepartoSocioLinea`) `utilidad_usd/_mxn`, `reserva_usd/_mxn` («lo que
+    debe guardar»), `descuenta_reserva` (solo un booleano JSON cuenta;
+    null/texto/número ⇒ None, jamás 422); `monto_*` sigue siendo lo que se
+    le ENTREGA (= utilidad − reserva solo con `descuenta_reserva`).
+  - **Sin la bandera: PDF y Excel BYTE A BYTE** (también con las llaves
+    nuevas presentes; comprobado contra una copia limpia de HEAD con 9
+    payloads × 5 variantes). Lo único que cambió en ese camino es resaltar
+    la fila del saldo por su índice (`idx_saldo`) y no por `(0, -1)`.
+  - **PDF con la bandera** (`_bloque_avion` / `_bloque_avion_pesos`, kwarg
+    `como_balance`): tras «(-) Fijos…» entra «(-) Provisión AFAC (tarifa
+    USD/hr × horas cobradas)» (`etiqueta_provision_afac`; en pesos MXN + USD
+    informativo) y la fila «(-) Reserva overhaul» SALE de la cascada; tras
+    «Saldo disponible» van filas grises/cursivas: «Reserva de overhaul ·
+    informativa, no se resta: lo que el avión debe guardar», en pesos la
+    línea «en pesos al T.C. oficial del cierre (…)» y, si
+    `reserva_retenida_*` > 0, «de la cual VuelaTour retiene a los socios que
+    la descuentan». Socios por avión: «Socio · % · Utilidad · Reserva a
+    guardar · A recibir» (reserva con « (se descuenta)» cuando aplica; en
+    pesos «(MXN)» y el USD informativo gris debajo, en Paragraph que
+    envuelve); «Resumen por socio»: «Reserva a guardar · Total a recibir»;
+    el resumen global «Gastos del periodo» mete la provisión y saca la
+    reserva (venta − gastos = saldo cuadra en USD y en pesos); pie
+    `_PIE_CASCADA_BALANCE` (sin «−»/«→»: Helvetica los pinta como caja; «×»
+    sí es WinAnsi). AVISO aditivo: «Sin tarifa AFAC configurada en la ficha
+    del avión: la provisión AFAC es $0.00 pese a N h cobradas». `*_mxn` None
+    ⇒ «—», nunca 0.
+  - **Excel con la bandera** (`render_reparto_xlsx` /
+    `_render_reparto_xlsx_pesos`): columna K rotulada «Reserva overhaul
+    (informativa, no resta)» en gris/cursiva; «Provisión AFAC» AL FINAL (col
+    15, o 16 con «Otros ingresos del avión») con total y comentario;
+    `n_cols`, merges y anchos coherentes; D..L no se mueven. Notas
+    `NOTA_CASCADA_BALANCE` / `NOTA_OTROS_INGRESOS_AVION_BALANCE`. «Reparto por
+    socio»: tras las columnas de hoy, «Utilidad», «Reserva a guardar» y «¿Se
+    descuenta?» (Sí/No; vacío si el API no lo mandó); en pesos además el USD
+    informativo; «Monto … (a recibir)» solo con la bandera;
+    `NOTA_REPARTO_SOCIO_BALANCE`.
+  - Orden de deploy: **pyservices ⇒ API 0.0.101 ⇒ panel** (seguro con el API
+    viejo: sin bandera no cambia nada). Tests:
+    `tests/test_reparto_como_balance.py` (27: esquema liberal, cascada USD y
+    pesos, reserva informativa y retenida, socios con/sin descuento, «—» con
+    None, aviso sin tarifa, Excel columnas/merges/notas, byte a byte sin la
+    bandera). La aserción de huella XLSX congelada falla en Python 3.14
+    (empaqueta el zip distinto) también en los tests viejos; en 3.12
+    (prod/CI) pasa.
+
+- **Entregas a socios en la hoja 'balance' (21-oct-2026, invariante 100 del
+  API).** El API manda por socio `entregado_mxn` / `entregado_usd` /
+  `entregas` / `por_entregar_mxn` y por avión `entregado_socios_mxn`
+  (DISCRIMINADOR, `_con_entregas_socios`; 0.0 también cuenta) y
+  `por_entregar_socios_mxn` (`BalanceAvionSocio`, `BalanceAvionBalanceBloque`;
+  defaults None, liberales, jamás 422). Aquí no se calcula nada. Con el
+  discriminador, la tabla «Reparto a socios» del individual (USD y pesos) y de
+  cada bloque de avión del general gana, DESPUÉS de las columnas de siempre,
+  `ENTREGADO (MXN)` · `POR ENTREGAR (MXN)` · `ENTREGADO USD (informativo)`
+  (hoja USD: D..F, pesos: E..G; en la hoja USD también son pesos reales y van
+  como VALOR; en pesos POR ENTREGAR = `ROUND(C−E,2)`), la fila «Entregado a
+  socios en el periodo / Por entregar» (`ROUND(SUM(col),2)` con el Σ del API;
+  el USD solo se re-suma) y la nota `_NOTA_ENTREGAS_SOCIOS` («Entregas
+  registradas en Pagos a socios que corresponden a este avión y a los meses
+  del periodo; por entregar = monto a recibir − entregado.»); negativos en
+  rojo (regla del libro); `None` ⇒ «—» con nota
+  (`_NOTA_SIN_PESOS_POR_ENTREGAR` / `_NOTA_SIN_PESOS_DERIVADA`), jamás 0;
+  anchos 3×20 extra (`_anchos_hoja_balance`); el título de la tabla se
+  ensancha; `celdas_empresa`, la cascada, el bloque VUELATOUR y el de la
+  reserva (que va después, tras una fila en blanco) no cambian. Sin el
+  discriminador (API previo, cuenta sin migración, o llaves por socio
+  sueltas/null/texto) el libro es BYTE A BYTE: huellas JSON del HEAD 16d6e2f,
+  .xlsx miembro a miembro y 12 variantes contra una copia limpia de HEAD en el
+  mismo intérprete, cero diferencias. La vista en pantalla (`libro_json`)
+  hereda las celdas con el rojo ya resuelto. Tests:
+  `tests/test_balance_entregas_socios.py` (38). Orden de deploy: pyservices ⇒
+  API (ambos sentidos seguros).
 
 ## Conciliación
 
