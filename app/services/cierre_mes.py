@@ -16,6 +16,14 @@ Este módulo tiene SOLO texto de presentación compartido por el balance
 (Excel) y el reparto (PDF/XLSX): la etiqueta es-MX de un mes, el estado del
 cierre («Mes cerrado el 16-oct-2026 por Ale») y los títulos de las listas.
 Ningún número: los montos y las leyendas llegan YA armados del API.
+
+Cierre POR AVIÓN (23-oct-2026, API 0.0.104, invariante 105 del API): el API
+cierra cada avión por separado; el estado de la FLOTA puede ser PARCIAL
+(«Mes cerrado parcialmente: 2 de 7 aviones (N621TX, N58BT)»), cada avión del
+reparto trae su propio sello («N621TX · Mes cerrado el 16-oct-2026 por
+Ale») y su propio aviso de snapshot, y el balance por avión dice el estado
+del avión y el de la flota («Flota: cerrada parcialmente (…)»). Sin esas
+llaves, los textos de siempre (sección «Cierre POR AVIÓN» al final).
 """
 
 from __future__ import annotations
@@ -50,6 +58,9 @@ COLOR_TEXTO_VIENE = "1E3A8A"
 ESTADO_CERRADO = "CERRADO"
 ESTADO_REABIERTO = "REABIERTO"
 ESTADO_ABIERTO = "ABIERTO"
+# Estado de la FLOTA con algún avión cerrado y otros abiertos (cierre por
+# avión, 23-oct-2026, API 0.0.104). Un avión nunca está PARCIAL.
+ESTADO_PARCIAL = "PARCIAL"
 
 # Motivo con que el API pasa un vuelo al mes siguiente (`MotivoDiferir`):
 # COBRO_POSTERIOR = sin cobro completo al corte, pero cobrado DESPUÉS.
@@ -84,14 +95,24 @@ def fecha_corta(ts: str | None) -> str | None:
     return f"{dt.day:02d}-{_MESES_CORTOS[dt.month - 1]}-{dt.year}"
 
 
-def texto_estado_cierre(cierre) -> str | None:
+def _estado_de(obj) -> str:
+    return (getattr(obj, "estado", None) or "").strip().upper()
+
+
+def texto_estado_cierre(cierre, total_aviones: int | None = None) -> str | None:
     """«Mes cerrado el 16-oct-2026 por Ale» / «Mes reabierto el 17-oct-2026
     por Ale» o None cuando el mes está abierto (o no hay dato). `cierre` es
     cualquier objeto con `estado`, `cerrado_at`, `cerrado_por_nombre`
-    (el `BalanceCierre` del balance o el `RepartoCierre` del reparto)."""
+    (el `BalanceCierre` del balance, el `RepartoCierre` del reparto o el
+    `RepartoCierreAvion` de un avión). Con el cierre por avión (23-oct-2026)
+    la flota puede estar PARCIAL: «Mes cerrado parcialmente: 2 de 7 aviones
+    (N621TX, N58BT)» (`texto_cierre_parcial`; `total_aviones` es el «7» de
+    respaldo cuando el API no manda `aviones_activos`)."""
     if cierre is None:
         return None
-    estado = (getattr(cierre, "estado", None) or "").strip().upper()
+    estado = _estado_de(cierre)
+    if estado == ESTADO_PARCIAL:
+        return texto_cierre_parcial(cierre, total_aviones)
     if estado not in (ESTADO_CERRADO, ESTADO_REABIERTO):
         return None
     verbo = "cerrado" if estado == ESTADO_CERRADO else "reabierto"
@@ -398,3 +419,146 @@ def matriculas_sin_bloque(cierre, matriculas_del_reparto) -> list[str | None]:
             if v.matricula not in propias and v.matricula not in fuera:
                 fuera.append(v.matricula)
     return fuera
+
+
+# ---- Cierre POR AVIÓN (23-oct-2026, API 0.0.104, invariante 105 del API) ----
+# El API cierra cada avión por separado (fila `cierre_mes_avion`); la fila
+# global del mes es DERIVADA (se escribe cuando el último avión activo queda
+# cerrado). Hacia los documentos llegan, ADITIVOS: `cierre.estado` = 'PARCIAL'
+# con `cierre.aviones_cerrados` (matrículas) —y `aviones_activos` si el API
+# lo manda—; en el reparto `aviones[].cierre_avion` (estado, sello y
+# `coincide_con_snapshot` de ESE avión); en el balance por avión `cierre.estado`
+# = el del AVIÓN y `cierre.estado_flota` = el de la flota. Aquí, solo texto.
+
+
+def matriculas_cerradas(cierre) -> list[str]:
+    """`aviones_cerrados` del bloque `cierre` (matrículas, en su orden) como
+    textos no vacíos; sin la llave (API ≤ 0.0.103) o con basura ⇒ []."""
+    v = getattr(cierre, "aviones_cerrados", None)
+    if not isinstance(v, list | tuple):
+        return []
+    return [m.strip() for m in v if isinstance(m, str) and m.strip()]
+
+
+def _total_flota(cierre, n: int, total_aviones: int | None) -> int | None:
+    """El «M» de «N de M aviones»: `aviones_activos` si el API lo manda (y
+    alcanza para los N cerrados); si no, los aviones del documento, SOLO
+    cuando son más que los cerrados (PARCIAL = no están todos; un documento
+    con N o menos aviones no es la flota). Sin «M» fiable ⇒ None."""
+    activos = _entero(getattr(cierre, "aviones_activos", None))
+    if activos is not None and activos >= n:
+        return activos
+    total = _entero(total_aviones)
+    return total if total is not None and total > n else None
+
+
+def _entero(v) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def _cuantos_aviones(n: int, total: int | None) -> str:
+    if total:
+        return f"{n} de {total} aviones"
+    return "1 avión" if n == 1 else f"{n} aviones"
+
+
+def texto_cierre_parcial(cierre, total_aviones: int | None = None) -> str:
+    """Sello de la flota con algún avión cerrado y otros abiertos: «Mes
+    cerrado parcialmente: 2 de 7 aviones (N621TX, N58BT)»; sin un total
+    fiable, «Mes cerrado parcialmente: 2 aviones (N621TX, N58BT)»; sin la
+    lista, «Mes cerrado parcialmente»."""
+    cerrados = matriculas_cerradas(cierre)
+    if not cerrados:
+        return "Mes cerrado parcialmente"
+    total = _total_flota(cierre, len(cerrados), total_aviones)
+    return (
+        f"Mes cerrado parcialmente: {_cuantos_aviones(len(cerrados), total)} "
+        f"({', '.join(cerrados)})"
+    )
+
+
+def texto_estado_cierre_avion(matricula: str | None, cierre_avion) -> str | None:
+    """Sello de UN avión: «N621TX · Mes cerrado el 16-oct-2026 por Ale» /
+    «N621TX · Mes reabierto el 17-oct-2026 por Dani» / «N621TX · Mes abierto»
+    (la misma forma que el sello global, con la matrícula al frente; sin
+    matrícula, solo el texto). None sin `cierre_avion` (API ≤ 0.0.103) o con
+    un estado que no se reconoce."""
+    if cierre_avion is None:
+        return None
+    estado = _estado_de(cierre_avion)
+    if estado == ESTADO_ABIERTO:
+        texto = "Mes abierto"
+    else:
+        texto = texto_estado_cierre(cierre_avion)
+        if texto is None:
+            return None
+    prefijo = (matricula or "").strip()
+    return f"{prefijo} · {texto}" if prefijo else texto
+
+
+def texto_estado_flota(cierre, total_aviones: int | None = None) -> str | None:
+    """Línea «Flota: …» del balance por avión: el estado de TODA la flota
+    (`estado_flota`, que el API manda junto al `estado` del AVIÓN) cuando
+    difiere del estado del avión: «Flota: cerrada parcialmente (2 de 7
+    aviones: N621TX, N58BT)» / «Flota: cerrada» / «Flota: reabierta» /
+    «Flota: abierta». None sin la llave, con el mismo estado o con uno que no
+    se reconoce."""
+    if cierre is None:
+        return None
+    flota = (getattr(cierre, "estado_flota", None) or "").strip().upper()
+    if not flota or flota == _estado_de(cierre):
+        return None
+    if flota == ESTADO_PARCIAL:
+        cerrados = matriculas_cerradas(cierre)
+        if not cerrados:
+            return "Flota: cerrada parcialmente"
+        total = _total_flota(cierre, len(cerrados), total_aviones)
+        return (
+            f"Flota: cerrada parcialmente ({_cuantos_aviones(len(cerrados), total)}: "
+            f"{', '.join(cerrados)})"
+        )
+    nombres = {ESTADO_CERRADO: "cerrada", ESTADO_REABIERTO: "reabierta", ESTADO_ABIERTO: "abierta"}
+    return f"Flota: {nombres[flota]}" if flota in nombres else None
+
+
+def hay_cierre_por_avion(aviones) -> bool:
+    """¿Algún avión del reparto trae `cierre_avion` CERRADO o REABIERTO?
+    Solo entonces se imprimen los sellos por avión (un mes abierto, aunque el
+    API 0.0.104 mande `cierre_avion` ABIERTO en todos, sale como siempre)."""
+    return any(
+        _estado_de(getattr(a, "cierre_avion", None)) in (ESTADO_CERRADO, ESTADO_REABIERTO)
+        for a in aviones
+    )
+
+
+def aviones_sin_snapshot(aviones) -> list[str]:
+    """Matrículas cuyo `cierre_avion.coincide_con_snapshot` es False (los
+    números de hoy ya no son los de SU cierre), en el orden del reparto."""
+    return [
+        getattr(a, "matricula", None) or "—"
+        for a in aviones
+        if getattr(a, "cierre_avion", None) is not None
+        and a.cierre_avion.coincide_con_snapshot is False
+    ]
+
+
+def aviso_snapshot(matriculas) -> str:
+    """El aviso de `coincide_con_snapshot = false` nombrando al avión: «Los
+    números de hoy de N621TX no coinciden con los de su cierre (cambió un
+    porcentaje de socio o un tipo de cambio después de cerrar): reabre ese
+    avión y ciérralo de nuevo antes de dispersar.»; con varios, en plural.
+    Sin matrículas, el aviso global de siempre (`AVISO_SNAPSHOT`)."""
+    lista = [m for m in matriculas if m]
+    if not lista:
+        return AVISO_SNAPSHOT
+    quienes = lista[0] if len(lista) == 1 else ", ".join(lista[:-1]) + f" y {lista[-1]}"
+    accion = (
+        "reabre ese avión y ciérralo de nuevo"
+        if len(lista) == 1
+        else "reabre esos aviones y ciérralos de nuevo"
+    )
+    return (
+        f"Los números de hoy de {quienes} no coinciden con los de su cierre (cambió un "
+        f"porcentaje de socio o un tipo de cambio después de cerrar): {accion} antes de "
+        "dispersar."
+    )

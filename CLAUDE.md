@@ -1981,6 +1981,53 @@ Reglas de este microservicio (FastAPI, Python 3.12).
     seguro. Tests: sección 8 de `tests/test_cierre_mes.py` (helpers,
     esquemas liberales, línea del libro por motivo, títulos, bloque del
     balance, Libro Dinero, PDF y Excel del reparto).
+  - **Cierre de mes POR AVIÓN (23-oct-2026, API 0.0.104, invariante 105 del
+    API; pedido: «poner un botón de cierre de mes individual en cada
+    avión»).** El API cierra cada avión por separado y la fila global del mes
+    es DERIVADA; aquí todo es ADITIVO y liberal (jamás un 422) y **sin las
+    llaves nuevas TODO sigue byte a byte**: `tests/test_cierre_por_avion.py`
+    congela las huellas del HEAD 29107e6 de los payloads CON `cierre` de forma
+    vieja de `_cierre_mes_payloads.py` (individual, general, consolidado,
+    reparto PDF+XLSX en sus variantes y Libro Dinero, con y sin el #351) y las
+    de `test_cierre_mes.py` siguen intactas. Contrato: `cierre.estado` admite
+    `'PARCIAL'` (flota con algún avión cerrado) + `cierre.aviones_cerrados`
+    (matrículas) y, si el API lo manda, `cierre.aviones_activos` (el «M» de
+    «N de M»; sin él, los aviones del propio documento —`aviones[]` del
+    reparto y del general, `leyenda_colores` del Dinero— SOLO cuando son más
+    que los cerrados; si no, «N aviones»); reparto `aviones[].cierre_avion`
+    (`RepartoCierreAvion`: `estado` ABIERTO/CERRADO/REABIERTO, `cerrado_at`,
+    `cerrado_por_nombre`, `reabierto_at`, `reabierto_por_nombre`, `version`,
+    `coincide_con_snapshot`; lo que no sea objeto ⇒ None); balance por avión
+    `cierre.estado` = el del AVIÓN + `cierre.estado_flota`. Textos (fuente
+    única `cierre_mes.py`): global «Mes cerrado parcialmente: 2 de 7 aviones
+    (N621TX, N58BT)» (`texto_estado_cierre(cierre, total_aviones)`; sin
+    lista, «Mes cerrado parcialmente»); por avión «N621TX · Mes cerrado el
+    16-oct-2026 por Ale» / «N621TX · Mes reabierto el 17-oct-2026 por Dani»
+    / «N621TX · Mes abierto» (`texto_estado_cierre_avion`); flota «Flota:
+    cerrada parcialmente (1 de 7 aviones: XA-TST)» / «Flota: cerrada» /
+    «Flota: reabierta» / «Flota: abierta» (`texto_estado_flota`, solo si
+    difiere del estado del avión); aviso «Los números de hoy de N621TX no
+    coinciden con los de su cierre (cambió un porcentaje de socio o un tipo
+    de cambio después de cerrar): reabre ese avión y ciérralo de nuevo antes
+    de dispersar.» (`aviso_snapshot`, plural con varios). Dónde se pinta:
+    reparto PDF = sello global en la portada (PARCIAL incluido), bajo el
+    título de cada avión su sello y, en rojo, su aviso; el aviso de arriba
+    nombra a los aviones (sin `cierre_avion`, el global de siempre); reparto
+    XLSX = sello global en el subtítulo, aviso arriba y, en la sección
+    «Cierre del mes» (que ahora existe también sin listas), una línea por
+    avión (matrícula en A, sello en B:H, «AVISO XB-TST: …» en rojo) antes del
+    encabezado de las listas (solo si hay vuelos); balance por avión XLSX =
+    título «CIERRE DEL MES — XA-TST · Mes cerrado el …» + línea «Flota: …»
+    (el bloque se pinta también con el avión ABIERTO y la flota
+    PARCIAL/CERRADA/REABIERTA: `tiene_algo` mira `estado_flota`); balance
+    general = «Mes cerrado parcialmente: …» en el RESUMEN; Dinero = ídem en
+    «CIERRE DEL MES». **Los sellos por avión solo se imprimen si algún avión
+    está CERRADO/REABIERTO** (`hay_cierre_por_avion`): el API 0.0.104 manda
+    `cierre_avion` ABIERTO en todos en un mes abierto y los documentos salen
+    como siempre. La vista JSON del balance solo gana `estado_flota` /
+    `aviones_cerrados` / `aviones_activos` cuando el API las manda
+    (`_cierre_json` las omite en null). Pendiente con el API: mandar
+    `aviones_activos` en el `cierre` de los libros para un «N de M» exacto.
 - **Balances y reparto en pesos (18-oct-2026, API 0.0.93).** Pedido del
   cliente: «En los balances (balance general y por avión) debe venir todo en
   pesos porque casi siempre se les transfiere a los socios en pesos

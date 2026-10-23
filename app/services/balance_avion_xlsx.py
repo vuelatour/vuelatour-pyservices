@@ -2530,6 +2530,8 @@ def _bloque_cierre(
     con_avion: bool,
     clave_span: int = 1,
     resumen: BalanceCierreResumen | None = None,
+    matricula: str | None = None,
+    total_aviones: int | None = None,
 ) -> int:
     """Bloque «CIERRE DEL MES» (bajo TOTALES del libro individual; al pie del
     RESUMEN del general): el sello del cierre y las listas de vuelos que
@@ -2537,8 +2539,15 @@ def _bloque_cierre(
     como VALORES del API, sin fórmulas ni totales. `con_avion` agrega la
     columna AVIÓN (general); `clave_span` combina la CLAVE en varias columnas
     (el RESUMEN tiene la A angosta); `resumen` (general) añade el renglón por
-    avión. Devuelve la fila siguiente al bloque."""
-    estado_txt = cierre_mes.texto_estado_cierre(cierre)
+    avión. Cierre por avión (23-oct-2026, API 0.0.104): con `estado_flota`
+    en el bloque, el sello del individual lleva la `matricula` al frente
+    («XA-TST · Mes cerrado el …») y debajo va la línea «Flota: …»; en el
+    general la flota puede estar PARCIAL («Mes cerrado parcialmente: 1 de 2
+    aviones (XA-TST)», `total_aviones` de respaldo). Devuelve la fila
+    siguiente al bloque."""
+    estado_txt = cierre_mes.texto_estado_cierre(cierre, total_aviones)
+    if matricula and cierre.estado_flota:
+        estado_txt = cierre_mes.texto_estado_cierre_avion(matricula, cierre) or estado_txt
     titulo = _TITULO_BLOQUE_CIERRE + (f" — {estado_txt}" if estado_txt else " (mes abierto)")
     ct = ws.cell(row=row, column=1, value=titulo)
     ct.font = Font(bold=True, size=11, color=NAVY)
@@ -2547,6 +2556,12 @@ def _bloque_cierre(
     if cierre.periodo and cierre_mes.etiqueta_mes(cierre.periodo):
         cp = ws.cell(row=row, column=1, value=f"Mes: {cierre_mes.etiqueta_mes(cierre.periodo)}")
         cp.font = Font(italic=True, size=9, color=MUTED)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
+        row += 1
+    flota_txt = cierre_mes.texto_estado_flota(cierre, total_aviones)
+    if flota_txt:
+        cf = ws.cell(row=row, column=1, value=flota_txt)
+        cf.font = Font(italic=True, size=9, color=MUTED)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
         row += 1
     for lista, subtitulo, items in cierre_mes.listas_balance(cierre):
@@ -3170,7 +3185,9 @@ def _hoja_maestra(
     # INDIVIDUAL (el general lo lleva al pie del RESUMEN): solo con `cierre` y
     # algo que decir; sin él, nada (byte a byte).
     if not general and req.cierre is not None and req.cierre.tiene_algo():
-        row = _bloque_cierre(ws, row, req.cierre, n_cols=min(n, 14), con_avion=False)
+        row = _bloque_cierre(
+            ws, row, req.cierre, n_cols=min(n, 14), con_avion=False, matricula=req.matricula
+        )
     hay_extension = _hay_extension_pagada(req)
     hay_marcas_cierre = _hay_marcas_cierre(req.vuelos)
 
@@ -7056,10 +7073,22 @@ def libro_balance_avion(req: BalanceAvionRequest, *, archivo: str | None = None)
     )
 
 
+# Llaves del cierre por avión (23-oct-2026) en el bloque `cierre` de la vista:
+# viajan solo si el API las mandó (en null no: la vista de un API ≤ 0.0.103
+# sigue byte a byte).
+_LLAVES_CIERRE_POR_AVION = ("estado_flota", "aviones_cerrados", "aviones_activos")
+
+
 def _cierre_json(cierre: BalanceCierre | None) -> dict | None:
     """El bloque `cierre` del payload para la raíz del libro JSON (16-oct-2026):
     tal cual lo validó el esquema; None ⇒ la raíz de siempre."""
-    return None if cierre is None else cierre.model_dump(mode="json")
+    if cierre is None:
+        return None
+    bloque = cierre.model_dump(mode="json")
+    for llave in _LLAVES_CIERRE_POR_AVION:
+        if bloque.get(llave) is None:
+            bloque.pop(llave, None)
+    return bloque
 
 
 def _fila_resumen(
@@ -7237,6 +7266,7 @@ def _hoja_resumen_general(
             con_avion=True,
             clave_span=2,
             resumen=req.resumen_cierre,
+            total_aviones=len(req.aviones) or None,
         )
     for i in range(1, 13):
         ws.column_dimensions[get_column_letter(i)].width = 10 if i == 1 else 14

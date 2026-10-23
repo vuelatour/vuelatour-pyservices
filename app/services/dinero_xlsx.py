@@ -371,7 +371,10 @@ def _color_marca(v: DineroVueloFila) -> str:
 
 def _lineas_cierre(ws: Worksheet, row: int, req: DineroXlsxRequest) -> None:
     listas = cierre_mes.listas_balance(req.cierre)
-    sello = cierre_mes.texto_estado_cierre(req.cierre)
+    # Cierre por avión (23-oct-2026, API 0.0.104): la flota puede estar
+    # PARCIAL («Mes cerrado parcialmente: 1 de 2 aviones (N990GG)»; el «de 2»
+    # es `aviones_activos` del API o, si no viene, los aviones de la leyenda).
+    sello = cierre_mes.texto_estado_cierre(req.cierre, len(req.leyenda_colores) or None)
     if not listas and not sello:
         return
     ws.cell(

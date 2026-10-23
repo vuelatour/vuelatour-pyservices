@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.schemas.reportes import (
     bandera_liberal,
     lista_cierre_liberal,
+    matriculas_liberal,
     numero_cierre_liberal,
     regla_comisiones_liberal,
     texto_cierre_liberal,
@@ -140,6 +141,40 @@ class RepartoCierreVuelo(BaseModel):
         return numero_cierre_liberal(v)
 
 
+class RepartoCierreAvion(BaseModel):
+    """Cierre de UN avión (23-oct-2026, API 0.0.104, invariante 105 del API:
+    el cierre es POR AVIÓN y por mes) en `aviones[].cierre_avion` del
+    reparto: su estado ('ABIERTO' | 'CERRADO' | 'REABIERTO'), su sello y su
+    `coincide_con_snapshot` (los números de hoy de ESE avión ya no son los de
+    su cierre). Liberal como el bloque global: jamás un 422."""
+
+    estado: str | None = None
+    cerrado_at: str | None = None
+    cerrado_por_nombre: str | None = None
+    reabierto_at: str | None = None
+    reabierto_por_nombre: str | None = None
+    version: int | None = None
+    coincide_con_snapshot: bool | None = None
+
+    @field_validator(
+        "estado", "cerrado_at", "cerrado_por_nombre", "reabierto_at", "reabierto_por_nombre",
+        mode="before",
+    )
+    @classmethod
+    def _textos(cls, v: Any) -> str | None:
+        return texto_cierre_liberal(v)
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def _version(cls, v: Any) -> Any:
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+    @field_validator("coincide_con_snapshot", mode="before")
+    @classmethod
+    def _coincide(cls, v: Any) -> bool | None:
+        return v if isinstance(v, bool) else None
+
+
 class RepartoCierre(BaseModel):
     """Bloque raíz `cierre` de `GET /v1/profit-sharing` (16-oct-2026, API
     0.0.88): estado del mes, sello del cierre y las listas de vuelos
@@ -158,6 +193,13 @@ class RepartoCierre(BaseModel):
     diferidos_salen: list[RepartoCierreVuelo] = Field(default_factory=list)
     diferidos_entran: list[RepartoCierreVuelo] = Field(default_factory=list)
     pendientes_que_pasarian: list[RepartoCierreVuelo] = Field(default_factory=list)
+    # ADITIVOS (23-oct-2026, API 0.0.104, invariante 105 del API: cierre POR
+    # AVIÓN). `estado` puede ser además 'PARCIAL' (algún avión cerrado y la
+    # flota activa incompleta); `aviones_cerrados` = matrículas cerradas en
+    # el mes; `aviones_activos` (si el API lo manda) = cuántos cuentan para
+    # la flota («2 de 7 aviones»). Sin ellos, los textos de siempre.
+    aviones_cerrados: list[str] | None = None
+    aviones_activos: int | None = None
 
     @field_validator(
         "periodo", "estado", "cerrado_at", "cerrado_por_nombre", "reabierto_at",
@@ -174,7 +216,7 @@ class RepartoCierre(BaseModel):
     def _listas(cls, v: Any) -> list:
         return lista_cierre_liberal(v)
 
-    @field_validator("version", mode="before")
+    @field_validator("version", "aviones_activos", mode="before")
     @classmethod
     def _version(cls, v: Any) -> Any:
         return v if isinstance(v, int) and not isinstance(v, bool) else None
@@ -184,11 +226,16 @@ class RepartoCierre(BaseModel):
     def _coincide(cls, v: Any) -> bool | None:
         return v if isinstance(v, bool) else None
 
+    @field_validator("aviones_cerrados", mode="before")
+    @classmethod
+    def _aviones_cerrados(cls, v: Any) -> list[str] | None:
+        return matriculas_liberal(v)
+
     def tiene_algo(self) -> bool:
         estado = (self.estado or "").strip().upper()
         return bool(
             self.diferidos_salen or self.diferidos_entran or self.pendientes_que_pasarian
-        ) or estado in ("CERRADO", "REABIERTO")
+        ) or estado in ("CERRADO", "REABIERTO", "PARCIAL")
 
 
 class RepartoTcOficialGastos(BaseModel):
@@ -390,6 +437,18 @@ class RepartoAvion(BaseModel):
     combustible_mxn: float | None = None
     utilidad_antes_gastos_usd: float | None = None
     utilidad_antes_gastos_mxn: float | None = None
+    # ADITIVO (23-oct-2026, API 0.0.104, invariante 105 del API): el cierre
+    # de ESTE avión (`RepartoCierreAvion`; el API lo manda siempre, 'ABIERTO'
+    # por defecto). Solo cambia los documentos si algún avión del reparto
+    # está CERRADO o REABIERTO: sello por avión bajo su título y aviso de
+    # snapshot por avión. None (API ≤ 0.0.103) o basura ⇒ byte a byte.
+    cierre_avion: RepartoCierreAvion | None = None
+
+    @field_validator("cierre_avion", mode="before")
+    @classmethod
+    def _cierre_avion_liberal(cls, v: Any) -> Any:
+        """Solo un objeto se valida; lo demás (null, texto, lista) ⇒ None."""
+        return v if isinstance(v, dict | RepartoCierreAvion) else None
 
     @field_validator(
         "otros_ingresos_avion_usd", "otros_ingresos_avion_sin_tc_mxn", mode="before"

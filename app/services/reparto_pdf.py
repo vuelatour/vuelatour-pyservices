@@ -683,13 +683,39 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
     s_aviso_cierre = ParagraphStyle(
         "aviso_cierre", fontSize=8, textColor=colors.HexColor("#b91c1c"), leading=11
     )
+    s_sello_avion = ParagraphStyle(
+        "sello_avion", parent=base["Normal"], fontSize=8, textColor=MUTED, leading=10
+    )
+    # Cierre POR AVIÓN (23-oct-2026, API 0.0.104, invariante 105 del API):
+    # bajo el título de cada avión, su sello («XB-TST · Mes cerrado el
+    # 16-oct-2026 por Ale» / «XB-DOS · Mes abierto») y, si sus números ya no
+    # son los de SU cierre, su aviso en rojo. Solo cuando algún avión del
+    # reparto está CERRADO o REABIERTO; sin eso (API ≤ 0.0.103 o mes
+    # abierto), el PDF de siempre.
+    por_avion = cierre_mes.hay_cierre_por_avion(req.aviones)
+    sin_snapshot = cierre_mes.aviones_sin_snapshot(req.aviones)
+
+    def _sello_avion(avion: RepartoAvion) -> list[Paragraph]:
+        if not por_avion:
+            return []
+        parrafos: list[Paragraph] = []
+        texto = cierre_mes.texto_estado_cierre_avion(avion.matricula, avion.cierre_avion)
+        if texto:
+            parrafos.append(Paragraph(f"<b>{escape(texto)}</b>", s_sello_avion))
+        if avion.matricula in sin_snapshot:
+            aviso = cierre_mes.aviso_snapshot([avion.matricula])
+            parrafos.append(Paragraph(f"AVISO: {escape(aviso)}", s_aviso_cierre))
+        return parrafos
 
     story: list = []
 
     # ---- Encabezado ----
     # Sello del cierre de mes (16-oct-2026): «Mes cerrado el 16-oct-2026 por
     # Ale» bajo la fecha de generación; sin `cierre` (o mes abierto), nada.
-    sello_cierre = cierre_mes.texto_estado_cierre(req.cierre)
+    # Con el cierre por avión (23-oct-2026) la flota puede estar PARCIAL:
+    # «Mes cerrado parcialmente: 1 de 2 aviones (XB-TST)» (el «de 2» es
+    # `aviones_activos` del API o, si no viene, los aviones de este reparto).
+    sello_cierre = cierre_mes.texto_estado_cierre(req.cierre, len(req.aviones) or None)
     encabezado = Table(
         [
             [
@@ -826,7 +852,14 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
         story.append(Paragraph(nota_global, s_sub))
     # Cierre de mes (16-oct-2026): si el API detectó que los números de hoy
     # ya no son los del cierre, el aviso va arriba, en rojo.
-    if req.cierre is not None and req.cierre.coincide_con_snapshot is False:
+    # Con el cierre por avión (23-oct-2026) el aviso nombra a los aviones
+    # cuyo cierre ya no coincide (y cada bloque lleva el suyo); sin esa
+    # información, el aviso global de siempre.
+    if sin_snapshot:
+        story.append(Spacer(1, 2 * mm))
+        aviso = cierre_mes.aviso_snapshot(sin_snapshot)
+        story.append(Paragraph(f"AVISO: {escape(aviso)}", s_aviso_cierre))
+    elif req.cierre is not None and req.cierre.coincide_con_snapshot is False:
         story.append(Spacer(1, 2 * mm))
         story.append(Paragraph(f"AVISO: {cierre_mes.AVISO_SNAPSHOT}", s_aviso_cierre))
     story.append(Spacer(1, 8 * mm))
@@ -846,6 +879,7 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
                         req.cierre, avion.matricula, s_cierre, dinero=_usd_texto
                     ),
                     como_balance=req.reparto_como_balance,
+                    sello=_sello_avion(avion),
                 )
             )
         else:
@@ -856,6 +890,7 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
                     linea_comision=linea_comision_vendedor(req),
                     cierre=_parrafos_cierre_avion(req.cierre, avion.matricula, s_cierre),
                     como_balance=req.reparto_como_balance,
+                    sello=_sello_avion(avion),
                 )
             )
         story.append(Spacer(1, 6 * mm))
@@ -952,12 +987,15 @@ def _bloque_avion(
     linea_comision: str = LINEA_COMISION_VENDEDOR,
     cierre: list[Paragraph] | None = None,
     como_balance: bool = False,
+    sello: list[Paragraph] | None = None,
 ) -> KeepTogether:
     """`cierre` (16-oct-2026): los párrafos del cierre de mes de ESTE avión
     (vuelos que pasan / vienen / pasarían), al final del bloque; vacío o
     None ⇒ el bloque de siempre. `como_balance` (20-oct-2026): la cascada
     del balance (provisión AFAC resta; reserva informativa tras el saldo;
-    socios con utilidad, reserva a guardar y a recibir)."""
+    socios con utilidad, reserva a guardar y a recibir). `sello`
+    (23-oct-2026, cierre por avión): el sello y el aviso de ESTE avión,
+    bajo el título."""
     titulo = Paragraph(f"{avion.matricula} — {avion.modelo}", estilo_titulo)
 
     filas: list[list[str]] = [
@@ -1094,7 +1132,7 @@ def _bloque_avion(
         ]
     cascada.setStyle(TableStyle(estilo))
 
-    bloque: list = [titulo, Spacer(1, 2 * mm), cascada]
+    bloque: list = [titulo, *(sello or []), Spacer(1, 2 * mm), cascada]
 
     # Detalle de vuelos (solo si el API lo manda): el folio lleva ' · 50 %'
     # cuando el vuelo fue MULTI-AVIÓN (regla B: la venta del avión se
@@ -1447,6 +1485,7 @@ def _bloque_avion_pesos(
     linea_comision: str = LINEA_COMISION_VENDEDOR,
     cierre: list[Paragraph] | None = None,
     como_balance: bool = False,
+    sello: list[Paragraph] | None = None,
 ) -> KeepTogether:
     """Gemelo de `_bloque_avion` EN PESOS: cascada etiqueta · pesos · USD
     informativo, el aviso de dólares sin pesos, vuelos con pesos y dólares,
@@ -1633,7 +1672,7 @@ def _bloque_avion_pesos(
         ]
     cascada.setStyle(TableStyle(estilo))
 
-    bloque: list = [titulo, Spacer(1, 2 * mm), cascada]
+    bloque: list = [titulo, *(sello or []), Spacer(1, 2 * mm), cascada]
 
     # Dólares que no llegaron a pesos: el saldo en pesos está incompleto. Va
     # pegado a la cascada, en rojo: es lo primero que hay que ver.

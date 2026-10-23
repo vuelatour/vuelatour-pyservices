@@ -1904,6 +1904,15 @@ def lista_cierre_liberal(v: Any) -> list:
     return v if isinstance(v, list) else []
 
 
+def matriculas_liberal(v: Any) -> list[str] | None:
+    """`aviones_cerrados` del cierre por avión (23-oct-2026): una lista ⇒ sus
+    textos no vacíos (lo que no sea texto se descarta); lo demás ⇒ None
+    (la llave no vino). Jamás un 422."""
+    if not isinstance(v, list):
+        return None
+    return [t for t in (texto_cierre_liberal(m) for m in v) if t is not None]
+
+
 class BalanceCierreVuelo(BaseModel):
     """Un vuelo de las listas del cierre (16-oct-2026, API 0.0.88): el que
     PASA al mes siguiente (`destino`), VIENE de un mes anterior (`origen`) o
@@ -2000,10 +2009,20 @@ class BalanceCierre(BaseModel):
     pasan: list[BalanceCierreVuelo] = Field(default_factory=list)
     vienen: list[BalanceCierreVuelo] = Field(default_factory=list)
     pasarian: list[BalanceCierreVuelo] = Field(default_factory=list)
+    # ADITIVOS (23-oct-2026, API 0.0.104, invariante 105 del API: cierre POR
+    # AVIÓN). En el balance por avión `estado` es el del AVIÓN y
+    # `estado_flota` el de toda la flota ('ABIERTO' | 'PARCIAL' | 'CERRADO' |
+    # 'REABIERTO'); en el general y en el Libro Dinero `estado` es el de la
+    # flota (puede ser 'PARCIAL') con `aviones_cerrados` (matrículas) y, si
+    # el API lo manda, `aviones_activos` («2 de 7 aviones»). Sin ellos, los
+    # libros de siempre.
+    estado_flota: str | None = None
+    aviones_cerrados: list[str] | None = None
+    aviones_activos: int | None = None
 
     @field_validator(
         "periodo", "estado", "cerrado_at", "cerrado_por_nombre", "reabierto_at",
-        "reabierto_por_nombre", mode="before",
+        "reabierto_por_nombre", "estado_flota", mode="before",
     )
     @classmethod
     def _textos(cls, v: Any) -> str | None:
@@ -2014,13 +2033,28 @@ class BalanceCierre(BaseModel):
     def _listas(cls, v: Any) -> list:
         return lista_cierre_liberal(v)
 
+    @field_validator("aviones_cerrados", mode="before")
+    @classmethod
+    def _aviones_cerrados(cls, v: Any) -> list[str] | None:
+        return matriculas_liberal(v)
+
+    @field_validator("aviones_activos", mode="before")
+    @classmethod
+    def _aviones_activos(cls, v: Any) -> Any:
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
     def tiene_algo(self) -> bool:
         """¿Hay algo que pintar? Listas con filas o un mes CERRADO/REABIERTO
-        (su sello se imprime aunque ningún vuelo haya pasado)."""
+        (su sello se imprime aunque ningún vuelo haya pasado); con el cierre
+        por avión (23-oct-2026), también una flota PARCIAL o, en el balance
+        por avión, una flota (`estado_flota`) que ya no está abierta."""
         estado = (self.estado or "").strip().upper()
-        return bool(self.pasan or self.vienen or self.pasarian) or estado in (
-            "CERRADO",
-            "REABIERTO",
+        flota = (self.estado_flota or "").strip().upper()
+        con_cierre = ("CERRADO", "REABIERTO", "PARCIAL")
+        return (
+            bool(self.pasan or self.vienen or self.pasarian)
+            or estado in con_cierre
+            or flota in con_cierre
         )
 
 

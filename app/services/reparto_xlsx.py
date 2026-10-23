@@ -165,15 +165,56 @@ def _hay_listas_cierre(cierre: RepartoCierre | None) -> bool:
     )
 
 
-def _seccion_cierre(ws, r: int, cierre: RepartoCierre) -> int:
+def _aviso_snapshot(req: RepartoPdfRequest) -> str | None:
+    """El aviso rojo de `coincide_con_snapshot = false`: con el cierre por
+    avión (23-oct-2026) nombra a los aviones cuyo cierre ya no coincide; sin
+    esa información, el global de siempre; None si todo coincide."""
+    sin = cierre_mes.aviones_sin_snapshot(req.aviones)
+    if sin:
+        return f"AVISO: {cierre_mes.aviso_snapshot(sin)}"
+    if req.cierre is not None and req.cierre.coincide_con_snapshot is False:
+        return f"AVISO: {cierre_mes.AVISO_SNAPSHOT}"
+    return None
+
+
+def _seccion_cierre(ws, r: int, cierre: RepartoCierre | None, aviones=()) -> int:
     """Pinta la sección desde la fila `r` (ya con el espacio previo) y
-    devuelve la fila siguiente a la última escrita."""
+    devuelve la fila siguiente a la última escrita. Con el cierre por avión
+    (23-oct-2026, API 0.0.104): bajo el título, una línea por avión con su
+    sello (matrícula en A, «Mes cerrado el 16-oct-2026 por Ale» / «Mes
+    abierto» en B:H) y, si sus números ya no son los de su cierre, su aviso
+    en rojo; las listas de vuelos, como siempre, solo si traen vuelos."""
     titulo = "Cierre del mes"
-    sello = cierre_mes.texto_estado_cierre(cierre)
+    sello = cierre_mes.texto_estado_cierre(cierre, len(aviones) or None)
     if sello:
         titulo += f" — {sello}"
     _title(ws, titulo, r, len(ENCABEZADOS_CIERRE), size=12)
     r += 1
+    if cierre_mes.hay_cierre_por_avion(aviones):
+        for a in aviones:
+            texto = cierre_mes.texto_estado_cierre_avion(None, a.cierre_avion)
+            if not texto:
+                continue
+            ma = ws.cell(row=r, column=1, value=a.matricula)
+            ma.font = Font(bold=True, size=10)
+            ma.border = _border
+            ct = ws.cell(row=r, column=2, value=texto)
+            ct.font = Font(size=10)
+            ct.border = _border
+            ws.merge_cells(
+                start_row=r, start_column=2, end_row=r, end_column=len(ENCABEZADOS_CIERRE)
+            )
+            r += 1
+            if a.cierre_avion.coincide_con_snapshot is False:
+                aviso = cierre_mes.aviso_snapshot([a.matricula])
+                na = ws.cell(row=r, column=1, value=f"AVISO {a.matricula}: {aviso}")
+                na.font = Font(bold=True, size=9, color="B91C1C")
+                ws.merge_cells(
+                    start_row=r, start_column=1, end_row=r, end_column=len(ENCABEZADOS_CIERRE)
+                )
+                r += 1
+    if not _hay_listas_cierre(cierre):
+        return r
     con_motivo = any(
         cierre_mes.hay_motivo(getattr(cierre, attr)) for attr, _p, _m in cierre_mes.LISTAS_REPARTO
     )
@@ -457,7 +498,7 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     _title(ws, "VuelaTour — Reporte mensual por avión", 1, n_cols, size=16)
     # Sello del cierre de mes (16-oct-2026) al final del subtítulo; sin
     # `cierre` (o mes abierto), el de siempre.
-    sello_cierre = cierre_mes.texto_estado_cierre(req.cierre)
+    sello_cierre = cierre_mes.texto_estado_cierre(req.cierre, len(req.aviones) or None)
     sub = ws.cell(row=2, column=1, value=f"Periodo: {req.periodo_desde} a {req.periodo_hasta}  ·  Generado: {req.generado}"
                   + (f"  ·  {sello_cierre}" if sello_cierre else ""))  # fmt: skip
     sub.font = Font(italic=True, size=10, color="5B6470")
@@ -660,9 +701,9 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
     # Cierre de mes (16-oct-2026): los números de hoy ya no son los del
     # cierre (el API lo detecta) ⇒ aviso en rojo, como en el PDF.
-    if req.cierre is not None and req.cierre.coincide_con_snapshot is False:
+    if aviso_snapshot := _aviso_snapshot(req):
         r += 1
-        na = ws.cell(row=r, column=1, value=f"AVISO: {cierre_mes.AVISO_SNAPSHOT}")
+        na = ws.cell(row=r, column=1, value=aviso_snapshot)
         na.font = Font(bold=True, size=9, color="B91C1C")
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
 
@@ -758,8 +799,8 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
                 ws.cell(row=r, column=6, value=v.tramos_avion).border = _border
                 r += 1
 
-    if _hay_listas_cierre(req.cierre):
-        r = _seccion_cierre(ws, r + 2, req.cierre)
+    if _hay_listas_cierre(req.cierre) or cierre_mes.hay_cierre_por_avion(req.aviones):
+        r = _seccion_cierre(ws, r + 2, req.cierre, req.aviones)
 
     # Gastos por categoría (solo si el API lo manda, 2-sep-2026): la categoría
     # se imprime con su etiqueta amable (homologada con panel/app/API) o con
@@ -908,7 +949,7 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
     if afac_al_final:
         n_cols += 1
     _title(ws, "VuelaTour — Reporte mensual por avión", 1, n_cols, size=16)
-    sello_cierre = cierre_mes.texto_estado_cierre(req.cierre)
+    sello_cierre = cierre_mes.texto_estado_cierre(req.cierre, len(req.aviones) or None)
     sub = ws.cell(
         row=2,
         column=1,
@@ -1038,9 +1079,9 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
     if nota_global:
         r += 1
         _nota(ws, r, nota_global, n_cols)
-    if req.cierre is not None and req.cierre.coincide_con_snapshot is False:
+    if aviso_snapshot := _aviso_snapshot(req):
         r += 1
-        _nota(ws, r, f"AVISO: {cierre_mes.AVISO_SNAPSHOT}", n_cols, color="B91C1C", bold=True)
+        _nota(ws, r, aviso_snapshot, n_cols, color="B91C1C", bold=True)
 
     # La tabla de siempre en dólares, INFORMATIVA (gris, cursiva).
     r += 2
@@ -1191,8 +1232,8 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
                 ws.cell(row=r, column=8, value=v.tramos_avion).border = _border
                 r += 1
 
-    if _hay_listas_cierre(req.cierre):
-        r = _seccion_cierre(ws, r + 2, req.cierre)
+    if _hay_listas_cierre(req.cierre) or cierre_mes.hay_cierre_por_avion(req.aviones):
+        r = _seccion_cierre(ws, r + 2, req.cierre, req.aviones)
 
     if any(a.gastos_por_categoria for a in req.aviones):
         con_mxn = any(g.mxn is not None for a in req.aviones for g in a.gastos_por_categoria)
