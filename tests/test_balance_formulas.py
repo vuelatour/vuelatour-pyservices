@@ -702,35 +702,35 @@ def test_constantes_del_encabezado_permiso_afac_y_factor_iva() -> None:
     assert ws["D1"].value == 1.16
     assert "ROUND(esta tarifa × TIPO CAMBIO COSTOS × HORAS COBRADAS, 2)" in ws["B1"].comment.text
     # Los encabezados de grupo y de columna no se movieron.
-    assert ws["E1"].value == "VENTA"
+    assert ws["G1"].value == "VENTA"
     assert ws.cell(row=2, column=1).value == "CLAVE"
-    assert ws.freeze_panes == "D3"
+    assert ws.freeze_panes == "F3"
     # La AFAC de cada vuelo cita la constante con $.
-    assert _formula(ws, 3, "PERMISO AFAC\n(PROVISIÓN)") == "=ROUND($B$1*V3*E3,2)"
-    assert wv["reporte horas XA-TST"]["T3"].value == r2(25 * 17.32 * 2.5)
+    assert _formula(ws, 3, "PERMISO AFAC\n(PROVISIÓN)") == "=ROUND($B$1*X3*G3,2)"
+    assert wv["reporte horas XA-TST"]["V3"].value == r2(25 * 17.32 * 2.5)
 
 
 def test_fila_normal_formulas_exactas() -> None:
     wb, _ = _libros(render_balance_avion_xlsx(_individual_tst()))
     ws = wb["reporte horas XA-TST"]
     esperadas = {
-        "VENTA AVIÓN\nMXN": "=ROUND(H3*J3,2)",
-        "IVA VENTA\nAVIÓN MXN": "=ROUND(I3*J3,2)",
-        "TOTAL S/IVA\nMXN": "=ROUND(K3-L3,2)",
-        "COSTO TOTAL\nMXN": "=ROUND(Q3+R3+S3+T3,2)",
-        "COSTO TOTAL\nUSD": "=U3/V3",
-        "COSTO TOTAL\nUSD S/IVA": "=W3/$D$1",
-        "IVA PAGADO\nUSD": "=W3-X3",
-        "IVA PAGADO\nMXN": "=Y3*V3",
-        "REMANENTE\nVENTA−COSTO MXN": "=ROUND(K3-U3,2)",
-        "DIF. IVA\nHACIENDA MXN": "=ROUND(L3-Z3,2)",
-        "GANANCIA\nMXN": "=AA3",
-        "GANANCIA\nUSD": "=ROUND(AD3/V3,2)",
-        "COSTO X HORA\nUSD": "=W3/N3",
-        "COSTO X HORA\nUSD S/IVA": "=AF3/$D$1",
-        "COBRADO REAL\nMXN (Σ depósitos)": "=ROUND(SUM(AJ3,AL3,AN3,AP3),2)",
-        "POR COBRAR\nMXN": "=ROUND(K3-AR3,2)",
-        "POR COBRAR\nUSD": "=ROUND(AS3/J3,2)",
+        "VENTA AVIÓN\nMXN": "=ROUND(J3*L3,2)",
+        "IVA VENTA\nAVIÓN MXN": "=ROUND(K3*L3,2)",
+        "TOTAL S/IVA\nMXN": "=ROUND(M3-N3,2)",
+        "COSTO TOTAL\nMXN": "=ROUND(S3+T3+U3+V3,2)",
+        "COSTO TOTAL\nUSD": "=W3/X3",
+        "COSTO TOTAL\nUSD S/IVA": "=Y3/$D$1",
+        "IVA PAGADO\nUSD": "=Y3-Z3",
+        "IVA PAGADO\nMXN": "=AA3*X3",
+        "REMANENTE\nVENTA−COSTO MXN": "=ROUND(M3-W3,2)",
+        "DIF. IVA\nHACIENDA MXN": "=ROUND(N3-AB3,2)",
+        "GANANCIA\nMXN": "=AC3",
+        "GANANCIA\nUSD": "=ROUND(AF3/X3,2)",
+        "COSTO X HORA\nUSD": "=Y3/P3",
+        "COSTO X HORA\nUSD S/IVA": "=AH3/$D$1",
+        "COBRADO REAL\nMXN (Σ depósitos)": "=ROUND(SUM(AL3,AN3,AP3,AR3),2)",
+        "POR COBRAR\nMXN": "=ROUND(M3-AT3,2)",
+        "POR COBRAR\nUSD": "=ROUND(AU3/L3,2)",
     }
     for encabezado, formula in esperadas.items():
         assert _formula(ws, 3, encabezado) == formula, encabezado
@@ -770,7 +770,7 @@ def test_fila_sin_tc_de_costos_indicadores_vacios_y_ganancia_al_tc_promedio() ->
         "POR COBRAR\nUSD",
     ):
         assert _formula(ws, fila, encabezado) is None, encabezado
-    assert _formula(ws, fila, "GANANCIA\nUSD") == "=ROUND(AD5/AVERAGE($V$3:$V$8),2)"
+    assert _formula(ws, fila, "GANANCIA\nUSD") == "=ROUND(AF5/AVERAGE($X$3:$X$8),2)"
     tc_prom = _suma([17.32, 18.05, 17.4, 17.6, 17.5]) / 5
     assert wsv.cell(row=fila, column=_col(ws, "GANANCIA\nUSD")).value == r2(-800 / tc_prom)
 
@@ -779,9 +779,9 @@ def test_cancelado_sin_afac_y_por_cobrar_cero() -> None:
     wb, wv = _libros(render_balance_avion_xlsx(_individual_tst()))
     ws, wsv = wb["reporte horas XA-TST"], wv["reporte horas XA-TST"]
     fila = 6  # #404 · Cliente Tres (CANCELADO)
-    assert ws.cell(row=fila, column=4).value == "CANCELADO"
+    assert ws.cell(row=fila, column=6).value == "CANCELADO"
     assert _formula(ws, fila, "PERMISO AFAC\n(PROVISIÓN)") is None
-    assert _formula(ws, fila, "POR COBRAR\nMXN") == "=ROUND(K6-AR6,2)"
+    assert _formula(ws, fila, "POR COBRAR\nMXN") == "=ROUND(M6-AT6,2)"
     assert wsv.cell(row=fila, column=_col(ws, "POR COBRAR\nMXN")).value == 0
     assert wsv.cell(row=fila, column=_col(ws, "POR COBRAR\nUSD")).value == 0
 
@@ -796,30 +796,30 @@ def test_redondeo_intermedio_del_api_deja_la_celda_como_valor() -> None:
     fila = 7
     assert ws.cell(row=fila, column=1).value == "#405 · Cliente Cuatro"
     assert _formula(ws, fila, "COSTO TOTAL\nMXN") == 2960.01
-    assert _formula(ws, fila, "COSTO TOTAL\nUSD") == "=U7/V7"
-    assert _formula(ws, fila, "REMANENTE\nVENTA−COSTO MXN") == "=ROUND(K7-U7,2)"
-    assert wv["reporte horas XA-TST"]["AA7"].value == r2(r2(2088 * 17.6) - 2960.01)
+    assert _formula(ws, fila, "COSTO TOTAL\nUSD") == "=W7/X7"
+    assert _formula(ws, fila, "REMANENTE\nVENTA−COSTO MXN") == "=ROUND(M7-W7,2)"
+    assert wv["reporte horas XA-TST"]["AC7"].value == r2(r2(2088 * 17.6) - 2960.01)
 
 
 def test_multi_avion_y_cuatro_cobros() -> None:
     wb, wv = _libros(render_balance_avion_xlsx(_individual_tst()))
     ws, wsv = wb["reporte horas XA-TST"], wv["reporte horas XA-TST"]
     fila = 4  # #402 multi-avión, 4 cobros
-    assert ws.cell(row=fila, column=8).comment is not None  # nota de participación
+    assert ws.cell(row=fila, column=10).comment is not None  # nota de participación
     assert _formula(ws, fila, "COBRADO REAL\nMXN (Σ depósitos)") == (
-        "=ROUND(SUM(AJ4,AL4,AN4,AP4),2)"
+        "=ROUND(SUM(AL4,AN4,AP4,AR4),2)"
     )
-    assert wsv["AQ4"].value == r2(5000 + 6000.5 + 7000.25 + 9000.1)
-    assert _formula(ws, fila, "VENTA AVIÓN\nMXN") == "=ROUND(H4*J4,2)"
-    assert wsv["K4"].value == r2(1812.5 * 18.123456)
+    assert wsv["AS4"].value == r2(5000 + 6000.5 + 7000.25 + 9000.1)
+    assert _formula(ws, fila, "VENTA AVIÓN\nMXN") == "=ROUND(J4*L4,2)"
+    assert wsv["M4"].value == r2(1812.5 * 18.123456)
 
 
 def test_cinco_cobros_el_cuarto_agrega_y_la_suma_cuadra() -> None:
     wb, wv = _libros(render_balance_avion_xlsx(_individual_dos()))
     ws = wb["reporte horas XB-DOS"]
-    assert ws["AP3"].value == r2(4000.5 + 5000.25)
-    assert ws["AQ3"].value == "=ROUND(SUM(AJ3,AL3,AN3,AP3),2)"
-    assert wv["reporte horas XB-DOS"]["AQ3"].value == r2(15000.75)
+    assert ws["AR3"].value == r2(4000.5 + 5000.25)
+    assert ws["AS3"].value == "=ROUND(SUM(AL3,AN3,AP3,AR3),2)"
+    assert wv["reporte horas XB-DOS"]["AS3"].value == r2(15000.75)
 
 
 def test_totales_sumas_y_promedios_como_el_api() -> None:
@@ -828,15 +828,15 @@ def test_totales_sumas_y_promedios_como_el_api() -> None:
     ws, wsv = wb["reporte horas XA-TST"], wv["reporte horas XA-TST"]
     tot = 9
     assert ws.cell(row=tot, column=1).value == "TOTALES"
-    assert ws["E9"].value == "=ROUND(SUM(E3:E8),2)"
-    assert ws["T9"].value == "=ROUND(SUM(T3:T8),2)"
-    assert ws["V9"].value == "=ROUND(AVERAGE(V3:V8),2)"
-    assert ws["AF9"].value == '=ROUND(AVERAGEIF(AF3:AF8,">0"),2)'
-    assert wsv["V9"].value == req.totales.tc_promedio
-    assert wsv["AF9"].value == req.totales.costo_hr_prom_usd
+    assert ws["G9"].value == "=ROUND(SUM(G3:G8),2)"
+    assert ws["V9"].value == "=ROUND(SUM(V3:V8),2)"
+    assert ws["X9"].value == "=ROUND(AVERAGE(X3:X8),2)"
+    assert ws["AH9"].value == '=ROUND(AVERAGEIF(AH3:AH8,">0"),2)'
+    assert wsv["X9"].value == req.totales.tc_promedio
+    assert wsv["AH9"].value == req.totales.costo_hr_prom_usd
     # El interno (#406) tiene COSTO X HORA = 0 y queda fuera del promedio.
-    assert wsv["AF8"].value == 0
-    for col in ("K", "U", "AA", "AE", "AQ", "AR", "AS", "AT"):
+    assert wsv["AH8"].value == 0
+    for col in ("M", "W", "AC", "AG", "AS", "AT", "AU", "AV"):
         assert ws[f"{col}9"].value == f"=ROUND(SUM({col}3:{col}8),2)", col
 
 
@@ -848,8 +848,8 @@ def test_avion_sin_tarifa_afac_constante_vacia_y_columna_sin_formula() -> None:
     assert "no tiene configurada" in ws["B1"].comment.text
     assert ws["D1"].value == 1.16
     for fila in (3, 4):
-        assert ws[f"T{fila}"].value is None
-        assert ws[f"U{fila}"].value == f"=ROUND(Q{fila}+R{fila}+S{fila}+T{fila},2)"
+        assert ws[f"V{fila}"].value is None
+        assert ws[f"W{fila}"].value == f"=ROUND(S{fila}+T{fila}+U{fila}+V{fila},2)"
 
 
 # ---------------------------------------------------------------------------
@@ -862,16 +862,16 @@ def test_hojas_de_gastos_y_combustible_citan_la_maestra() -> None:
     maestra = "'reporte horas XA-TST'"
     ws = wb["permisos"]
     assert ws["A5"].value == "=ROUND(SUM(D8:D8),2)"
-    assert ws["B5"].value == f"={maestra}!$V$9"
-    assert ws["C5"].value == f"=ROUND(A5/AVERAGE({maestra}!$V$3:$V$8),2)"
-    assert ws["D5"].value == f"={maestra}!$N$9"
+    assert ws["B5"].value == f"={maestra}!$X$9"
+    assert ws["C5"].value == f"=ROUND(A5/AVERAGE({maestra}!$X$3:$X$8),2)"
+    assert ws["D5"].value == f"={maestra}!$P$9"
     assert ws["E5"].value == "=ROUND(C5/D5,2)"
     wc = wb["combustible"]
     assert wc["A5"].value == "=D11"
     assert wc["B5"].value == "=ROUND(SUM(C8:C10),2)"
     assert wc["C5"].value == "=ROUND(A5/B5,2)"
-    assert wc["E5"].value == f"=ROUND(A5/AVERAGE({maestra}!$V$3:$V$8),2)"
-    assert wc["F5"].value == f"=ROUND(E5/{maestra}!$N$9,2)"
+    assert wc["E5"].value == f"=ROUND(A5/AVERAGE({maestra}!$X$3:$X$8),2)"
+    assert wc["F5"].value == f"=ROUND(E5/{maestra}!$P$9,2)"
     assert wc["C11"].value == "=ROUND(SUM(C8:C10),1)"
     assert wc["D11"].value == "=ROUND(SUM(D8:D10),2)"
     assert wv["combustible"]["C5"].value == r2(11500.25 / 350.75)
@@ -883,25 +883,25 @@ def test_cobranza_sumas_y_cotizacion_sin_cancelados() -> None:
     ws, wsv = wb["cobranza"], wv["cobranza"]
     tot = 14
     assert ws.cell(row=tot, column=1).value == "TOTALES"
-    assert ws["J14"].value == '=ROUND(SUMIF(D8:D13,"<>CANCELADO",J8:J13),2)'
-    assert wsv["J14"].value == req.totales.total_cotizacion_mxn
-    assert ws["H8"].value == "=ROUND(F8-G8,2)"
-    assert ws["A5"].value == "=F14"
+    assert ws["L14"].value == '=ROUND(SUMIF(F8:F13,"<>CANCELADO",L8:L13),2)'
+    assert wsv["L14"].value == req.totales.total_cotizacion_mxn
+    assert ws["J8"].value == "=ROUND(H8-I8,2)"
+    assert ws["A5"].value == "=H14"
     assert ws["G5"].value == "=B5/A5"
-    assert ws["L14"].value == "=ROUND(SUM(L8:L13),2)"
-    assert wsv["L14"].value == 150.25
+    assert ws["N14"].value == "=ROUND(SUM(N8:N13),2)"
+    assert wsv["N14"].value == 150.25
 
 
 def test_balance_cascada_y_reparto_con_formulas() -> None:
     req = _individual_tst()
     wb, wv = _libros(render_balance_avion_xlsx(req))
     ws, wsv = wb["balance"], wv["balance"]
-    assert ws["B4"].value == "='reporte horas XA-TST'!$AE$9"
+    assert ws["B4"].value == "='reporte horas XA-TST'!$AG$9"
     assert ws["B5"].value == "='combustible'!$E$5"
     assert ws["B7"].value == "='refacciones'!$C$5"
     assert ws["B8"].value == "='permisos'!$C$5"
     assert ws["B9"].value == "=ROUND(B4-B5-B6-B7-B8,2)"
-    assert ws["B10"].value == "='reporte horas XA-TST'!$AT$9"
+    assert ws["B10"].value == "='reporte horas XA-TST'!$AV$9"
     assert ws["B11"].value == "=ROUND(B9-B10,2)"
     assert ws["C15"].value == "=ROUND(B15/100*$B$11,2)"
     b = req.balance
@@ -1153,12 +1153,12 @@ def test_general_maestra_tarifa_por_avion_y_promedios_como_valor() -> None:
     )
     con_formula = 0
     for fila, v in zip(filas, req.consolidado.vuelos, strict=True):
-        valor = ws[f"T{fila}"].value
+        valor = ws[f"V{fila}"].value
         tarifa = ws[f"{letra_tarifa}{fila}"].value
         assert tarifa == v.permiso_afac_usd_hr
         if v.permiso_afac_usd_hr and v.permiso_afac_mxn is not None:
-            assert valor == f"=ROUND({letra_tarifa}{fila}*V{fila}*E{fila},2)", fila
-            assert wv["reporte horas FLOTA"][f"T{fila}"].value == v.permiso_afac_mxn
+            assert valor == f"=ROUND({letra_tarifa}{fila}*X{fila}*G{fila},2)", fila
+            assert wv["reporte horas FLOTA"][f"V{fila}"].value == v.permiso_afac_mxn
             con_formula += 1
         else:
             assert not (isinstance(valor, str) and valor.startswith("=")), fila
@@ -1167,12 +1167,12 @@ def test_general_maestra_tarifa_por_avion_y_promedios_como_valor() -> None:
     sin_tc = next(f for f in filas if ws[f"A{f}"].value == "#403 · Traslado")
     # Sin la columna COMISIONES (AC) desde el 7-oct-2026: GANANCIA USD = AD y
     # COSTO X HORA USD = AE en la hoja de vuelos del general.
-    assert ws[f"AD{sin_tc}"].value == req.consolidado.vuelos[sin_tc - 3].ganancia_usd
+    assert ws[f"AF{sin_tc}"].value == req.consolidado.vuelos[sin_tc - 3].ganancia_usd
     tot = 3 + len(req.consolidado.vuelos)
-    assert ws[f"V{tot}"].value == req.consolidado.totales.tc_promedio
-    assert ws[f"AE{tot}"].value == req.consolidado.totales.costo_hr_prom_usd
-    assert ws[f"K{tot}"].value == f"=ROUND(SUM(K3:K{tot - 1}),2)"
-    assert wv["reporte horas FLOTA"][f"K{tot}"].value == req.consolidado.totales.total_mxn
+    assert ws[f"X{tot}"].value == req.consolidado.totales.tc_promedio
+    assert ws[f"AG{tot}"].value == req.consolidado.totales.costo_hr_prom_usd
+    assert ws[f"M{tot}"].value == f"=ROUND(SUM(M3:M{tot - 1}),2)"
+    assert wv["reporte horas FLOTA"][f"M{tot}"].value == req.consolidado.totales.total_mxn
 
 
 def test_general_resumen_ganancia_y_totales() -> None:
@@ -1206,11 +1206,11 @@ def test_general_otros_gastos_balance_inventario_y_otros_movimientos() -> None:
     assert inv["B7"].value == "=ROUND(SUM(B5:B6),3)"
     assert inv["C7"].value == "=ROUND(SUM(C5:C6),2)"
     om = wb["otros movimientos"]
-    assert om["I4"].value == "=ROUND(G4-D4,2)"
+    assert om["L4"].value == "=ROUND(J4-G4,2)"
     tot = next(c.row for c in om["A"] if c.value == "TOTALES")
-    assert om[f"G{tot}"].value == f"=ROUND(SUM(G4:G{tot - 1}),2)"
-    assert om[f"I{tot}"].value == f"=ROUND(G{tot}-D{tot},2)"
-    assert wv["otros movimientos"][f"I{tot}"].value == r2(1250.5 + 3000 + 85.33 - 1100.25)
+    assert om[f"J{tot}"].value == f"=ROUND(SUM(J4:J{tot - 1}),2)"
+    assert om[f"L{tot}"].value == f"=ROUND(J{tot}-G{tot},2)"
+    assert wv["otros movimientos"][f"L{tot}"].value == r2(1250.5 + 3000 + 85.33 - 1100.25)
 
 
 def test_general_otros_movimientos_bloque_permisos_afac() -> None:
@@ -1252,24 +1252,24 @@ def test_general_otros_movimientos_bloque_permisos_afac() -> None:
     om = wb["otros movimientos"]
     # TOTALES intactos (misma fila, mismas fórmulas, mismo número).
     assert om[f"A{tot}"].value == "TOTALES"
-    assert om[f"G{tot}"].value == f"=ROUND(SUM(G4:G{tot - 1}),2)"
-    assert wv["otros movimientos"][f"I{tot}"].value == wv0["otros movimientos"][f"I{tot}"].value
+    assert om[f"J{tot}"].value == f"=ROUND(SUM(J4:J{tot - 1}),2)"
+    assert wv["otros movimientos"][f"L{tot}"].value == wv0["otros movimientos"][f"L{tot}"].value
     titulo = next(c.row for c in om["A"] if c.value and str(c.value).startswith("PERMISOS AFAC"))
     assert titulo > tot
     assert "NO entran a los TOTALES" in om[f"A{titulo + 1}"].value
     inicio = titulo + 2
     assert om[f"A{inicio}"].value == "XA-TST"
-    assert om[f"F{inicio}"].value == "provisión AFAC del periodo · 4 vuelos · tarifa 25.00 USD/hr"
-    assert om[f"G{inicio}"].value == 3465.0
+    assert om[f"I{inicio}"].value == "provisión AFAC del periodo · 4 vuelos · tarifa 25.00 USD/hr"
+    assert om[f"J{inicio}"].value == 3465.0
     assert om[f"A{inicio + 2}"].value == "XA-TST"
-    assert om[f"C{inicio + 2}"].value == "permiso AFAC pagado · AFAC anual"
-    assert om[f"D{inicio + 2}"].value == 2500.0
+    assert om[f"F{inicio + 2}"].value == "permiso AFAC pagado · AFAC anual"
+    assert om[f"G{inicio + 2}"].value == 2500.0
     sub = inicio + 3
     assert om[f"A{sub}"].value == "SUBTOTAL AFAC"
-    assert om[f"D{sub}"].value == f"=ROUND(SUM(D{inicio}:D{sub - 1}),2)"
     assert om[f"G{sub}"].value == f"=ROUND(SUM(G{inicio}:G{sub - 1}),2)"
-    assert om[f"I{sub}"].value == f"=ROUND(G{sub}-D{sub},2)"
-    assert wv["otros movimientos"][f"I{sub}"].value == 965.0
+    assert om[f"J{sub}"].value == f"=ROUND(SUM(J{inicio}:J{sub - 1}),2)"
+    assert om[f"L{sub}"].value == f"=ROUND(J{sub}-G{sub},2)"
+    assert wv["otros movimientos"][f"L{sub}"].value == 965.0
     assert verificar_libro(render_balance_general_xlsx(req))
 
 
@@ -1313,13 +1313,19 @@ def _firma_valores(data: bytes) -> str:
 # Comparada celda por celda contra la de HEAD 4189a1e quitando esa columna:
 # ningún número cambió (este payload no trae comisiones). Las tres del
 # libro individual no se movieron.
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
 _FIRMAS_ANTES = {
-    "tst": "468b0e1d198e97f6677649f69c8251e6087c6de1abd46c5b9831cc1905c3b2a1",
-    "dos": "0e66f2168336235fe45bb987d2906a2a05e5bed0a72053e145f8eca6489c88b6",
-    "general": "82ca976de801490f91d6c4f1b82975542d1c887006b85a0f0cd5c027890491d7",
+    "tst": "730a7c7804a6dbbbd66831a5b45386cd76f629576770d9bfc50a033f658a42b4",
+    "dos": "af6d841b3d7cc927dd7a719d37387fb625fd986c15684187cbd44f5a4b94e70c",
+    "general": "a25a315adfdb32d6360e7814f3471fc6734b7fa38a1ce6bf0f3610799246581d",
     # Con la caché en `repr` (17 cifras) esta daba 5472c557…: % COBRADO
     # difería del generador anterior en el último bit.
-    "pct17": "179b9207b41bbe28a7c09ef3fd6481a7ddf156e7e91478843469814974408b1b",
+    "pct17": "0be90b3e28df86cd962803e5dbdad9c90be90517f68edd887d42dea26dc6b111",
 }
 
 
@@ -1339,8 +1345,8 @@ def test_cache_da_los_numeros_del_generador_anterior(clave, render) -> None:
 def test_sin_cache_la_celda_tiene_formula_y_con_cache_el_numero() -> None:
     data = render_balance_avion_xlsx(_individual_tst())
     wb, wv = _libros(data)
-    assert wb["reporte horas XA-TST"]["K3"].value == "=ROUND(H3*J3,2)"
-    assert wv["reporte horas XA-TST"]["K3"].value == r2(3480 * 17.25)
+    assert wb["reporte horas XA-TST"]["M3"].value == "=ROUND(J3*L3,2)"
+    assert wv["reporte horas XA-TST"]["M3"].value == r2(3480 * 17.25)
     # Excel recalcula al abrir (las fórmulas dan lo mismo que la caché).
     calc = zipfile.ZipFile(BytesIO(data)).read("xl/workbook.xml").decode()
     assert 'fullCalcOnLoad="1"' in calc
@@ -1559,7 +1565,7 @@ def test_si_la_cache_no_se_puede_escribir_el_libro_sale_con_valores(monkeypatch)
     data = render_balance_avion_xlsx(_individual_tst())
     wb, _ = _libros(data)
     assert not Libro(data).formulas()
-    assert wb["reporte horas XA-TST"]["K3"].value == r2(3480 * 17.25)
+    assert wb["reporte horas XA-TST"]["M3"].value == r2(3480 * 17.25)
     assert _firma_valores(data) == _FIRMAS_ANTES["tst"]
 
 

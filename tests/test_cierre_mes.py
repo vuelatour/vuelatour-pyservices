@@ -72,23 +72,35 @@ AMBER = "FCD34D"  # ámbar del balance (`AMBER` de balance_avion_xlsx)
 # JSON con `vinculos_gasto: true`; PDF: los flujos de contenido de cada
 # página. Si una se mueve, un API ≤ 0.0.87 ya no ve su libro de siempre.
 # ---------------------------------------------------------------------------
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
 _HUELLAS_HEAD = {
     "individual": (
-        "5ff8072c668e207a77822c0463cc24ee31a19b329873b2d5412156ab57f6e7e2",
-        "68324b8e36a303b0a4620088433230e8bda79ba8868ce8041cd2034e3c1cb3cf",
+        "3a088800bfd81c515b73bc5b2b0cf3f8522fa7afebf5ed5013c5aa299d02714e",
+        "11cef9feb0e6a43564704490ea3a552aad8e546f8d2a5956733c50bdb4036096",
     ),
     "general-mensual": (
-        "00a974b56179ed1e8ffc1d0e4dc2d27711c5ffc76a714f186d5fec8c2bc8913c",
-        "9abf85a8fa27a7200d4b642240a74110a9f84190a57a289c3331cd0a81ad2a90",
+        "22d118a1a3df1b26d2bbca1827bd396ef1474c2c84db3af549035f8b2a1945bb",
+        "61247cf3aa3d6752721a24a5295a17bfbc72b2a2cd50deb716259942b669280a",
     ),
     "general-general": (
-        "818589cf5528e33b95a2c5c72c635be9593a774f6886e119b426cd4ddca4d8b1",
-        "ad7064d3103b9c562d0983c415c6cb020b95314d69bc3997816d130601041c9b",
+        "34afb591acef40817ae27b1e0ee2aa753fafa401674d55701b1da7c56df3a20e",
+        "9817ca0aa214074160e32e5a1ed1f8e83732dbb70aa14ac9a985613fa4132e25",
     ),
 }
 _HUELLA_REPARTO_PDF_HEAD = "9448b553c276bcd2bd8ddb878136bf888bf2d68f85d2fc5a1a3aaee2da91d5c0"
 _HUELLA_REPARTO_XLSX_HEAD = "4e1474b790df44f408f8634d116156b512c0c71824952734238ff42a82039dcc"
-_HUELLA_DINERO_HEAD = "a4c952a2004a8b2d287047b106ea51746c1920ab22a5bb615037833b841685c5"
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+_HUELLA_DINERO_HEAD = "a068a0a432a079fa83d4d428e207dc4f2fc7eba1d14d375b36258f5b2c3a3573"
 
 
 def _huella_xlsx(data: bytes) -> str:
@@ -339,7 +351,7 @@ def test_individual_sombra_no_suma_y_viene_suma(registros) -> None:
     assert hv.value is None and "agosto 2026" in hv.comment.text
     assert ws.cell(row=viene, column=enc["VENTA AVIÓN USD *"]).value == 1200
     # ESTADO se ensancha y la fila de la marca crece a sus renglones.
-    assert ws.column_dimensions["D"].width == 30
+    assert ws.column_dimensions["F"].width == 30
     assert ws.row_dimensions[sombra].height == 40
     # TOTALES del libro con cierre = los del libro de siempre (mismo payload
     # de totales del API): la sombra no sumó nada.
@@ -396,15 +408,15 @@ def test_individual_cobranza_marca_y_celdas_vacias() -> None:
     assert verificar_libro(data)
     ws = load_workbook(BytesIO(data))["cobranza"]
     sombra = _fila_de(ws, "#499")
-    assert ws.cell(row=sombra, column=4).value == pay.MARCA_PASA
-    assert ws.cell(row=sombra, column=5).value == "Pasa a oct-2026"
-    assert ws.cell(row=sombra, column=5).fill.fgColor.rgb.endswith(AMBER)
+    assert ws.cell(row=sombra, column=6).value == pay.MARCA_PASA
+    assert ws.cell(row=sombra, column=7).value == "Pasa a oct-2026"
+    assert ws.cell(row=sombra, column=7).fill.fgColor.rgb.endswith(AMBER)
     # TOTAL A COBRAR … COMISIÓN BANCO vacías (POR COBRAR sin fórmula).
-    assert [ws.cell(row=sombra, column=c).value for c in range(6, 13)] == [None] * 7
+    assert [ws.cell(row=sombra, column=c).value for c in range(8, 15)] == [None] * 7
     viene = _fila_de(ws, "#403")
-    assert ws.cell(row=viene, column=4).value == pay.MARCA_VIENE
-    assert ws.cell(row=viene, column=5).value == "Cobrado"
-    assert ws.column_dimensions["D"].width == 30
+    assert ws.cell(row=viene, column=6).value == pay.MARCA_VIENE
+    assert ws.cell(row=viene, column=7).value == "Cobrado"
+    assert ws.column_dimensions["F"].width == 30
     notas = [c.value for c in ws["A"] if isinstance(c.value, str)]
     assert any(n.startswith("CIERRE DE MES: las filas «Pasa a <mes>»") for n in notas)
 
@@ -427,9 +439,9 @@ def test_cancelado_con_marca_no_entra_al_sumif_de_cotizacion(registros) -> None:
     wb = load_workbook(BytesIO(data))
     cb = wb["cobranza"]
     fila = _fila_de(cb, "#404")
-    assert cb.cell(row=fila, column=4).value == "CANCELADO"
+    assert cb.cell(row=fila, column=6).value == "CANCELADO"
     tot = _fila_de(cb, "TOTALES")
-    assert "SUMIF" in str(cb.cell(row=tot, column=10).value)
+    assert "SUMIF" in str(cb.cell(row=tot, column=12).value)
     ws = wb[MAESTRA_TST]
     assert ws.cell(row=_fila_de(ws, "#404"), column=_encabezados(ws)["ESTADO"]).value == (
         "CANCELADO"
@@ -497,8 +509,8 @@ def test_general_marcas_resumen_y_cobranza(variante: str, registros) -> None:
     # Cobranza de la flota: la sombra con su marca y celdas vacías.
     cb = wb["cobranza"]
     fs = _fila_de(cb, "#499")
-    assert cb.cell(row=fs, column=4).value == pay.MARCA_PASA
-    assert [cb.cell(row=fs, column=c).value for c in range(6, 13)] == [None] * 7
+    assert cb.cell(row=fs, column=6).value == pay.MARCA_PASA
+    assert [cb.cell(row=fs, column=c).value for c in range(8, 15)] == [None] * 7
     # La vista en pantalla lleva el cierre de la raíz.
     vista = libro_balance_general(
         BalanceGeneralRequest.model_validate({**p, "vinculos_gasto": True})

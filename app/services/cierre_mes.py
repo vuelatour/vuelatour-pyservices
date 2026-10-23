@@ -270,12 +270,19 @@ def _pesos(x: float) -> str:
 
 
 def nombre_vuelo(it) -> str:
-    """La CLAVE que arma el API («#316 · Mike Nelson»); sin ella, «#folio ·
-    cliente» con lo que venga."""
+    """«#folio · Cliente» de un vuelo de las listas del cierre. La CLAVE que
+    arma el API se pinta tal cual («#316 · Mike Nelson» con un API ≤ 0.0.104;
+    «#316» desde el 0.0.105, apodos fuera, 23-oct-2026) y, si el `cliente`
+    de la fila no está ya dentro de ella, se agrega al final («#316 · Mike
+    Nelson»): nunca se parte la clave ni se inventa un nombre. Sin clave,
+    «#folio · cliente» con lo que venga."""
+    cliente = (getattr(it, "cliente", None) or "").strip()
     if it.clave:
+        if cliente and cliente not in it.clave:
+            return f"{it.clave} · {cliente}"
         return it.clave
     nombre = f"#{it.folio}" if it.folio else "—"
-    return f"{nombre} · {it.cliente}" if it.cliente else nombre
+    return f"{nombre} · {cliente}" if cliente else nombre
 
 
 def detalle_cobro(it, *, cobrado, por_cobrar, despues, fecha_despues, dinero) -> list[str]:

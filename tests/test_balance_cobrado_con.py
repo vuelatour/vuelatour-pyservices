@@ -406,8 +406,20 @@ def test_fila_con_dos_cobros_lleva_dos_notas_y_el_resumen_en_status() -> None:
 # encabezado de GANANCIA y notas al pie y del RESUMEN que lo explican;
 # comparada celda por celda contra HEAD 4189a1e quitando esa columna. La del
 # libro individual no se movió.
-_FIRMA_INDIVIDUAL_CON_COBROS = "d2dad5e7f07030e923def5b642c1db6fa471e05129f475bad93432f47f888897"
-_FIRMA_GENERAL_CON_COBROS = "e120d9303c3d9d3e6e63ec64358d4ca7ed435bf050ce4cd90a772686f0ee8e52"
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+_FIRMA_INDIVIDUAL_CON_COBROS = "22b2390919c91a147d9663b401d436aeac9a1b8ec725f139ff255f57df41b473"
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+_FIRMA_GENERAL_CON_COBROS = "adf54472d7c4fdd43b8ba588bdc6bdf43f6ce387d98bb200d3e13d02c213f67c"
 
 
 def test_nada_se_mueve_solo_cambian_las_notas_de_status_y_cobros() -> None:
@@ -433,11 +445,12 @@ def test_nada_se_mueve_solo_cambian_las_notas_de_status_y_cobros() -> None:
     # Las demás notas, idénticas.
     comunes = set(_comentarios(sin))
     assert {k: v for k, v in _comentarios(con).items() if k in comunes} == _comentarios(sin)
-    # Sin columnas nuevas: 47 columnas y los encabezados de siempre (libro
-    # individual; la hoja de vuelos del general lleva 46 desde el 7-oct-2026).
+    # Sin columnas nuevas: 49 columnas y los encabezados de siempre (libro
+    # individual; la hoja de vuelos del general lleva 48 desde el 7-oct-2026).
+    # 23-oct-2026: 47 → 49 por CLIENTE y Nº VUELO CLIENTE junto a la CLAVE.
     ws = _maestra(con)
-    assert ws.max_column == len(_COLS) == 47
-    assert [ws.cell(row=2, column=i).value for i in range(1, 48)] == [c[1] for c in _COLS]
+    assert ws.max_column == len(_COLS) == 49
+    assert [ws.cell(row=2, column=i).value for i in range(1, 50)] == [c[1] for c in _COLS]
 
 
 # Huellas del libro SIN cobros calculadas con el código ANTERIOR a este
@@ -452,8 +465,20 @@ def test_nada_se_mueve_solo_cambian_las_notas_de_status_y_cobros() -> None:
 # MXN» del RESUMEN y sus notas) — comparado celda por celda contra el código
 # anterior: ningún número ni fórmula cambió.
 # La del GENERAL, regenerada A PROPÓSITO el 7-oct-2026 (ver arriba).
-_FIRMA_INDIVIDUAL_SIN_COBROS = "b3a819f372e83e9683a6cc72a4fe7fe8a0c98940d0797724b70fee9a11c2f30a"
-_FIRMA_GENERAL_SIN_COBROS = "463eff493b49f1345148aa844c1cc382e1c95d018451367b949941c501047250"
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+_FIRMA_INDIVIDUAL_SIN_COBROS = "edc1ba8c36b7f077e31a0cacfb9d6aff0d0a71b41872265a53280a783378d769"
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+_FIRMA_GENERAL_SIN_COBROS = "bb27ec53de9989d00aab557a48c0238e6d1ec7be9b46d99595f1ab54fe75f604"
 
 
 def test_sin_cobros_el_libro_es_el_de_siempre() -> None:

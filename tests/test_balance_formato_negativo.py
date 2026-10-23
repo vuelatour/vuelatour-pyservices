@@ -125,8 +125,8 @@ def test_balance_general_mensual() -> None:
     om = wb["otros movimientos"]
     rojas_om = _celdas_rojas(om)
     tot_om = _fila_totales(om, desde=4)
-    assert all(f"I{fila}" in rojas_om for fila in range(4, tot_om + 1))
-    assert "G4" not in rojas_om
+    assert all(f"L{fila}" in rojas_om for fila in range(4, tot_om + 1))
+    assert "J4" not in rojas_om
 
 
 def test_balance_general_variante_general() -> None:

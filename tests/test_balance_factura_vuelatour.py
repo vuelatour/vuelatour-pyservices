@@ -186,7 +186,7 @@ def test_cols_la_columna_nueva_es_la_ultima_de_status_de_cobros() -> None:
     cobro1, comision = _DISP_MENSUAL.cobro1_col, _DISP_MENSUAL.comision_col
     assert _COLS[cobro1 - 1][1] == "COBRO 1\nFECHA"
     assert _COLS[comision - 1][2] == "comisiones_mxn"  # COMISIONES (6-oct-2026)
-    assert (COL, cobro1, comision) == (47, 35, 29)
+    assert (COL, cobro1, comision) == (49, 37, 31)
 
 
 @pytest.mark.parametrize("hoja", ["individual", "general"])
@@ -194,7 +194,7 @@ def test_encabezado_grupo_relleno_y_ancho(hoja) -> None:
     ws = _maestra_individual() if hoja == "individual" else _maestra_general()
     cols = _COLS if hoja == "individual" else _COLS_FLOTA
     col = len(cols)
-    assert (col, _col_factura(ws)) == ((47, 47) if hoja == "individual" else (46, 46))
+    assert (col, _col_factura(ws)) == ((49, 49) if hoja == "individual" else (48, 48))
     assert ws.max_column == col
     assert ws.cell(row=2, column=col).value == ENCABEZADO
     assert ws.cell(row=2, column=col - 1).value == "POR COBRAR\nUSD"
@@ -217,7 +217,7 @@ def test_encabezado_grupo_relleno_y_ancho(hoja) -> None:
     }
     assert anchos["POR COBRAR\nUSD"] == 13
     assert anchos["COBRADO REAL\nMXN (Σ depósitos)"] == 17
-    assert ws.freeze_panes == "D3"
+    assert ws.freeze_panes == "F3"  # a la derecha de RUTA (23-oct-2026: +CLIENTE, Nº VUELO)
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +334,7 @@ def test_otros_movimientos_folio_con_igual_tambien_es_texto() -> None:
     )
     wb = load_workbook(BytesIO(render_balance_general_xlsx(req)), data_only=True)
     ws = wb["otros movimientos"]
-    celdas = {c.value: c for c in ws["J"] if c.value in ("=A-12", "A-0424", "=B-1")}
+    celdas = {c.value: c for c in ws["M"] if c.value in ("=A-12", "A-0424", "=B-1")}
     assert set(celdas) == {"=A-12", "A-0424", "=B-1"}
     assert all(c.data_type == "s" for c in celdas.values())
     # Y la hoja maestra del mismo libro también.
@@ -565,8 +565,20 @@ def _firma_hoja(data: bytes, nombre: str) -> str:
 # Calculadas con el código de HEAD 12b5e86 (13-oct-2026) ANTES de tocar el
 # render, sobre `_individual()` / `_general()` SIN la bandera. Si una cambia,
 # un API ≤ 0.0.73 ya no ve su libro de siempre.
-_FIRMA_INDIVIDUAL_SIN_BANDERA = "a8875073e6bfd7722332b64294f1e3e162870737084a6f5fcd455df1ab38143a"
-_FIRMA_GENERAL_SIN_BANDERA = "eeab475d2c1543175f2f91dbec23db1ba1333d5f86d4997302db1082e0afb728"
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+_FIRMA_INDIVIDUAL_SIN_BANDERA = "e5a632fe80c1c771a9d6647cec26e05d6c08c1addb661c728d535f94763e2aa8"
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+_FIRMA_GENERAL_SIN_BANDERA = "ffbd13203ec36a6b58a768d683853664af81dc765495fa4bf571df92561ca9d5"
 
 
 @pytest.mark.parametrize("bandera", [_AUSENTE, None, False], ids=["sin-bandera", "None", "False"])
@@ -643,7 +655,7 @@ def test_textos_nuevos_en_la_maestra_individual_y_flota(bandera) -> None:
             assert celda.number_format == "General"
 
 
-def test_textos_nuevos_en_otros_movimientos_col_j() -> None:
+def test_textos_nuevos_en_otros_movimientos_col_m() -> None:
     req = _general(_VUELOS_COBROS, bandera=True)
     req.consolidado.otros_movimientos = BalanceHojaOtrosMovimientos(
         filas=[
@@ -664,7 +676,7 @@ def test_textos_nuevos_en_otros_movimientos_col_j() -> None:
     )
     wb = load_workbook(BytesIO(render_balance_general_xlsx(req)), data_only=True)
     ws = wb["otros movimientos"]
-    celdas = {c.value: c for c in ws["J"] if c.value in _TEXTOS_NUEVOS}
+    celdas = {c.value: c for c in ws["M"] if c.value in _TEXTOS_NUEVOS}
     assert set(celdas) == set(_TEXTOS_NUEVOS)
     assert all(c.data_type == "s" for c in celdas.values())
 
@@ -701,7 +713,7 @@ def test_textos_nuevos_en_el_libro_dinero_hoja_1_y_otros_ingresos() -> None:
     assert set(celdas) == set(_TEXTOS_NUEVOS)
     assert all(c.data_type == "s" for c in celdas.values())
     otros = wb["Otros ingresos"]
-    celdas_j = {c.value: c for c in otros["J"] if c.value in _TEXTOS_NUEVOS}
+    celdas_j = {c.value: c for c in otros["M"] if c.value in _TEXTOS_NUEVOS}
     assert set(celdas_j) == set(_TEXTOS_NUEVOS)
     assert all(c.data_type == "s" for c in celdas_j.values())
 

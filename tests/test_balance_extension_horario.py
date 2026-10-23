@@ -255,8 +255,20 @@ def _firma_hoja(data: bytes, nombre: str) -> str:
 # nueva en el encabezado de GANANCIA y notas al pie que lo explican —
 # comparada celda por celda contra HEAD 4189a1e quitando esa columna: ningún
 # número cambió. La del libro individual no se movió.
-_FIRMA_INDIVIDUAL_SIN_LLAVE = "5dde1a2efb9238b9e67ecc78ad6bec2a643ec2546d50e229aef44d8c588d099a"
-_FIRMA_GENERAL_SIN_LLAVE = "6a0da4592922063cd2ca8aab0c54ea7e621085b2a1e21def38c04360989f9c63"
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+_FIRMA_INDIVIDUAL_SIN_LLAVE = "754f9d138e3a2ec9597990882c8dcb24150b5f6784631de22b94f2dd1e553ebf"
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+_FIRMA_GENERAL_SIN_LLAVE = "bf06e004ac0192ae5b9677ccd44fbd9a6b675d0babe6db60ae06791ef7f0b1c3"
 
 
 # ---------------------------------------------------------------------------

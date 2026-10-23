@@ -60,7 +60,9 @@ Contrato del JSON (versión 1; el panel lo tipa 1:1 en `types/libro-excel.ts`):
            {tipo: 'afac_real', campo: 'costo_real_mxn', vuelo_id, clave,
             matricula, valor, reservado_mxn, editable, motivo, mes,
             capturado_por, capturado_at}
-           SOLO en la celda EGRESO (columna D) de cada fila AFAC POR VUELO de
+           SOLO en la celda EGRESO (columna G desde el 23-oct-2026, antes D;
+           el panel la encuentra por el vínculo, no por la letra) de cada
+           fila AFAC POR VUELO de
            'otros movimientos' del Balance general (nunca en la del
            reservado). `valor` null = sin capturar (la celda viaja aunque
            esté vacía); `editable` = lo que mandó el API (migración aplicada,

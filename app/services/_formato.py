@@ -3,8 +3,10 @@
 
 Viven aquí dos cosas, las dos de PRESENTACIÓN (ninguna toca dinero):
 1. Cómo se ESCRIBE un tipo de cambio USD→MXN (`_tc_txt`, abajo).
-2. El ANCHO de la columna CLAVE de los libros cuando la clave trae el ID de
-   vuelo por cliente (`ancho_columna_clave`, al final del módulo).
+2. Las columnas CLIENTE / RUTA / Nº VUELO CLIENTE que acompañan a la CLAVE
+   en todas las hojas con vuelos (encabezados, anchos y el ancho POR
+   CONTENIDO con tope de la columna CLIENTE: `ancho_columna_por_contenido`,
+   al final del módulo).
 
 T.C. (17-sep-2026):
 
@@ -26,14 +28,20 @@ Aquí NO se redondea dinero ni se recalcula nada: solo se formatea. El total
 en MXN de un vuelo se LEE del API (`monto_total_mxn`), jamás se recalcula
 con este texto.
 
-CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75, decisión 6 del
-lote del cliente): el API arma la CLAVE con el ID junto al folio («#376 ·
-january02-211026 · January Davila» en la hoja maestra y la cobranza, «#376 ·
-january02-211026» en 'otros movimientos', «january02-211026» en el Libro
-Dinero) y manda `clave_cliente` SOLO cuando el vuelo tiene ID. Ese campo NO
-se pinta: solo decide que la columna A se ensanche POR CONTENIDO, con tope.
-Sin él (API previo o migración sin aplicar), el ancho de siempre: libro byte
-a byte el de antes.
+CLAVE sin apodos (23-oct-2026, API 0.0.105; pedido del cliente del 23-oct
+sobre «reporte horas FLOTA» y 'otros movimientos': «siempre debemos ocultar
+los apodos con la clave del vuelo, para dejar solo las columnas de (Num de
+cotización, nombre completo, fecha, ruta y consecutivo del vuelo)» y «mejor
+eliminar esos apodos de todos lados, y de hecho faltan las columnas de
+nombre, ruta en algunos otros lados»). Del 13-oct al 23-oct la CLAVE llegaba
+armada con el ID por cliente («#376 · january02-211026 · January Davila») y
+`clave_cliente` solo ensanchaba la columna A. Desde el API 0.0.105 la CLAVE
+es SOLO el folio («#376») y cada fila de vuelo trae `cliente` (nombre
+completo), `ruta` y `consecutivo_cliente` (el «02» de «january02»), que se
+pintan en columnas propias JUNTO a la CLAVE: CLIENTE y Nº VUELO CLIENTE en
+todas las hojas con vuelos (y RUTA donde la hoja no la tenía). La CLAVE se
+pinta TAL CUAL llega (con un API viejo sigue trayendo el apodo: aquí no se
+parte ni se inventa nada; CLIENTE queda vacía) y `clave_cliente` se ignora.
 """
 
 from __future__ import annotations
@@ -57,32 +65,32 @@ def _tc_txt(v: float | int | None) -> str:
     return txt.rstrip("0").rstrip(".") if "." in txt else txt
 
 
-# Tope del ancho de la columna CLAVE con ID de vuelo por cliente: balances
-# (hoja maestra, cobranza, 'otros movimientos') y Libro Dinero ('dinero-vlos',
-# 'Otros ingresos'). Un nombre de cliente larguísimo no ensancha la hoja sin
-# límite: Excel lo corta como hoy.
-ANCHO_CLAVE_TOPE_BALANCE = 48
+# Columnas que acompañan a la CLAVE en TODAS las hojas con vuelos
+# (23-oct-2026, API 0.0.105): el nombre completo del cliente y el consecutivo
+# del vuelo de ESE cliente. Los encabezados en MAYÚSCULAS son los de las hojas
+# que así escriben los suyos (maestra, cobranza, 'dinero-vlos'); 'otros
+# movimientos' y 'Otros ingresos' van en minúsculas como el resto de su fila.
+ENCABEZADO_CLIENTE = "CLIENTE"
+ENCABEZADO_RUTA = "RUTA"
+ENCABEZADO_NUM_VUELO_CLIENTE = "Nº VUELO\nCLIENTE"
+# Ancho de CLIENTE: POR CONTENIDO entre una base y un tope (un nombre
+# larguísimo no ensancha la hoja sin límite: Excel lo corta como siempre).
+ANCHO_CLIENTE_BASE = 22
+ANCHO_CLIENTE_TOPE = 40
+ANCHO_NUM_VUELO_CLIENTE = 9
+# Tope de la columna CLAVE del Libro Dinero cuando crece por la marca del
+# cierre de mes («vtbeh · Viene de septiembre 2026»).
 ANCHO_CLAVE_TOPE_DINERO = 40
 
 
-def hay_id_cliente(filas: Iterable[object]) -> bool:
-    """¿Alguna fila trae el ID de vuelo por cliente (`clave_cliente` con
-    valor)? Filas sin el atributo (otro modelo, API previo) cuentan como no."""
-    return any(getattr(f, "clave_cliente", None) for f in filas)
-
-
-def ancho_columna_clave(
-    textos: Iterable[str | None], *, base: int, tope: int, con_id_cliente: bool
-) -> int:
-    """Ancho de la columna CLAVE.
-
-    - Sin ID de vuelo por cliente (`con_id_cliente` False): `base` TAL CUAL,
-      como int — el libro sale byte a byte el de antes.
-    - Con ID: `min(max(base, largo + 2), tope)`, con `largo` = el texto
-      PINTADO más largo (el «·» cuenta 1; 0 sin textos). Un nombre
-      larguísimo no ensancha la hoja sin límite: Excel lo corta como hoy.
-    """
-    if not con_id_cliente:
-        return int(base)
+def ancho_columna_por_contenido(textos: Iterable[str | None], *, base: int, tope: int) -> int:
+    """Ancho de una columna de texto: `min(max(base, largo + 2), tope)`, con
+    `largo` = el texto PINTADO más largo (0 sin textos: la base). Nunca se
+    ANGOSTA por debajo de la base ni crece sobre el tope."""
     largo = max((len(t) for t in textos if t), default=0)
     return min(max(int(base), largo + 2), int(tope))
+
+
+def ancho_columna_cliente(nombres: Iterable[str | None]) -> int:
+    """Ancho de la columna CLIENTE (igual en todas las hojas)."""
+    return ancho_columna_por_contenido(nombres, base=ANCHO_CLIENTE_BASE, tope=ANCHO_CLIENTE_TOPE)

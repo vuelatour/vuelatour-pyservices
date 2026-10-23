@@ -103,18 +103,24 @@ OM = "otros movimientos"
 # docProps/core.xml; vista en pantalla: el JSON con `vinculos_gasto: true`.
 # Si una se mueve, el API 0.0.88 (el de hoy) ya no ve su libro de siempre.
 # ---------------------------------------------------------------------------
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
 _HUELLAS_0088 = {
     "general-mensual": (
-        "266a7bf7d10bef7858bbcff8e39e168391b14fd5e3dc66b1b075ee493a267cda",
-        "562f629d32fba5f80c8373ec4891f985fa72e78ce296eb9d4b12b2b548bce1a0",
+        "b4a67b907add75f41b916e8a50a2d8bf465e9f1a7ad4b3733af5619d72083670",
+        "83127849707027bd9dd2e5521e5854096212c37cf2e060ea6cedd4379e5839ed",
     ),
     "general-general": (
-        "59de23fed99e7a2ad37f4674f5bd59507e3b11fede2d06b51bc3fc440bacb6de",
-        "7a920bd714e9de249ebee0a8a3454dc54b7444db7f8ecd347d168942b885291e",
+        "a7a33bdb297de51ce9ba461d301080d046bcd6251016d54639ac5276b0058ea1",
+        "ae149f3ba30d522d41823e90c5e32cc6fa407126895913428891fde0aecf03b5",
     ),
     "individual": (
-        "5ff8072c668e207a77822c0463cc24ee31a19b329873b2d5412156ab57f6e7e2",
-        "d4a163ef9f67f77bc96ae06032a60bc94e3e2a31b7ef12d778a36e0dd7e2a866",
+        "3a088800bfd81c515b73bc5b2b0cf3f8522fa7afebf5ed5013c5aa299d02714e",
+        "d922679c9d23fb95434b4561b3d0b2440745efe47be1817c55babcc70b9d6884",
     ),
 }
 
@@ -219,7 +225,7 @@ def test_separador_y_filas_en_las_columnas_de_siempre() -> None:
     assert vuelo_402[0] + 1 == sep and _filas_de(om, "#401 · Cliente Uno")[1] == sep + 1
     a = om.cell(row=sep, column=1)
     assert a.font.b is True and a.font.sz == 10 and a.font.color.rgb == f"00{NAVY}"
-    for col in range(1, 11):
+    for col in range(1, 14):
         celda = om.cell(row=sep, column=col)
         assert celda.fill.fill_type == "solid" and celda.fill.fgColor.rgb == f"00{LIGHT}"
         if col > 1:
@@ -231,29 +237,29 @@ def test_separador_y_filas_en_las_columnas_de_siempre() -> None:
     filas = pa.filas_afac_vuelo()
     for r, f in zip((f401, f402, f407, f405), filas, strict=True):
         assert om.cell(row=r, column=1).value == f["clave"]
-        assert om.cell(row=r, column=3).value == f["concepto_egreso"]
-        assert om.cell(row=r, column=4).value == f["egreso_mxn"]
-        assert om.cell(row=r, column=5).value is None
-        assert om.cell(row=r, column=6).value == f["concepto_ingreso"]
-        assert om.cell(row=r, column=7).value == f["ingreso_mxn"]
+        assert om.cell(row=r, column=6).value == f["concepto_egreso"]
+        assert om.cell(row=r, column=7).value == f["egreso_mxn"]
         assert om.cell(row=r, column=8).value is None
-        assert om.cell(row=r, column=9).value == f"=ROUND(G{r}-D{r},2)"
-        assert omv.cell(row=r, column=9).value == f["remanente_mxn"]
-        assert om.cell(row=r, column=10).value is None
-    # Fecha del vuelo en B; swatch del avión en A (XB-DOS sin color: nada).
-    assert om.cell(row=f401, column=2).value == "03/09/2026"
+        assert om.cell(row=r, column=9).value == f["concepto_ingreso"]
+        assert om.cell(row=r, column=10).value == f["ingreso_mxn"]
+        assert om.cell(row=r, column=11).value is None
+        assert om.cell(row=r, column=12).value == f"=ROUND(J{r}-G{r},2)"
+        assert omv.cell(row=r, column=12).value == f["remanente_mxn"]
+        assert om.cell(row=r, column=13).value is None
+    # Fecha del vuelo en E; swatch del avión en A (XB-DOS sin color: nada).
+    assert om.cell(row=f401, column=5).value == "03/09/2026"
     assert om.cell(row=f401, column=1).fill.fgColor.rgb == "003B82F6"
     assert om.cell(row=f407, column=1).fill.fill_type is None
     # Sin costo real: D VACÍA (no 0) con el formato de dinero; el concepto
     # dice «por capturar».
-    d402 = om.cell(row=f402, column=4)
+    d402 = om.cell(row=f402, column=7)
     assert d402.value is None and d402.number_format == MONEY
-    assert om.cell(row=f402, column=3).value == pa.CONCEPTO_POR_CAPTURAR
-    # Notas: la del reservado en G (cómo se calculó) y las notas del costo
-    # real en D.
-    assert om.cell(row=f401, column=7).comment.text == filas[0]["nota_ingreso"]
-    assert om.cell(row=f401, column=4).comment.text == "Recibo del gestor 0412"
-    assert om.cell(row=f402, column=4).comment is None
+    assert om.cell(row=f402, column=6).value == pa.CONCEPTO_POR_CAPTURAR
+    # Notas: la del reservado en J (cómo se calculó) y las notas del costo
+    # real en G.
+    assert om.cell(row=f401, column=10).comment.text == filas[0]["nota_ingreso"]
+    assert om.cell(row=f401, column=7).comment.text == "Recibo del gestor 0412"
+    assert om.cell(row=f402, column=7).comment is None
     assert verificar_libro(data)
 
 
@@ -261,25 +267,25 @@ def test_celda_egreso_editable_en_verde_y_la_del_reservado_no() -> None:
     _, om, _ = _general()
     sep = _fila_de(om, _OM_SECCION_AFAC_VUELO)
     for r in range(sep + 1, sep + 5):
-        d = om.cell(row=r, column=4)
+        d = om.cell(row=r, column=7)
         assert d.fill.fill_type == "solid" and d.fill.fgColor.rgb == f"00{FILL_AFAC_EDITABLE}"
         assert d.number_format == MONEY
-        assert om.cell(row=r, column=7).fill.fill_type is None
+        assert om.cell(row=r, column=10).fill.fill_type is None
 
 
 def test_totales_con_las_formulas_de_siempre_suman_real_y_reservado_una_vez() -> None:
     data, om, omv = _general()
     tot = _fila_de(om, "TOTALES")
-    assert om[f"D{tot}"].value == f"=ROUND(SUM(D4:D{tot - 1}),2)"
     assert om[f"G{tot}"].value == f"=ROUND(SUM(G4:G{tot - 1}),2)"
-    assert om[f"I{tot}"].value == f"=ROUND(G{tot}-D{tot},2)"
+    assert om[f"J{tot}"].value == f"=ROUND(SUM(J4:J{tot - 1}),2)"
+    assert om[f"L{tot}"].value == f"=ROUND(J{tot}-G{tot},2)"
     # Egresos: TUA pagado del #401 + los costos reales capturados (el #402
     # vacío no suma). Ingresos: TUA, pernocta, los reservados y la suelta.
     egresos = r2(1100.25 + 1000 + 300 + 700)
     ingresos = r2(1250.5 + 3000 + 1082.5 + 564.06 + 660 + 85.33)
-    assert omv[f"D{tot}"].value == egresos
-    assert omv[f"G{tot}"].value == ingresos
-    assert omv[f"I{tot}"].value == r2(ingresos - egresos)
+    assert omv[f"G{tot}"].value == egresos
+    assert omv[f"J{tot}"].value == ingresos
+    assert omv[f"L{tot}"].value == r2(ingresos - egresos)
     assert verificar_libro(data)
 
 
@@ -293,12 +299,12 @@ def test_los_numeros_no_dependen_de_la_bandera() -> None:
     _, om_sin, omv_sin = _general(p)
     tot, tot_sin = _fila_de(om, "TOTALES"), _fila_de(om_sin, "TOTALES")
     assert tot_sin == tot - 1  # sin la separadora
-    for col in "DGI":
+    for col in "GJL":
         assert omv[f"{col}{tot}"].value == omv_sin[f"{col}{tot_sin}"].value
     assert _OM_SECCION_AFAC_VUELO not in _textos(om_sin)
     primera_afac = _filas_de(om_sin, "#401 · Cliente Uno")[1]
     assert primera_afac == _filas_de(om_sin, "#402 · Cliente Dos")[0] + 1
-    assert om_sin.cell(row=primera_afac, column=4).fill.fill_type is None
+    assert om_sin.cell(row=primera_afac, column=7).fill.fill_type is None
 
 
 def test_remanente_negativo_en_rojo_y_nada_en_amarillo() -> None:
@@ -308,9 +314,9 @@ def test_remanente_negativo_en_rojo_y_nada_en_amarillo() -> None:
     vista = _hoja_json(_libro_general(pa.general_0089()), OM)
     sep = _fila_de(om, _OM_SECCION_AFAC_VUELO)
     estilos = _libro_general(pa.general_0089())["estilos"]
-    rojo = _celda_json(vista, sep + 3, 9)  # #407: −300.00
+    rojo = _celda_json(vista, sep + 3, 12)  # #407: −300.00 (remanente, L)
     assert rojo["v"] == -300.0 and estilos[rojo["s"]]["co"] == "9C0006"
-    verde = _celda_json(vista, sep + 1, 9)  # #401: 82.50
+    verde = _celda_json(vista, sep + 1, 12)  # #401: 82.50
     assert estilos[verde["s"]].get("co") != "9C0006"
 
 
@@ -329,7 +335,7 @@ def test_notas_del_costo_real_con_la_marca_de_provision_no_pintan_amarillo() -> 
     assert _rellenos_amber(om) == []
     assert _LEYENDA_PROVISION not in _textos(om)
     sep = _fila_de(om, _OM_SECCION_AFAC_VUELO)
-    d = om.cell(row=sep + 1, column=4)
+    d = om.cell(row=sep + 1, column=7)
     assert d.fill.fgColor.rgb == f"00{FILL_AFAC_EDITABLE}"
     assert d.comment.text == afac[0]["nota_egreso"]
     # Control: la MISMA marca en una fila de vuelo normal sí pinta amarillo.
@@ -349,7 +355,7 @@ def test_vinculo_afac_real_en_la_celda_egreso_y_no_en_el_reservado() -> None:
     _, om, _ = _general()
     sep = _fila_de(om, _OM_SECCION_AFAC_VUELO)
     vista = _hoja_json(_libro_general(pa.general_0089()), OM)
-    d401 = _celda_json(vista, sep + 1, 4)
+    d401 = _celda_json(vista, sep + 1, 7)
     assert d401["v"] == 1000.0 and d401["t"] == "1,000.00"
     assert d401["vinculo"] == {
         "tipo": "afac_real",
@@ -366,15 +372,15 @@ def test_vinculo_afac_real_en_la_celda_egreso_y_no_en_el_reservado() -> None:
         "capturado_at": pa.CAPTURADO_AT,
     }
     # Sin capturar: la celda viaja vacía con `valor` null.
-    d402 = _celda_json(vista, sep + 2, 4)
+    d402 = _celda_json(vista, sep + 2, 7)
     assert d402["v"] is None and d402["t"] == ""
     assert d402["vinculo"]["valor"] is None and d402["vinculo"]["vuelo_id"] == pa.VUELO_402
     assert d402["vinculo"]["capturado_por"] is None
     # Solo costo real (avión sin tarifa): reservado null.
-    assert _celda_json(vista, sep + 3, 4)["vinculo"]["reservado_mxn"] is None
+    assert _celda_json(vista, sep + 3, 7)["vinculo"]["reservado_mxn"] is None
     # Ninguna otra celda de la fila lleva vínculo (G = reservado, sobre todo).
     for r in range(sep + 1, sep + 5):
-        for c in (1, 2, 3, 5, 6, 7, 8, 9, 10):
+        for c in (1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13):
             x = _celda_json(vista, r, c)
             assert x is None or ("vinculo" not in x and "vinculos" not in x), (r, c)
     # Las filas por vuelo de siempre y TOTALES no llevan `afac_real`.
@@ -398,8 +404,8 @@ def test_fila_no_editable_lleva_motivo_y_sin_verde() -> None:
     sep = _fila_de(om, _OM_SECCION_AFAC_VUELO)
     vista = _hoja_json(_libro_general(p), OM)
     for r in range(sep + 1, sep + 5):
-        assert om.cell(row=r, column=4).fill.fill_type is None
-        v = _celda_json(vista, r, 4)["vinculo"]
+        assert om.cell(row=r, column=7).fill.fill_type is None
+        v = _celda_json(vista, r, 7)["vinculo"]
         assert v["editable"] is False and v["motivo"] == motivo
 
 
@@ -420,9 +426,9 @@ def test_sin_vuelo_id_no_hay_vinculo_y_editable_solo_con_true() -> None:
     p = pa.general_0089(filas=[sin_id])
     _, om, _ = _general(p)
     fila = _fila_de(om, _OM_SECCION_AFAC_VUELO) + 1
-    assert om.cell(row=fila, column=4).fill.fill_type is None
+    assert om.cell(row=fila, column=7).fill.fill_type is None
     vista = _hoja_json(_libro_general(p), OM)
-    assert "vinculo" not in _celda_json(vista, fila, 4)
+    assert "vinculo" not in _celda_json(vista, fila, 7)
 
 
 # ---------------------------------------------------------------------------
@@ -440,41 +446,41 @@ def test_bloque_afac_del_periodo_con_formulas_verificadas() -> None:
     assert om.cell(row=titulo, column=1).font.color.rgb == f"00{NAVY}"
     assert om.cell(row=titulo + 1, column=1).value == _LEYENDA_AFAC_PERIODO
     assert any(
-        r.min_row == titulo + 1 and r.min_col == 1 and r.max_col == 10
+        r.min_row == titulo + 1 and r.min_col == 1 and r.max_col == 13
         for r in om.merged_cells.ranges
     )
     sub = _fila_de(om, _AFAC_PERIODO_FILAS)
     assert sub == titulo + 2
-    assert om[f"D{sub}"].value == f"=ROUND(SUM(D{a}:D{b}),2)"
     assert om[f"G{sub}"].value == f"=ROUND(SUM(G{a}:G{b}),2)"
-    assert om[f"I{sub}"].value == f"=ROUND(SUM(I{a}:I{b}),2)"
-    assert (omv[f"D{sub}"].value, omv[f"G{sub}"].value, omv[f"I{sub}"].value) == (
+    assert om[f"J{sub}"].value == f"=ROUND(SUM(J{a}:J{b}),2)"
+    assert om[f"L{sub}"].value == f"=ROUND(SUM(L{a}:L{b}),2)"
+    assert (omv[f"G{sub}"].value, omv[f"J{sub}"].value, omv[f"L{sub}"].value) == (
         2000.0,
         2306.56,
         306.56,
     )
-    assert om[f"C{sub}"].value == "costo real capturado: 3 de 4 vuelos · 1 por capturar"
-    assert om[f"F{sub}"].value == "reservado (lo aporta el avión) · 3 vuelos"
-    # Un renglón por pago: fecha en E, detalle en C, monto en D.
+    assert om[f"F{sub}"].value == "costo real capturado: 3 de 4 vuelos · 1 por capturar"
+    assert om[f"I{sub}"].value == "reservado (lo aporta el avión) · 3 vuelos"
+    # Un renglón por pago: fecha en H, detalle en F, monto en G.
     pagos = _filas_de(om, _AFAC_PERIODO_PAGO)
     assert pagos == [sub + 1, sub + 2, sub + 3]
-    assert [om[f"C{r}"].value for r in pagos] == [x["detalle"] for x in pa.pagos_afac()]
-    assert [om[f"D{r}"].value for r in pagos] == [1500.0, 750.0, None]
-    assert [om[f"E{r}"].value for r in pagos] == ["01/09/2026", "10/09/2026", "22/09/2026"]
-    assert om[f"D{pagos[2]}"].comment.text.startswith("Pago en USD 40.00 sin T.C.")
+    assert [om[f"F{r}"].value for r in pagos] == [x["detalle"] for x in pa.pagos_afac()]
+    assert [om[f"G{r}"].value for r in pagos] == [1500.0, 750.0, None]
+    assert [om[f"H{r}"].value for r in pagos] == ["01/09/2026", "10/09/2026", "22/09/2026"]
+    assert om[f"G{pagos[2]}"].comment.text.startswith("Pago en USD 40.00 sin T.C.")
     pag = _fila_de(om, _AFAC_PERIODO_PAGADO)
     assert pag == pagos[-1] + 1
-    assert om[f"D{pag}"].value == f"=ROUND(SUM(D{pagos[0]}:D{pagos[-1]}),2)"
-    assert omv[f"D{pag}"].value == 2250.0
-    assert om[f"C{pag}"].value == (
+    assert om[f"G{pag}"].value == f"=ROUND(SUM(G{pagos[0]}:G{pagos[-1]}),2)"
+    assert omv[f"G{pag}"].value == 2250.0
+    assert om[f"F{pag}"].value == (
         "3 gastos marcados «Pago de AFAC» · 1 en USD sin T.C. (no suma)"
     )
     dif = _fila_de(om, _AFAC_PERIODO_DIFERENCIA)
-    assert om[f"D{dif}"].value == f"=ROUND(D{pag}-D{sub},2)"
-    assert omv[f"D{dif}"].value == 250.0
-    assert om[f"D{dif}"].font.color.rgb == f"00{RED}"
+    assert om[f"G{dif}"].value == f"=ROUND(G{pag}-G{sub},2)"
+    assert omv[f"G{dif}"].value == 250.0
+    assert om[f"G{dif}"].font.color.rgb == f"00{RED}"
     # El bloque va DEBAJO de TOTALES: sus sumas no lo incluyen.
-    assert om[f"D{tot}"].value == f"=ROUND(SUM(D4:D{tot - 1}),2)"
+    assert om[f"G{tot}"].value == f"=ROUND(SUM(G4:G{tot - 1}),2)"
     # Cada fórmula reproduce el número del API (ninguna se degradó).
     assert verificar_libro(data)
 
@@ -483,7 +489,7 @@ def test_pagos_del_bloque_llevan_su_vinculo_de_gasto() -> None:
     _, om, _ = _general()
     pagos = _filas_de(om, _AFAC_PERIODO_PAGO)
     vista = _hoja_json(_libro_general(pa.general_0089()), OM)
-    assert [_celda_json(vista, r, 4)["vinculos"] for r in pagos] == [
+    assert [_celda_json(vista, r, 7)["vinculos"] for r in pagos] == [
         [{"tipo": "gasto", "id": pa.GASTO_1, "rol": "fila", "monto_mxn": 1500.0,
           "columna": "pagado a AFAC"}],
         [{"tipo": "gasto", "id": pa.GASTO_2, "rol": "fila", "monto_mxn": 750.0,
@@ -499,12 +505,12 @@ def test_bloque_sin_pagos_y_diferencia_cero_sin_rojo() -> None:
     res.update(pagos=[], pagado_mxn=0.0, pagos_sin_tc=0, diferencia_pagado_mxn=-2000.0)
     data, om, omv = _general(p)
     pago = _fila_de(om, _AFAC_PERIODO_PAGO)
-    assert om[f"C{pago}"].value == _AFAC_PERIODO_SIN_PAGOS and om[f"D{pago}"].value is None
+    assert om[f"F{pago}"].value == _AFAC_PERIODO_SIN_PAGOS and om[f"G{pago}"].value is None
     pag = _fila_de(om, _AFAC_PERIODO_PAGADO)
-    assert om[f"D{pag}"].value == 0.0  # valor del API, sin fórmula
-    assert om[f"C{pag}"].value == "0 gastos marcados «Pago de AFAC»"
+    assert om[f"G{pag}"].value == 0.0  # valor del API, sin fórmula
+    assert om[f"F{pag}"].value == "0 gastos marcados «Pago de AFAC»"
     dif = _fila_de(om, _AFAC_PERIODO_DIFERENCIA)
-    assert omv[f"D{dif}"].value == -2000.0
+    assert omv[f"G{dif}"].value == -2000.0
     assert verificar_libro(data)
     # Diferencia 0 (pagado = costo real): negro.
     p = pa.general_0089()
@@ -513,8 +519,8 @@ def test_bloque_sin_pagos_y_diferencia_cero_sin_rojo() -> None:
     res.update(pagado_mxn=2000.0, diferencia_pagado_mxn=0.0)
     data, om, omv = _general(p)
     dif = _fila_de(om, _AFAC_PERIODO_DIFERENCIA)
-    assert omv[f"D{dif}"].value == 0.0
-    assert om[f"D{dif}"].font.color.rgb != f"00{RED}"
+    assert omv[f"G{dif}"].value == 0.0
+    assert om[f"G{dif}"].font.color.rgb != f"00{RED}"
     assert verificar_libro(data)
 
 
@@ -533,10 +539,10 @@ def test_bloque_solo_con_pagos_sin_filas_afac() -> None:
     assert _OM_SECCION_AFAC_VUELO not in _textos(om)
     assert _OM_AFAC_POR_VUELO not in om["A2"].value
     sub = _fila_de(om, _AFAC_PERIODO_FILAS)
-    assert [om[f"{c}{sub}"].value for c in "DGI"] == [0.0, 0.0, 0.0]
-    assert om[f"C{sub}"].value == "costo real capturado: 0 de 0 vuelos"
+    assert [om[f"{c}{sub}"].value for c in "GJL"] == [0.0, 0.0, 0.0]
+    assert om[f"F{sub}"].value == "costo real capturado: 0 de 0 vuelos"
     dif = _fila_de(om, _AFAC_PERIODO_DIFERENCIA)
-    assert omv[f"D{dif}"].value == 2250.0
+    assert omv[f"G{dif}"].value == 2250.0
     assert verificar_libro(data)
 
 
@@ -551,10 +557,10 @@ def test_filas_no_contiguas_sin_separador_y_bloque_como_valor() -> None:
     data, om, omv = _general(p)
     assert _OM_SECCION_AFAC_VUELO not in _textos(om)
     sub = _fila_de(om, _AFAC_PERIODO_FILAS)
-    assert [omv[f"{c}{sub}"].value for c in "DGI"] == [2000.0, 2306.56, 306.56]
-    assert all(not str(om[f"{c}{sub}"].value).startswith("=") for c in "DGI")
+    assert [omv[f"{c}{sub}"].value for c in "GJL"] == [2000.0, 2306.56, 306.56]
+    assert all(not str(om[f"{c}{sub}"].value).startswith("=") for c in "GJL")
     tot = _fila_de(om, "TOTALES")
-    assert omv[f"D{tot}"].value == r2(1100.25 + 1000 + 300 + 700)
+    assert omv[f"G{tot}"].value == r2(1100.25 + 1000 + 300 + 700)
     vista = _hoja_json(_libro_general(p), OM)
     assert sum(1 for x in vista["celdas"] if x.get("vinculo", {}).get("tipo") == "afac_real") == 4
     assert verificar_libro(data)
@@ -566,7 +572,7 @@ def test_fuera_de_libro_solo_si_hay() -> None:
     data, om, omv = _general(p)
     fuera = _fila_de(om, "fuera de libro")
     assert fuera == _fila_de(om, _AFAC_PERIODO_DIFERENCIA) + 1
-    assert omv[f"D{fuera}"].value == 450.0
+    assert omv[f"G{fuera}"].value == 450.0
     assert verificar_libro(data)
     _, om, _ = _general()
     assert _filas_de(om, "fuera de libro") == []
@@ -858,7 +864,7 @@ def test_rutas_aceptan_el_payload_0089(monkeypatch, request) -> None:
     assert [v["vuelo_id"] for v in vinculos] == [
         pa.VUELO_401, pa.VUELO_402, pa.VUELO_407, pa.VUELO_405
     ]  # fmt: skip
-    assert all(x["c"] == 4 for x in vista["celdas"] if "vinculo" in x)
+    assert all(x["c"] == 7 for x in vista["celdas"] if "vinculo" in x)
     res = client.post("/pdf/balance-avion-xlsx", json=pa.individual_0089(), headers=headers)
     assert res.status_code == 200, res.text
     assert load_workbook(BytesIO(res.content))["permisos"]["A3"].value.startswith("2 pagos")

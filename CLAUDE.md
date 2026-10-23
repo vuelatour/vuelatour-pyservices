@@ -1492,7 +1492,81 @@ Reglas de este microservicio (FastAPI, Python 3.12).
     bandera, el libro JSON es el de siempre (g). Pruebas:
     `tests/test_balance_vinculos.py` (a)–(h) y las dos de
     `tests/test_libro_json.py` (`vinculos` en lista y la bandera raíz).
-- **CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75, decisión 6
+- **APODOS FUERA DE LOS DOCUMENTOS: CLAVE = solo el folio y columnas CLIENTE /
+  RUTA / Nº VUELO CLIENTE junto a ella (23-oct-2026, API 0.0.105).** Pedido
+  del cliente con las capturas de «reporte horas FLOTA» y 'otros
+  movimientos': «siempre debemos ocultar los apodos con la clave del vuelo,
+  para dejar solo las columnas de (Num de cotización, nombre completo,
+  fecha, ruta y consecutivo del vuelo)» y «mejor eliminar esos apodos de
+  todos lados, y de hecho faltan las columnas de nombre, ruta en algunos
+  otros lados». SUSTITUYE a la entrada del 13-oct de abajo (ID por cliente
+  en la CLAVE): desde el API 0.0.105 toda fila de vuelo trae `clave` = «#364»
+  (en el Dinero multi-avión «#501 (50 % XB-DOS)»; los vuelos de servicio
+  también «#n», con `servicio: true`), `cliente` (nombre completo; «Vuelo de
+  servicio» en los de servicio), `consecutivo_cliente` (int | None, el «02»
+  de «ana02»; `consecutivo_liberal`: basura, 0 o decimal ⇒ None) y, donde la
+  hoja no la tenía, `ruta` («CUN-HOL-CUN»; '' o null sin tramos ⇒ vacía;
+  `texto_fila_liberal`). `clave_cliente` YA NO viaja: se acepta y se IGNORA
+  (ni se pinta ni decide anchos; `_formato.hay_id_cliente` y
+  `ancho_columna_clave` desaparecieron). Columnas por hoja (encabezados
+  exactos, en este orden):
+  - Hoja maestra «reporte horas <MAT>» / «reporte horas FLOTA» (las tres
+    disposiciones, `_COLS`): CLAVE · CLIENTE · «Nº VUELO\nCLIENTE» · FECHA ·
+    RUTA · ESTADO · … Todo lo demás corre DOS letras (PERMISO AFAC T→V, TC
+    COSTOS V→X, COMISIONES AC→AE, COBRO 1 FECHA AI→AK, FACTURA VUELATOUR
+    AU→AW; 47→49 columnas en el individual, 46→48 en la flota, 39→41 en la
+    variante costo por hora); ninguna fórmula lo nota (todo va por LLAVE,
+    `_Disposicion.letra`). Constantes B1/D1 en su sitio; paneles congelados
+    en F3 (a la derecha de RUTA); anchos por llave (`anchos_attr`).
+  - 'cobranza' (`_COBRANZA_HEADERS`, `_COB_*`): CLAVE · CLIENTE · «Nº
+    VUELO\nCLIENTE» · FECHA · RUTA · ESTADO · STATUS COBRO · TOTAL A COBRAR
+    (H) · COBRADO (I) · POR COBRAR (J) · POR COBRAR USD (K) · TOTAL
+    COTIZACIÓN (L) · COBRADO REAL (M) · COMISIÓN BANCO (N) · DETALLE (O); 15
+    columnas; el resumen de la fila 5 y TOTALES citan las letras de ahí.
+  - 'otros movimientos' (`_OM_HEADERS`, `_OM_COL_*`, minúsculas como el
+    resto de la hoja): clave · cliente · ruta · «nº vuelo\ncliente» · «fecha
+    \nvuelo» · concepto · egreso (G) · fecha · concepto · ingreso (J) · fecha
+    · remanente (L) · «factura\nvuelatour» (M); 13 columnas. Las filas
+    sueltas (ING-n, gas sin avión, tuas sin vuelo) no traen cliente/ruta/nº:
+    vacías. Las filas AFAC_VUELO sí los traen. Los bloques AFAC (`_bloque_
+    afac_otros_movimientos`, `_bloque_afac_periodo`, `_fila_otros_
+    movimientos`), `_COLUMNAS_PROVISION` = (6, 7), el rojo del remanente y
+    el vínculo `afac_real` (celda EGRESO = G, antes D; el panel lo encuentra
+    por el vínculo, no por la letra) usan esas constantes.
+  - Libro Dinero 'dinero-vlos' (`_COLS`): CLAVE · CLIENTE · «Nº VUELO
+    \nCLIENTE» · FECHA · RUTA · … (todo corre dos; `_COBRO1_COL` se busca por
+    encabezado; paneles en F5). 'Otros ingresos' (`_OI_HEADERS`, `_OI_COL_*`):
+    las mismas 13 columnas de 'otros movimientos' (clave · cliente · ruta · nº
+    vuelo cliente · fecha vuelo · …; TOTALES en G/J/L).
+  - Anchos: CLAVE vuelve a su base (16 maestra, 22 cobranza, 18 OM, 14
+    dinero-vlos —crece POR CONTENIDO solo con la marca del cierre—, 15
+    Otros ingresos); CLIENTE POR CONTENIDO con tope
+    (`_formato.ancho_columna_cliente`: base 22, tope 40); Nº VUELO CLIENTE 9.
+    El Nº de vuelo es un entero SIN formato de dinero (las columnas de dinero
+    se eligen por índice: `_OM_COLS_DINERO`, `_OI_COLS_DINERO`).
+  - Listas del cierre (balances y Libro Dinero): `cierre_mes.nombre_vuelo`
+    agrega « · Cliente» a la clave cuando esta no lo trae («#316 · Mike
+    Nelson»); nunca parte la clave ni inventa nombres. Reparto PDF/XLSX:
+    siguen imprimiendo «#folio» + cliente; `RepartoVueloLinea` acepta
+    `consecutivo_cliente` y `ruta` y `RepartoCierreVuelo` `ruta` (aditivos,
+    no se imprimen).
+  - **Compat con un API viejo** (0.0.75–0.0.104): la CLAVE «#219 ·
+    ana02-010926 · Ana Paty» se pinta TAL CUAL (no se parte) y CLIENTE / Nº
+    VUELO quedan vacías; `clave_cliente` no cambia ni un byte. Ningún
+    documento imprime ya un ID con forma `[a-z]+\d{2,}-\d{6}` cuando el API
+    no lo manda. Tests: `tests/test_claves_sin_apodo.py` (a/b/c + listas del
+    cierre + rutas HTTP); `tests/test_clave_cliente_xlsx.py` se RETIRÓ (su
+    invariante —ensanchar la CLAVE por `clave_cliente`— dejó de existir).
+    Todas las huellas congeladas de los libros (cierre, pesos, reserva, AFAC,
+    comisiones, factura, cobrado_con, extensión, empresa, otros ingresos,
+    costo por hora `_MIEMBROS_HOY`) se REGENERARON con comentario fechado:
+    el corrimiento cambia el layout de toda hoja con vuelos (y las hojas de
+    gastos que citan la maestra por letra); los números y las fórmulas por
+    llave son los mismos. Desplegar pyservices y API 0.0.105 juntos: con
+    pyservices nuevo y API viejo se ve la CLAVE larga (sin partir) y CLIENTE
+    vacía; con API nuevo y pyservices viejo, solo «#364» sin nombre.
+- **(SUSTITUIDA el 23-oct-2026 por la entrada anterior) CLAVE con ID de vuelo
+  por cliente (13-oct-2026, API 0.0.75, decisión 6
   del lote).** El ID («january02-211026» = alias del cliente + número de
   vuelo de ESE cliente + DDMMAA del día Cancún) va JUNTO al folio, que sigue
   siendo la llave del dinero. El API manda la CLAVE YA armada y aquí se pinta

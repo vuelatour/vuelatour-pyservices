@@ -481,26 +481,32 @@ def test_dinero_flota_parcial() -> None:
 # PDF y JSON de la vista en pantalla.
 # ---------------------------------------------------------------------------
 
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
 _HUELLAS_HEAD_29107E6 = {
     "individual": (
-        "3e05fe969941b7ecd8e465dbda392a789d75c39c7abb70242c6f5b3f9d5c97e8",
-        "7f424d3bbb34b8353d2d63c8da7a81354c9b65c10b136c31cffe57fd3ac2acf9",
+        "a9892b42431aee189162325a070436e5ecce954ceccdf56320988ce37f11b850",
+        "bd1435c16627a9486bdf11e1538bb6cbe66e285565048e58d5ea8c95fdaf1b45",
     ),
     "individual-351": (
-        "4e7f72bcc88b2d66723720c49459da55c629e636e42405c560a7566a8997fead",
-        "be5446a19665d29a2f5557254c503f67478114f4c4bf6113fe708546ae4a23b5",
+        "b26b36aeb0fb7d241641eeab1f5bc2005af6741c47a3f216affd84a7f7fccccf",
+        "bf1b0a7834d390b855a9754d0de49b1e20cd57e7dda4ad17dd0ef8d5197ef923",
     ),
     "general-mensual": (
-        "b23b204a208252df647417f7d08165cab896a177b7ffc42495d8931e6dd878a1",
-        "308a442c03a3433e7b6b80f5b553c48366fec3e1694f85729c3e6a82e9c13f3b",
+        "dfc1a62eb4d2ef17cef40965e5b805564eb0c4368f5a88eb20bb37b6044bf1d5",
+        "66d94704330389c72133798cf77ca258a864e991f97bcd81dc39072ada304bb7",
     ),
     "general-general": (
-        "57b68ea9df8c89c77b53123d24a6226893ee3dd22e720487b2d666a48159831f",
-        "cbabe25686c80de974316f4a54c476889ed086875884812790f77e138e346037",
+        "7bc5e874394e87fa13821d5e77b7ff87e3c7f5b1957a8fc6595a7c1b1e5658d6",
+        "c39451321f90a0a403a450f09e3ef3d87e51fff171a8aa4af04f3985f4c91eac",
     ),
     "general-consolidado": (
-        "b23b204a208252df647417f7d08165cab896a177b7ffc42495d8931e6dd878a1",
-        "d6c7cb9e363c8c7d429bf00700e057a7a98c64ed178a7e709ef50583ccc16c88",
+        "dfc1a62eb4d2ef17cef40965e5b805564eb0c4368f5a88eb20bb37b6044bf1d5",
+        "c7719582ddbdcf161a86608056c1b2c4eb3755211cf57fb4525aaddf1639f975",
     ),
     "reparto": (
         "086d81ea77269367cce33dcdbc799450232d7967b63019fa381da1ff9e2959ac",
@@ -526,8 +532,8 @@ _HUELLAS_HEAD_29107E6 = {
         "3816829ae1ec7e2c400c9bc2a6c3193b5abef683ad808ce998e832fbf6d7308a",
         "c9e3b5bc777a35b9468d8763b69d5d466c52a14f11242f60307e3441e7fcd97c",
     ),
-    "dinero": ("e1989b4b6b1d6cce437ba5477ee413ed731f0f2dba20f1508e7e24e8a4dff89d",),
-    "dinero-351": ("e7152261eda45eceda2a1cf1752d77c8ddd921c99cb9ed84708f15c87394874c",),
+    "dinero": ("6ecceb4016cac49a4e485ae18f38d15e0e92ca4f9f74f04c1b2e738ae13c1b2d",),
+    "dinero-351": ("52969284361c12fa2182d2eda64864d7d99627aa389c6841efc124cb0604db96",),
 }
 
 

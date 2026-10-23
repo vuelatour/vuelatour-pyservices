@@ -255,11 +255,11 @@ def test_encabezado_filas_afac_y_totales_que_las_suman() -> None:
     # primera fila AFAC (sin fila en blanco); las sueltas, después.
     assert (enc, tst, dos) == (ultimo_vuelo + 1, ultimo_vuelo + 2, ultimo_vuelo + 3)
     assert sueltas > dos and tot > sueltas
-    # Estilo del encabezado: negrita NAVY tamaño 10, relleno LIGHT en A..J,
+    # Estilo del encabezado: negrita NAVY tamaño 10, relleno LIGHT en A..M,
     # sin montos y sin merge.
     a = om.cell(row=enc, column=1)
     assert a.font.b is True and a.font.sz == 10 and a.font.color.rgb == f"00{NAVY}"
-    for col in range(1, 11):
+    for col in range(1, 14):
         celda = om.cell(row=enc, column=col)
         assert celda.fill.fill_type == "solid"
         assert celda.fill.fgColor.rgb == f"00{LIGHT}"
@@ -270,7 +270,7 @@ def test_encabezado_filas_afac_y_totales_que_las_suman() -> None:
     # (el permiso pagado CITADO con egreso $0.00), remanente con la fórmula
     # de siempre y las notas como comentario.
     assert om.cell(row=tst, column=1).fill.fgColor.rgb == "001F77B4"
-    assert [om.cell(row=tst, column=c).value for c in (2, 3, 4, 5, 6, 7, 8)] == [
+    assert [om.cell(row=tst, column=c).value for c in (5, 6, 7, 8, 9, 10, 11)] == [
         None,
         FILA_AFAC_TST["concepto_egreso"],
         0.0,
@@ -279,38 +279,38 @@ def test_encabezado_filas_afac_y_totales_que_las_suman() -> None:
         3465.0,
         None,
     ]
-    assert om.cell(row=tst, column=9).value == f"=ROUND(G{tst}-D{tst},2)"
-    assert omv.cell(row=tst, column=9).value == 3465.0
-    assert om.cell(row=tst, column=10).value is None
-    assert om.cell(row=tst, column=7).comment.text == NOTA_INGRESO_TST
-    assert om.cell(row=tst, column=4).comment is None
+    assert om.cell(row=tst, column=12).value == f"=ROUND(J{tst}-G{tst},2)"
+    assert omv.cell(row=tst, column=12).value == 3465.0
+    assert om.cell(row=tst, column=13).value is None
+    assert om.cell(row=tst, column=10).comment.text == NOTA_INGRESO_TST
+    assert om.cell(row=tst, column=7).comment is None
     # Fila del XB-DOS: solo los permisos citados (egreso $0.00, remanente 0,
     # sin rojo) con la nota del egreso de un renglón por permiso.
-    assert [om.cell(row=dos, column=c).value for c in (3, 4, 5, 6, 7)] == [
+    assert [om.cell(row=dos, column=c).value for c in (6, 7, 8, 9, 10)] == [
         FILA_AFAC_DOS["concepto_egreso"],
         0.0,
         "02/09/2026",
         None,
         None,
     ]
-    assert om.cell(row=dos, column=9).value == f"=ROUND(G{dos}-D{dos},2)"
-    assert omv.cell(row=dos, column=9).value == 0.0
-    color_dos = om.cell(row=dos, column=9).font.color
+    assert om.cell(row=dos, column=12).value == f"=ROUND(J{dos}-G{dos},2)"
+    assert omv.cell(row=dos, column=12).value == 0.0
+    color_dos = om.cell(row=dos, column=12).font.color
     assert color_dos is None or color_dos.rgb != f"00{RED}"
-    assert om.cell(row=dos, column=4).comment.text == NOTA_EGRESO_DOS
-    assert om.cell(row=dos, column=10).value is None
+    assert om.cell(row=dos, column=7).comment.text == NOTA_EGRESO_DOS
+    assert om.cell(row=dos, column=13).value is None
     # TOTALES: las MISMAS fórmulas de siempre; las filas AFAC suman (el
     # encabezado no trae montos: SUM lo ignora). Ingresos: #401, #402, AFAC
     # XA-TST y la suelta ING-3. Egresos: los permisos pagados NO (ya restan
     # en la cascada de su avión: un gasto, una vez).
-    assert om[f"D{tot}"].value == f"=ROUND(SUM(D4:D{tot - 1}),2)"
     assert om[f"G{tot}"].value == f"=ROUND(SUM(G4:G{tot - 1}),2)"
-    assert om[f"I{tot}"].value == f"=ROUND(G{tot}-D{tot},2)"
+    assert om[f"J{tot}"].value == f"=ROUND(SUM(J4:J{tot - 1}),2)"
+    assert om[f"L{tot}"].value == f"=ROUND(J{tot}-G{tot},2)"
     egresos = r2(1100.25 + 0 + 0)
     ingresos = r2(1250.5 + 3000 + 3465 + 85.33)
-    assert omv[f"D{tot}"].value == egresos
-    assert omv[f"G{tot}"].value == ingresos
-    assert omv[f"I{tot}"].value == r2(ingresos - egresos)
+    assert omv[f"G{tot}"].value == egresos
+    assert omv[f"J{tot}"].value == ingresos
+    assert omv[f"L{tot}"].value == r2(ingresos - egresos)
     # Cada fórmula del libro reproduce el número del API.
     assert verificar_libro(data)
 
@@ -359,7 +359,7 @@ def test_sin_bandera_filas_con_seccion_sin_encabezado_y_bloque_viejo(bandera) ->
     ultimo_vuelo = _fila_de(om, "#402 · Cliente Dos")
     assert _fila_de(om, "AFAC · XA-TST") == ultimo_vuelo + 1
     tot = _fila_de(om, "TOTALES")
-    assert wv["otros movimientos"][f"D{tot}"].value == r2(1100.25 + 0 + 0)
+    assert wv["otros movimientos"][f"G{tot}"].value == r2(1100.25 + 0 + 0)
     # El bloque informativo del API previo, debajo de TOTALES.
     titulo = _fila_de(om, _TITULO_AFAC_OM)
     assert titulo > tot
@@ -533,11 +533,11 @@ def test_fila_afac_con_permisos_usd_sin_tc_egresa_cero_y_no_suma() -> None:
     wb, wv = _libros(data)
     om = wb["otros movimientos"]
     fila = _fila_de(om, "AFAC · XA-TST")
-    assert om.cell(row=fila, column=3).value == parcial["concepto_egreso"]
-    assert "sin TC" not in om.cell(row=fila, column=3).value
-    assert om.cell(row=fila, column=4).value == 0.0
+    assert om.cell(row=fila, column=6).value == parcial["concepto_egreso"]
+    assert "sin TC" not in om.cell(row=fila, column=6).value
+    assert om.cell(row=fila, column=7).value == 0.0
     tot = _fila_de(om, "TOTALES")
-    assert wv["otros movimientos"][f"D{tot}"].value == r2(1100.25)
+    assert wv["otros movimientos"][f"G{tot}"].value == r2(1100.25)
     assert verificar_libro(data)
 
 

@@ -454,12 +454,12 @@ def test_otros_movimientos_pinta_el_concepto_del_gasto_real_tal_cual() -> None:
     wb = _libro(render_balance_general_xlsx(_general(True, filas=[_FILA_PAGO_REAL])))
     ws = wb["otros movimientos"]
     assert ws["A4"].value == "N4142R-260"
-    assert ws["C4"].value == CONCEPTO_PARCIAL
-    assert ws["D4"].value == 1200.0
-    assert ws["E4"].value == "25/09/2026"
-    assert ws["G4"].value == 1600.0
-    assert ws["I4"].value == 400.0
-    assert ws["D4"].comment.text == NOTA_PAGO_REAL
+    assert ws["F4"].value == CONCEPTO_PARCIAL
+    assert ws["G4"].value == 1200.0
+    assert ws["H4"].value == "25/09/2026"
+    assert ws["J4"].value == 1600.0
+    assert ws["L4"].value == 400.0
+    assert ws["G4"].comment.text == NOTA_PAGO_REAL
 
 
 # ---------------------------------------------------------------------------
@@ -510,10 +510,10 @@ def test_dinero_solo_pagos_reales_sin_provision_viva() -> None:
 def test_dinero_pinta_el_concepto_y_la_nota_del_gasto_real_tal_cual() -> None:
     wb = _libro(render_dinero_xlsx(_dinero(pagada=1200.0, filas=[_FILA_PAGO_REAL])))
     ws = wb["Otros ingresos"]
-    assert ws["C4"].value == CONCEPTO_PARCIAL
-    assert ws["D4"].value == 1200.0
-    assert ws["I4"].value == 400.0
-    assert ws["D4"].comment.text == NOTA_PAGO_REAL
+    assert ws["F4"].value == CONCEPTO_PARCIAL
+    assert ws["G4"].value == 1200.0
+    assert ws["L4"].value == 400.0
+    assert ws["G4"].comment.text == NOTA_PAGO_REAL
 
 
 # ---------------------------------------------------------------------------
@@ -839,29 +839,29 @@ def test_general_con_bandera_y_regla_render_sin_provision(variante) -> None:
     # (a) vigencia, COMPLETADO, sin gasto: SIN concepto/egreso/fecha, ingreso
     # igual, remanente = ingreso (fórmula viva: el egreso vacío cuenta 0).
     assert om["A4"].value == "#412 · Cliente Doce"
-    assert (om["C4"].value, om["D4"].value, om["E4"].value) == (None, None, None)
-    assert om["G4"].value == 12148.35
-    assert om["I4"].value == "=ROUND(G4-D4,2)" and omv["I4"].value == 12148.35
+    assert (om["F4"].value, om["G4"].value, om["H4"].value) == (None, None, None)
+    assert om["J4"].value == 12148.35
+    assert om["L4"].value == "=ROUND(J4-G4,2)" and omv["L4"].value == 12148.35
     # (b) CONFIRMADO sin gasto: igual, sin egreso.
-    assert (om["C5"].value, om["D5"].value, om["E5"].value) == (None, None, None)
-    assert omv["I5"].value == 2030.0
+    assert (om["F5"].value, om["G5"].value, om["H5"].value) == (None, None, None)
+    assert omv["L5"].value == 2030.0
     # (c) con gasto real, idéntico a hoy: cubierto con parcial ($0.00, sin
     # amarillo), cubierto con exceso ($320) y gasto real pre-vigencia (faltan).
-    assert om["C6"].value == _FILA_V73_CUBIERTO_PARCIAL["concepto_egreso"]
-    assert (om["D6"].value, om["E6"].value, omv["I6"].value) == (0.0, "09/10/2026", 2360.0)
-    assert om["C7"].value == _FILA_V73_CUBIERTO_EXCEDE["concepto_egreso"]
-    assert (om["D7"].value, omv["I7"].value) == (320.0, 860.0)
-    assert om["C8"].value == CONCEPTO_PARCIAL
-    assert (om["D8"].value, omv["I8"].value) == (1200.0, 400.0)
-    assert om["D8"].comment.text == NOTA_PAGO_REAL
+    assert om["F6"].value == _FILA_V73_CUBIERTO_PARCIAL["concepto_egreso"]
+    assert (om["G6"].value, om["H6"].value, omv["L6"].value) == (0.0, "09/10/2026", 2360.0)
+    assert om["F7"].value == _FILA_V73_CUBIERTO_EXCEDE["concepto_egreso"]
+    assert (om["G7"].value, omv["L7"].value) == (320.0, 860.0)
+    assert om["F8"].value == CONCEPTO_PARCIAL
+    assert (om["G8"].value, omv["L8"].value) == (1200.0, 400.0)
+    assert om["G8"].comment.text == NOTA_PAGO_REAL
     # (d) TOTALES = Σ de las filas (vuelos + sueltas), remanente = Σ ing − Σ egr.
     todas = p["consolidado"]["otros_movimientos"]["filas"] + p["consolidado"][
         "otros_movimientos"
     ].get("filas_sueltas", [])
     tot = next(c.row for c in om["A"] if c.value == "TOTALES")
-    assert omv[f"D{tot}"].value == _suma(todas, "egreso_mxn")
-    assert omv[f"G{tot}"].value == _suma(todas, "ingreso_mxn")
-    assert omv[f"I{tot}"].value == round(
+    assert omv[f"G{tot}"].value == _suma(todas, "egreso_mxn")
+    assert omv[f"J{tot}"].value == _suma(todas, "ingreso_mxn")
+    assert omv[f"L{tot}"].value == round(
         _suma(todas, "ingreso_mxn") - _suma(todas, "egreso_mxn"), 2
     )
 
@@ -888,7 +888,7 @@ def test_general_con_regla_sin_bandera_textos_cubre_avion_de_hoy(sin_provision) 
     assert not any(EMPRESA_REGLA_CUBRE_SIN_PROVISION.format(regla=REGLA) in x for x in pie)
     assert not any(EMPRESA_BASE_SIN_PROVISION in x for x in pie)
     # La marca sigue pintando (fila 4 = `_FILA_CUBIERTA`), con su leyenda.
-    assert _rellenos_amber(om) == ["C4", "D4"]
+    assert _rellenos_amber(om) == ["F4", "G4"]
     assert _LEYENDA_PROVISION in _textos(om)
 
 
@@ -980,7 +980,7 @@ def test_el_amarillo_no_depende_de_la_bandera() -> None:
         BytesIO(render_balance_general_xlsx(BalanceGeneralRequest.model_validate(p)))
     )["otros movimientos"]
     assert OM_FRAG_SIN_PROVISION in om["A2"].value
-    assert _rellenos_amber(om) == ["C4", "D4"]
+    assert _rellenos_amber(om) == ["F4", "G4"]
     assert _LEYENDA_PROVISION in _textos(om)
 
 
@@ -1276,9 +1276,9 @@ def test_dinero_con_la_bandera_leyendas_nuevas_sin_provision() -> None:
     assert "provisi" not in (fila2 + fila9).lower()
     # La fila sin gasto real: sin egreso, remanente = ingreso, sin nota.
     ws = _libro(render_dinero_xlsx(_dinero_0074(filas=[_FILA_V74_SIN_GASTO])))["Otros ingresos"]
-    assert (ws["C4"].value, ws["D4"].value, ws["E4"].value) == (None, None, None)
-    assert ws["D4"].comment is None
-    assert (ws["G4"].value, ws["I4"].value) == (2030.0, 2030.0)
+    assert (ws["F4"].value, ws["G4"].value, ws["H4"].value) == (None, None, None)
+    assert ws["G4"].comment is None
+    assert (ws["J4"].value, ws["L4"].value) == (2030.0, 2030.0)
 
 
 @pytest.mark.parametrize("pagada", [0.0, 1600.0], ids=["pagada 0", "pagada 1600"])

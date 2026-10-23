@@ -783,10 +783,43 @@ class BalanceAvionCobro(BaseModel):
 
 def clave_cliente_liberal(v: Any) -> str | None:
     """ID de vuelo por cliente (13-oct-2026, API 0.0.75): texto no vacío ⇒
-    recortado; vacío o no-texto ⇒ None. Es metadato (solo decide el ancho de
-    la columna CLAVE): jamás un 422 por él."""
+    recortado; vacío o no-texto ⇒ None. Desde el 23-oct-2026 (API 0.0.105,
+    apodos fuera de los documentos) el API ya no lo manda y aquí NO se usa
+    para nada: se acepta solo por compatibilidad con un API previo (jamás un
+    422 por él)."""
     if isinstance(v, str) and v.strip():
         return v.strip()
+    return None
+
+
+def texto_fila_liberal(v: Any) -> str | None:
+    """Texto de presentación de una fila de vuelo (23-oct-2026, API 0.0.105:
+    `cliente` —nombre completo— y `ruta`): texto no vacío ⇒ recortado; vacío,
+    null o cualquier otra cosa ⇒ None (celda vacía; nunca se inventa ni se
+    saca de la CLAVE). Jamás un 422 por una columna informativa."""
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+    return None
+
+
+def consecutivo_liberal(v: Any) -> int | None:
+    """Nº de vuelo del cliente (23-oct-2026, API 0.0.105, `consecutivo_cliente`:
+    el «02» de «ana02»): entero ≥ 1 —también como float entero o texto
+    numérico— ⇒ int; bool, null, 0, negativo, decimal o basura ⇒ None (celda
+    vacía). Jamás un 422 por él."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, float):
+        if not math.isfinite(v) or not v.is_integer():
+            return None
+        v = int(v)
+    elif isinstance(v, str):
+        try:
+            v = int(v.strip())
+        except ValueError:
+            return None
+    if isinstance(v, int) and v >= 1:
+        return v
     return None
 
 
@@ -862,13 +895,20 @@ class BalanceAvionVuelo(BaseModel):
     # Llave interna de orden cronológico (el API ya manda las filas
     # ordenadas); NO se pinta.
     orden_ts: str | None = None
-    # CLAVE armada por el API: '#<folio> · <ID del cliente> · <cliente>' (sin
-    # ID, '#<folio> · <cliente>'); se pinta tal cual.
+    # CLAVE armada por el API y pintada TAL CUAL: desde el API 0.0.105
+    # (23-oct-2026, apodos fuera) SOLO el folio ('#376'); un API previo manda
+    # '#376 · january02-211026 · January Davila' y aquí no se parte.
     clave: str | None = None
-    # ID de vuelo por cliente del API 0.0.75 (decisión 6 del lote del
-    # 13-oct-2026): NO se pinta (la CLAVE ya llega armada); solo decide el
-    # ancho de la columna A (`_formato.ancho_columna_clave`); None = API previo
-    # o migración sin aplicar ⇒ libro byte a byte el de antes.
+    # ADITIVOS (23-oct-2026, API 0.0.105; pedido del cliente: «dejar solo las
+    # columnas de Num de cotización, nombre completo, fecha, ruta y
+    # consecutivo del vuelo»): nombre COMPLETO del cliente (columna CLIENTE,
+    # junto a la CLAVE) y Nº de vuelo de ESE cliente (columna «Nº VUELO
+    # CLIENTE»; el «02» de «january02»). None (API previo) ⇒ celda vacía.
+    cliente: str | None = None
+    consecutivo_cliente: int | None = None
+    # ID de vuelo por cliente del API 0.0.75 (13-oct-2026): desde el
+    # 23-oct-2026 el API ya no lo manda y aquí se IGNORA (ni se pinta ni
+    # decide anchos); se acepta solo por compatibilidad.
     clave_cliente: str | None = None
     fecha: str | None = None  # ISO date o texto libre (multi-día: "9-10 sep")
     ruta: str | None = None
@@ -1129,6 +1169,16 @@ class BalanceAvionVuelo(BaseModel):
     @classmethod
     def _clave_cliente_liberal(cls, v: Any) -> str | None:
         return clave_cliente_liberal(v)
+
+    @field_validator("cliente", mode="before")
+    @classmethod
+    def _cliente_liberal(cls, v: Any) -> str | None:
+        return texto_fila_liberal(v)
+
+    @field_validator("consecutivo_cliente", mode="before")
+    @classmethod
+    def _consecutivo_liberal(cls, v: Any) -> int | None:
+        return consecutivo_liberal(v)
 
 
 class BalanceAvionTotales(BaseModel):
@@ -1610,14 +1660,20 @@ class BalanceOtroMovimientoFila(BaseModel):
     comisión vendedor (X) · gasto real», con «· parcial: faltan $… MXN» o
     «· excede $… MXN») y aquí se pinta tal cual."""
 
-    # Con ID de vuelo por cliente (API 0.0.75): '#<folio> · <ID>'; sin él, la
-    # clave de siempre ('vt' + primera palabra + folio). ' · ESTADO' lo
+    # CLAVE del API, pintada tal cual: desde el API 0.0.105 (23-oct-2026,
+    # apodos fuera) SOLO el folio ('#376'); un API 0.0.75–0.0.104 manda '#376
+    # · january02-211026' y uno anterior 'vtjanuary376'. ' · ESTADO' lo
     # agrega este módulo en estados no normales.
     clave: str = ""
-    # ID de vuelo por cliente del API 0.0.75 (decisión 6 del lote del
-    # 13-oct-2026): NO se pinta (la CLAVE ya llega armada); solo decide el
-    # ancho de la columna A (`_formato.ancho_columna_clave`); None = API previo
-    # o migración sin aplicar ⇒ libro byte a byte el de antes.
+    # ADITIVOS (23-oct-2026, API 0.0.105): nombre COMPLETO del cliente, RUTA
+    # («CUN-HOL-CUN») y Nº de vuelo de ese cliente, en columnas propias junto
+    # a la clave (esta hoja no tenía ruta). None (fila suelta ING-n / AFAC, o
+    # API previo) ⇒ celda vacía.
+    cliente: str | None = None
+    ruta: str | None = None
+    consecutivo_cliente: int | None = None
+    # ID de vuelo por cliente del API 0.0.75 (13-oct-2026): desde el
+    # 23-oct-2026 el API ya no lo manda y aquí se IGNORA; solo compatibilidad.
     clave_cliente: str | None = None
     avion_color: str | None = None
     # Estado del vuelo (COMPLETADO / CANCELADO / RESERVA…): el API lista
@@ -1662,6 +1718,16 @@ class BalanceOtroMovimientoFila(BaseModel):
     @classmethod
     def _clave_cliente_liberal(cls, v: Any) -> str | None:
         return clave_cliente_liberal(v)
+
+    @field_validator("cliente", "ruta", mode="before")
+    @classmethod
+    def _textos_fila_liberales(cls, v: Any) -> str | None:
+        return texto_fila_liberal(v)
+
+    @field_validator("consecutivo_cliente", mode="before")
+    @classmethod
+    def _consecutivo_liberal(cls, v: Any) -> int | None:
+        return consecutivo_liberal(v)
 
 
 class BalanceAfacProvisionAvion(BaseModel):
@@ -2659,14 +2725,22 @@ class DineroVueloFila(BaseModel):
     ingresos', no en la fila del avión.
     """
 
-    # Con ID de vuelo por cliente (API 0.0.75): 'beh05-011026' (+ ' (50 %
-    # N4142R)' en multi-avión; un vuelo de servicio siempre 'vtservicio');
-    # sin él, la clave de siempre ('vtbeh').
+    # CLAVE del API, pintada tal cual: desde el API 0.0.105 (23-oct-2026,
+    # apodos fuera) SOLO el folio ('#376', + ' (50 % N4142R)' en multi-avión);
+    # un API 0.0.75–0.0.104 manda 'beh05-011026' y uno anterior 'vtbeh' /
+    # 'vtservicio'.
     clave: str = ""
-    # ID de vuelo por cliente del API 0.0.75 (decisión 6 del lote del
-    # 13-oct-2026): NO se pinta (la CLAVE ya llega armada); solo decide el
-    # ancho de la columna A (`_formato.ancho_columna_clave`); None = API previo
-    # o migración sin aplicar ⇒ libro byte a byte el de antes.
+    # ADITIVOS (23-oct-2026, API 0.0.105): nombre COMPLETO del cliente («Vuelo
+    # de servicio» en los de servicio) y Nº de vuelo de ese cliente, en
+    # columnas propias junto a la clave. None (API previo) ⇒ celda vacía.
+    cliente: str | None = None
+    consecutivo_cliente: int | None = None
+    # ADITIVO (23-oct-2026, API 0.0.105): `true` SOLO en el vuelo de servicio
+    # (su `cliente` ya llega como «Vuelo de servicio»). Informativo: aquí no
+    # decide nada; solo un `true` JSON cuenta (jamás un 422).
+    servicio: bool | None = None
+    # ID de vuelo por cliente del API 0.0.75 (13-oct-2026): desde el
+    # 23-oct-2026 el API ya no lo manda y aquí se IGNORA; solo compatibilidad.
     clave_cliente: str | None = None
     matricula: str | None = None  # nota de la celda CLAVE
     color: str | None = None  # color de fila (hex del avión, #RRGGBB)
@@ -2718,6 +2792,21 @@ class DineroVueloFila(BaseModel):
     def _clave_cliente_liberal(cls, v: Any) -> str | None:
         return clave_cliente_liberal(v)
 
+    @field_validator("servicio", mode="before")
+    @classmethod
+    def _servicio_liberal(cls, v: Any) -> bool | None:
+        return v if isinstance(v, bool) else None
+
+    @field_validator("cliente", mode="before")
+    @classmethod
+    def _cliente_liberal(cls, v: Any) -> str | None:
+        return texto_fila_liberal(v)
+
+    @field_validator("consecutivo_cliente", mode="before")
+    @classmethod
+    def _consecutivo_liberal(cls, v: Any) -> int | None:
+        return consecutivo_liberal(v)
+
     @field_validator("cierre_marca", "diferido_a", "diferido_de", mode="before")
     @classmethod
     def _texto_cierre_liberal(cls, v: Any) -> str | None:
@@ -2732,13 +2821,18 @@ class DineroOtroIngresoFila(BaseModel):
     PROVISIÓN mientras no hubiera gasto real; desde el 0.0.74 solo el gasto
     real, sin él la fila no lleva egreso)."""
 
-    # Fila de un vuelo con ID de vuelo por cliente (API 0.0.75): la misma
-    # clave de 'dinero-vlos' ('beh05-011026'); ING-n sin cambio.
+    # CLAVE del API, pintada tal cual: la misma de 'dinero-vlos' (desde el API
+    # 0.0.105, 23-oct-2026, SOLO el folio '#376'; un API 0.0.75–0.0.104 manda
+    # 'beh05-011026'); ING-n sin cambio.
     clave: str = ""
-    # ID de vuelo por cliente del API 0.0.75 (decisión 6 del lote del
-    # 13-oct-2026): NO se pinta (la CLAVE ya llega armada); solo decide el
-    # ancho de la columna A (`_formato.ancho_columna_clave`); None = API previo
-    # o migración sin aplicar ⇒ libro byte a byte el de antes.
+    # ADITIVOS (23-oct-2026, API 0.0.105): nombre COMPLETO del cliente, RUTA y
+    # Nº de vuelo de ese cliente, en columnas propias junto a la clave (esta
+    # hoja no tenía ruta). None (fila ING-n o API previo) ⇒ celda vacía.
+    cliente: str | None = None
+    ruta: str | None = None
+    consecutivo_cliente: int | None = None
+    # ID de vuelo por cliente del API 0.0.75 (13-oct-2026): desde el
+    # 23-oct-2026 el API ya no lo manda y aquí se IGNORA; solo compatibilidad.
     clave_cliente: str | None = None
     fecha_vuelo: str | None = None
     concepto_egreso: str | None = None
@@ -2765,6 +2859,16 @@ class DineroOtroIngresoFila(BaseModel):
     @classmethod
     def _clave_cliente_liberal(cls, v: Any) -> str | None:
         return clave_cliente_liberal(v)
+
+    @field_validator("cliente", "ruta", mode="before")
+    @classmethod
+    def _textos_fila_liberales(cls, v: Any) -> str | None:
+        return texto_fila_liberal(v)
+
+    @field_validator("consecutivo_cliente", mode="before")
+    @classmethod
+    def _consecutivo_liberal(cls, v: Any) -> int | None:
+        return consecutivo_liberal(v)
 
 
 class DineroOtroGastoFila(BaseModel):

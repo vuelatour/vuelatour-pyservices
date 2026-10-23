@@ -177,7 +177,13 @@ def _huella(data: bytes) -> str:
 
 # Calculada con el código de HEAD d58faa1 (13-oct-2026), ANTES de este
 # cambio, sobre `_BASE`: si se mueve, un API ≤ 0.0.74 ya no ve su libro.
-_HUELLA_BASE_HEAD = "a4c952a2004a8b2d287047b106ea51746c1920ab22a5bb615037833b841685c5"
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+_HUELLA_BASE_HEAD = "a068a0a432a079fa83d4d428e207dc4f2fc7eba1d14d375b36258f5b2c3a3573"
 
 
 def test_esquemas_aditivos_con_default() -> None:
@@ -201,19 +207,19 @@ def test_seccion_aparte_al_final_y_fuera_de_totales() -> None:
     # TOTALES: los MISMOS números que sin los ingresos de avión.
     fila_tot = next(c.row for c in ws["A"] if c.value == "TOTALES")
     assert fila_tot == next(c.row for c in base["A"] if c.value == "TOTALES") == 6
-    for col in (4, 7, 9):
+    for col in (7, 10, 12):
         assert ws.cell(row=fila_tot, column=col).value == base.cell(row=fila_tot, column=col).value
-    assert ws.cell(row=fila_tot, column=7).value == round(1800.0 + 85.33, 2)
+    assert ws.cell(row=fila_tot, column=10).value == round(1800.0 + 85.33, 2)
     # Una fila en blanco y el encabezado de sección combinado A:J.
-    assert all(ws.cell(row=fila_tot + 1, column=c).value is None for c in range(1, 11))
+    assert all(ws.cell(row=fila_tot + 1, column=c).value is None for c in range(1, 14))
     sec = ws.cell(row=fila_tot + 2, column=1)
     assert sec.value == SECCION
     assert sec.font.b and sec.fill.fgColor.rgb.endswith("EEF2F7")
-    assert any(str(rg) == f"A{fila_tot + 2}:J{fila_tot + 2}" for rg in ws.merged_cells.ranges)
+    assert any(str(rg) == f"A{fila_tot + 2}:M{fila_tot + 2}" for rg in ws.merged_cells.ranges)
     # Las filas de avión, con el MISMO pintado de las de arriba (10 columnas,
     # montos con formato) y la CLAVE teñida con el color del avión.
     r = fila_tot + 3
-    assert [ws.cell(row=r, column=c).value for c in (1, 6, 7, 8, 9)] == [
+    assert [ws.cell(row=r, column=c).value for c in (1, 9, 10, 11, 12)] == [
         "ING-4",
         _ING_AVION[0]["concepto_ingreso"],
         46550.8,
@@ -221,10 +227,10 @@ def test_seccion_aparte_al_final_y_fuera_de_totales() -> None:
         46550.8,
     ]
     assert ws.cell(row=r, column=1).fill.fgColor.rgb.endswith("3B82F6")
-    assert ws.cell(row=r, column=7).number_format == '"$"#,##0.00'
+    assert ws.cell(row=r, column=10).number_format == '"$"#,##0.00'
     assert ws.cell(row=r + 1, column=1).value == "ING-9"
     assert ws.cell(row=r + 1, column=1).fill.fgColor.rgb.endswith("F97316")
-    assert [ws.cell(row=r + 1, column=c).value for c in (3, 4, 5, 9)] == [
+    assert [ws.cell(row=r + 1, column=c).value for c in (6, 7, 8, 12)] == [
         "comisión bancaria",
         1750,
         "20/09/2026",

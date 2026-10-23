@@ -403,7 +403,7 @@ def test_fila_con_comisiones_en_cero_se_pinta_como_la_de_null(variante, registro
         ws = _wb(data_cero)[0][MAESTRA]
         fila = next(c.row for c in ws["A"] if c.value == "#403 · Traslado")
         col = _columna(ws, "GANANCIA\nMXN")
-        assert ws[f"{col}{fila}"].value == f"=AA{fila}"
+        assert ws[f"{col}{fila}"].value == f"=AC{fila}"
         assert ws[f"{col}2"].comment.text == _NOTA_ENCABEZADO_GANANCIA_FLOTA
 
 
@@ -434,7 +434,7 @@ def test_cascada_del_general_con_las_dos_lineas(variante, registros) -> None:
     data = _render(p)
     # Ninguna fórmula de la cascada vuelve a valor (la de siempre: COSTO TOTAL
     # del #405 en el Balance mensual).
-    degradadas = [(MAESTRA, "U9")] if variante == "mensual" else []
+    degradadas = [(MAESTRA, "W9")] if variante == "mensual" else []
     assert registros[-1].degradadas() == degradadas
     assert verificar_libro(data)
     ws, wv = (x["balance"] for x in _wb(data))
@@ -601,10 +601,10 @@ def test_otros_movimientos_sin_la_linea_de_ingreso(variante) -> None:
     # Las filas, tal cual las arma el API: lo cobrado UNA vez y el pago
     # cubierto por el avión (0, con la marca «· PROVISIÓN (» ⇒ amarillo) o
     # solo su exceso cuando hay gasto real (sin marca ⇒ sin amarillo).
-    assert om["C4"].value == _FILA_CUBIERTA["concepto_egreso"]
-    assert (om["D4"].value, om["G4"].value) == (0.0, 2360.0)
-    assert (om["D5"].value, om["G5"].value) == (320.0, 1180.0)
-    assert omv["I4"].value == 2360.0 and omv["I5"].value == 860.0
+    assert om["F4"].value == _FILA_CUBIERTA["concepto_egreso"]
+    assert (om["G4"].value, om["J4"].value) == (0.0, 2360.0)
+    assert (om["G5"].value, om["J5"].value) == (320.0, 1180.0)
+    assert omv["L4"].value == 2360.0 and omv["L5"].value == 860.0
 
     def _rellenos(fila: int) -> set[str]:
         return {
@@ -617,8 +617,8 @@ def test_otros_movimientos_sin_la_linea_de_ingreso(variante) -> None:
     assert "00" + AMBER not in _rellenos(5)
     assert _LEYENDA_PROVISION in [c.value for c in om["A"]]
     tot = next(c.row for c in om["A"] if c.value == "TOTALES")
-    assert omv[f"G{tot}"].value == r2(2360.0 + 1180.0 + 85.33)
-    assert omv[f"D{tot}"].value == 320.0
+    assert omv[f"J{tot}"].value == r2(2360.0 + 1180.0 + 85.33)
+    assert omv[f"G{tot}"].value == 320.0
 
 
 def test_resumen_y_empresa_con_el_pago_cubierto_por_el_avion() -> None:
@@ -879,10 +879,10 @@ def test_general_0074_leyendas_y_fila_a_cargo_del_avion(variante) -> None:
     assert "cubierto por el avión" not in a2
     # La fila «a cargo del avión»: egreso 0.0 SIN amarillo, remanente =
     # ingreso con la fórmula viva; la de VuelaTour, como siempre.
-    assert om["C4"].value == _FILA_A_CARGO["concepto_egreso"]
-    assert (om["D4"].value, om["G4"].value) == (0.0, 2360.0)
-    assert om["I4"].value == "=ROUND(G4-D4,2)" and omv["I4"].value == 2360.0
-    assert (om["D5"].value, omv["I5"].value) == (1500.0, -320.0)
+    assert om["F4"].value == _FILA_A_CARGO["concepto_egreso"]
+    assert (om["G4"].value, om["J4"].value) == (0.0, 2360.0)
+    assert om["L4"].value == "=ROUND(J4-G4,2)" and omv["L4"].value == 2360.0
+    assert (om["G5"].value, omv["L5"].value) == (1500.0, -320.0)
     rellenos = {
         om.cell(row=f, column=c).fill.fgColor.rgb
         for f in (4, 5)
@@ -892,8 +892,8 @@ def test_general_0074_leyendas_y_fila_a_cargo_del_avion(variante) -> None:
     assert "00" + AMBER not in rellenos
     assert _LEYENDA_PROVISION not in [c.value for c in om["A"]]
     tot = next(c.row for c in om["A"] if c.value == "TOTALES")
-    assert omv[f"D{tot}"].value == 1500.0
-    assert omv[f"I{tot}"].value == r2(omv[f"G{tot}"].value - 1500.0)
+    assert omv[f"G{tot}"].value == 1500.0
+    assert omv[f"L{tot}"].value == r2(omv[f"J{tot}"].value - 1500.0)
     # RESUMEN.
     resumen = next(
         c.value
@@ -1055,14 +1055,14 @@ def test_general_0074_dos_categorias_filas_mixta_informativa_y_sin_avion(variant
     for k, fila in enumerate(filas):
         r = 4 + k
         assert om[f"A{r}"].value.startswith(fila["clave"]), r
-        assert om[f"C{r}"].value == fila["concepto_egreso"], r
-        assert (om[f"D{r}"].value, om[f"G{r}"].value) == (fila["egreso_mxn"], fila["ingreso_mxn"])
-        assert om[f"I{r}"].value == f"=ROUND(G{r}-D{r},2)", r
-        assert omv[f"I{r}"].value == fila["remanente_mxn"], r
+        assert om[f"F{r}"].value == fila["concepto_egreso"], r
+        assert (om[f"G{r}"].value, om[f"J{r}"].value) == (fila["egreso_mxn"], fila["ingreso_mxn"])
+        assert om[f"L{r}"].value == f"=ROUND(J{r}-G{r},2)", r
+        assert omv[f"L{r}"].value == fila["remanente_mxn"], r
     # La informativa: egreso 0.0 (no vacío) y remanente = ingreso.
-    assert (om["D5"].value, omv["I5"].value) == (0.0, 2360.0)
+    assert (om["G5"].value, omv["L5"].value) == (0.0, 2360.0)
     # La que ningún avión carga: remanente 0 (nunca −0).
-    assert omv["I6"].value == 0 and not str(omv["I6"].value).startswith("-")
+    assert omv["L6"].value == 0 and not str(omv["L6"].value).startswith("-")
     rellenos = {
         om.cell(row=f, column=c).fill.fgColor.rgb
         for f in range(4, 4 + len(filas))
@@ -1074,9 +1074,9 @@ def test_general_0074_dos_categorias_filas_mixta_informativa_y_sin_avion(variant
     todas = filas + p["consolidado"]["otros_movimientos"].get("filas_sueltas", [])
     egresos = r2(sum(f.get("egreso_mxn") or 0.0 for f in todas))
     ingresos = r2(sum(f.get("ingreso_mxn") or 0.0 for f in todas))
-    assert omv[f"D{tot}"].value == egresos == 4680.0
-    assert omv[f"G{tot}"].value == ingresos
-    assert omv[f"I{tot}"].value == r2(ingresos - egresos)
+    assert omv[f"G{tot}"].value == egresos == 4680.0
+    assert omv[f"J{tot}"].value == ingresos
+    assert omv[f"L{tot}"].value == r2(ingresos - egresos)
 
 
 def test_general_0074_con_la_bandera_nadie_nombra_la_categoria_vieja() -> None:

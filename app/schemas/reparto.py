@@ -6,11 +6,13 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.reportes import (
     bandera_liberal,
+    consecutivo_liberal,
     lista_cierre_liberal,
     matriculas_liberal,
     numero_cierre_liberal,
     regla_comisiones_liberal,
     texto_cierre_liberal,
+    texto_fila_liberal,
 )
 
 
@@ -74,6 +76,13 @@ class RepartoVueloLinea(BaseModel):
 
     folio: str | int | None = None
     cliente: str | None = None
+    # ADITIVOS (23-oct-2026, API 0.0.105, apodos fuera de los documentos): el
+    # Nº de vuelo de ESE cliente y la ruta del detalle («CUN → MID»). El PDF y
+    # el Excel del reparto siguen imprimiendo «#folio» + cliente (y los tramos
+    # del avión): aquí solo se aceptan, liberales, para que el contrato no dé
+    # un 422 ni haya que leerlos de la clave.
+    consecutivo_cliente: int | None = None
+    ruta: str | None = None
     fecha: str | None = None
     estado: str | None = None
     # Parte de la venta del avión cobrada / pendiente que toca a ESTE avión.
@@ -103,6 +112,16 @@ class RepartoVueloLinea(BaseModel):
     def _texto_cierre_liberal(cls, v: Any) -> str | None:
         return texto_cierre_liberal(v)
 
+    @field_validator("ruta", mode="before")
+    @classmethod
+    def _ruta_liberal(cls, v: Any) -> str | None:
+        return texto_fila_liberal(v)
+
+    @field_validator("consecutivo_cliente", mode="before")
+    @classmethod
+    def _consecutivo_liberal(cls, v: Any) -> int | None:
+        return consecutivo_liberal(v)
+
 
 class RepartoCierreVuelo(BaseModel):
     """Un vuelo de las listas del cierre del reparto (16-oct-2026, API
@@ -126,10 +145,13 @@ class RepartoCierreVuelo(BaseModel):
     motivo: str | None = None
     cobrado_posterior_usd: float | None = None
     fecha_cobro_posterior: str | None = None
+    # ADITIVO (23-oct-2026, API 0.0.105): la ruta del vuelo; informativa, no
+    # se imprime (las listas del cierre dicen «#folio Cliente»).
+    ruta: str | None = None
 
     @field_validator(
         "id", "folio", "cliente", "matricula", "destino", "origen", "leyenda",
-        "motivo", "fecha_cobro_posterior", mode="before",
+        "motivo", "fecha_cobro_posterior", "ruta", mode="before",
     )
     @classmethod
     def _textos(cls, v: Any) -> str | None:

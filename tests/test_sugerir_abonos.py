@@ -1061,7 +1061,7 @@ def test_libro_dinero_explica_los_otros_ingresos_sin_vuelo() -> None:
     assert "clave ING-n" in hoja["A2"].value
     assert "anticipos de clientes no están aquí" in hoja["A2"].value
     assert hoja["A4"].value == "ING-12"
-    assert hoja["G4"].value == 21223.10
+    assert hoja["J4"].value == 21223.10
     assert "ingresos sin vuelo registrados en Ingresos (ING-n)" in wb["utilidades"]["A9"].value
 
 

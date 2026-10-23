@@ -256,22 +256,28 @@ def _firma_libro(data: bytes) -> str:
 # (pie, encabezado de GANANCIA y RESUMEN) — comparado celda por celda contra
 # HEAD 4189a1e quitando esa columna: ningún número ni fórmula cambió más allá
 # de la letra que corre.
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
 _FIRMAS_SIN_EMPRESA = {
     "socio empresa en dos aviones": (
         {},
-        "7ca19e330f4c727b5148c85293cb4dadb46c99431df1104ea5aae2666fe0fe00",
+        "e5ebffa4302abf2c4f27e422bee9a87d85d208aff9af2eef1c4dbfd20a5623ad",
     ),
     "sin socio empresa": (
         {"socios": _SOCIOS_SIN_EMPRESA},
-        "fa224f6480ede86f7ba42050a5dacffaa17c19e676ae83d3f8518ba709b094da",
+        "5e71483f7ec282dd04cf34162c93df375d68904d9b767cb1d175e4c8eca2b195",
     ),
     "sin hoja otros gastos": (
         {"otros_gastos": False},
-        "3da060aa088dc3c98542402674324f503678b56e94e978396419a86c5d6a1e25",
+        "7e347dc90c154a6d284ef7699870da20a3bc6a8e978dbe884794e23f61309829",
     ),
     "sin inventario": (
         {"inventario": False},
-        "55618290b0ecf98c98a11096549163a3b749975b7bbe866122855cb0929e85cd",
+        "cdd4c27eb0395d393eecbf0f88aea604a918e87287504ca119abee914f734e10",
     ),
 }
 

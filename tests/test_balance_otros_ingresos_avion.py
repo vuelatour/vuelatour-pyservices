@@ -426,7 +426,7 @@ def registros(monkeypatch) -> list[xlsx_formulas.RegistroFormulas]:
 # Las dos celdas que el espejo del API deja como VALOR a propósito en el libro
 # XA-TST (redondeo intermedio de COSTO TOTAL del #405 y TOTAL USD de 'Gastos
 # Indirectos', `test_balance_formulas`): los otros ingresos no agregan ninguna.
-_DEGRADADAS_TST = [(MAESTRA_TST, "U7"), ("Gastos Indirectos", "C5")]
+_DEGRADADAS_TST = [(MAESTRA_TST, "W7"), ("Gastos Indirectos", "C5")]
 
 
 # ---------------------------------------------------------------------------
@@ -544,8 +544,8 @@ def test_individual_hoja_encabezados_filas_y_formulas(registros) -> None:
     assert ws["I9"].value == "=ROUND(G9-H9,2)"
     # Resumen: fórmulas que citan la hoja y la maestra.
     assert ws["A5"].value == "=ROUND(SUM(I8:I9),2)"
-    assert ws["B5"].value == f"='{MAESTRA_TST}'!$V$9"
-    assert ws["C5"].value == f"=ROUND(A5/AVERAGE('{MAESTRA_TST}'!$V$3:$V$8),2)"
+    assert ws["B5"].value == f"='{MAESTRA_TST}'!$X$9"
+    assert ws["C5"].value == f"=ROUND(A5/AVERAGE('{MAESTRA_TST}'!$X$3:$X$8),2)"
     # Los números son los del API (caché) y ninguna fórmula volvió a valor.
     hoja = req.otros_ingresos_avion
     assert (wsv["G8"].value, wsv["I8"].value) == (46550.8, 46550.8)
@@ -978,18 +978,24 @@ def _huella_json(libro: dict) -> str:
 # pantalla (el API la pide con `vinculos_gasto: true`). Si una se mueve, un API
 # ≤ 0.0.76 ya no ve su libro de siempre (y una ventana de despliegue con
 # pyservices nuevo y API viejo publicaría otro libro).
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
 _HUELLAS_FORMA_REAL_0076 = {
     "individual": (
-        "64dd04d5923657a9937a8e70cb3ee225a11b90fb6cfbe56581df32f7c105f7b1",
-        "2a931d29ba6848d32c674d2cc8e4713565082d8a0bd3cdef601a8f611c05227d",
+        "2a7e8752c32d3d815737abb4cf8c834cde8f62dc1df791d0e08007ecbf5cf34f",
+        "9216b85f79d914e5bb8f656e4614404a476c4916a4785134b43e58cf2f8dac13",
     ),
     "general-mensual": (
-        "70d85d47474cca664d4d2b0ec9f3bfa08f12a9d794872814569978c485f0dc8f",
-        "986914f70208905678ffc547d2eab138b21761bcc6d08579cae9bb6a3e974fc1",
+        "91fdff257a2aec29f28b0af2499ba34fe02ed44d5a5a6ad84192d2e67cd12374",
+        "74985dcd29f3931928af5e974ae49949e36e1e8f04ae8b3d9dcb484a2d6102de",
     ),
     "general-general": (
-        "51a1e9111921988dd6996c3ab21718350a3ff74405732140ba59a16828bb1388",
-        "50162ff2bc4a5559cc45712cb42ee9a8557eb7a7cc76b0ef09b3f6ca33dda126",
+        "690e40ad8caded86d9190045e4dfda1b93d52535cca8d25cb7186ec744cc2bed",
+        "10eefa675c8e883f0ecc90fe6c4091d176786400bca953ec97a4d6cc6138dd70",
     ),
 }
 
@@ -1403,5 +1409,17 @@ def test_rutas_aceptan_el_payload_0077(monkeypatch, request) -> None:
 # este cambio: si una se mueve, un API ≤ 0.0.74 ya no ve su libro de siempre.
 # ---------------------------------------------------------------------------
 
-_HUELLA_INDIVIDUAL_HEAD = "4bb86191e6fdd486fb46a332b612b3b763908f6ec8c14ff9e8d9eaee4e1a506f"
-_HUELLA_GENERAL_HEAD = "dd8a3740c2ef71791c94cb35ac02a3f71123fc49979b3d15a91569cbfa56ba90"
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+_HUELLA_INDIVIDUAL_HEAD = "9440bb643782d8a5412721f83ab4392cf16a7e8170910340067916eac4651f66"
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+_HUELLA_GENERAL_HEAD = "87aa1e3888fe12457be497983cd5ffc601f8a0f763b9a6aab95b21b40d73fa09"

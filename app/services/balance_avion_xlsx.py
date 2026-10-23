@@ -147,10 +147,11 @@ from app.schemas.reportes import (
 )
 from app.services import cierre_mes, libro_json, xlsx_formulas
 from app.services._formato import (
-    ANCHO_CLAVE_TOPE_BALANCE,
+    ANCHO_NUM_VUELO_CLIENTE,
+    ENCABEZADO_CLIENTE,
+    ENCABEZADO_NUM_VUELO_CLIENTE,
     _tc_txt,
-    ancho_columna_clave,
-    hay_id_cliente,
+    ancho_columna_cliente,
 )
 from app.services.caja_chica_xlsx import _texto_literal
 from app.services.tabla_xlsx import sheet_title
@@ -335,8 +336,17 @@ def _es_parcial_reparto(detalle: str | None) -> bool:
 
 # ===== Hoja maestra: definición de columnas (orden del Excel original) =====
 # (grupo, encabezado, atributo del vuelo, formato numérico o None=texto)
+# 23-oct-2026 (API 0.0.105; pedido del cliente sobre «reporte horas FLOTA»:
+# «ocultar los apodos con la clave del vuelo, para dejar solo las columnas de
+# Num de cotización, nombre completo, fecha, ruta y consecutivo del vuelo»):
+# CLAVE pinta lo que manda el API (solo «#376») y entre ella y FECHA entran
+# CLIENTE (nombre completo) y Nº VUELO CLIENTE (el «02» de «january02»). Todo
+# lo demás corre DOS columnas (PERMISO AFAC pasa de T a V): ninguna fórmula lo
+# nota porque toda cita va por LLAVE (`_Disposicion.letra`).
 _COLS: list[tuple[str, str, str | None, str | None]] = [
     ("", "CLAVE", "clave", None),
+    ("", ENCABEZADO_CLIENTE, "cliente", None),
+    ("", ENCABEZADO_NUM_VUELO_CLIENTE, "consecutivo_cliente", None),
     ("", "FECHA", "fecha", None),
     ("", "RUTA", "ruta", None),
     ("", "ESTADO", "estado", None),
@@ -3254,32 +3264,27 @@ def _hoja_maestra(
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=14)
         row += 1
 
-    # Anchos + paneles congelados (bajo el encabezado, a la derecha de RUTA).
-    # CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75): la columna A
-    # se ensancha POR CONTENIDO (con tope) SOLO si alguna fila trae
-    # `clave_cliente`; sin él, los 16 de siempre (libro byte a byte).
-    anchos = {
-        1: ancho_columna_clave(
-            (v.clave for v in req.vuelos),
-            base=16,
-            tope=ANCHO_CLAVE_TOPE_BALANCE,
-            con_id_cliente=hay_id_cliente(req.vuelos),
-        ),
-        2: 12,
-        3: 34,
+    # Anchos (por LLAVE de columna, 23-oct-2026: CLIENTE y Nº VUELO CLIENTE van
+    # entre CLAVE y FECHA; la CLAVE —ya solo el folio— vuelve a sus 16 de
+    # siempre y CLIENTE va POR CONTENIDO con tope).
+    anchos_attr: dict[str, int] = {
+        "clave": 16,
+        "cliente": ancho_columna_cliente(v.cliente for v in req.vuelos),
+        "consecutivo_cliente": ANCHO_NUM_VUELO_CLIENTE,
+        "fecha": 12,
+        "ruta": 34,
         # ESTADO se ensancha SOLO si alguna fila trae la marca del cierre
         # («Pasa a octubre 2026 (pendiente de cobro: …)», envuelta).
-        4: _ANCHO_ESTADO_CIERRE if hay_marcas_cierre else 12,
+        "estado": _ANCHO_ESTADO_CIERRE if hay_marcas_cierre else 12,
+        "cobrado_real_mxn": 17,
+        "cobrado_mxn": 17,
+        "factura_vuelatour": 16,
     }
     for i, (grupo, _h, attr, _f) in enumerate(cols, start=1):
-        if attr in ("cobrado_real_mxn", "cobrado_mxn"):
-            anchos[i] = 17
-        elif attr == "factura_vuelatour":
-            anchos[i] = 16
-        elif grupo == _GRUPO_COSTO_HORA:
-            anchos[i] = _ANCHO_COSTO_HORA
-    for i in range(1, n + 1):
-        ws.column_dimensions[get_column_letter(i)].width = anchos.get(i, 13)
+        ancho = anchos_attr.get(attr) if attr else None
+        if ancho is None and grupo == _GRUPO_COSTO_HORA:
+            ancho = _ANCHO_COSTO_HORA
+        ws.column_dimensions[get_column_letter(i)].width = 13 if ancho is None else ancho
     # GANANCIA / REMANENTE negativos en rojo (regla de Excel, 8-oct-2026):
     # filas de vuelo + TOTALES de cada columna que esta variante tenga.
     _rojo_si_negativo(
@@ -3290,7 +3295,10 @@ def _hoja_maestra(
             if (letra := disp.letra.get(attr)) is not None
         ),
     )
-    ws.freeze_panes = "D3"
+    # Paneles congelados bajo el encabezado y a la derecha de RUTA (F3 desde
+    # el 23-oct-2026: CLAVE, CLIENTE, Nº VUELO CLIENTE, FECHA y RUTA fijas).
+    col_ruta = next(i for i, c in enumerate(cols, start=1) if c[2] == "ruta")
+    ws.freeze_panes = f"{get_column_letter(col_ruta + 1)}3"
     return maestra
 
 
@@ -3949,6 +3957,47 @@ def _monto_detalle_cobranza(c: BalanceAvionCobro) -> str | None:
     return f"${c.neto_mxn:,.2f} neto (bruto ${c.monto_mxn:,.2f})"
 
 
+# Columnas de la hoja 'cobranza' (23-oct-2026, API 0.0.105: CLIENTE y Nº VUELO
+# CLIENTE entre CLAVE y FECHA; todo lo demás corre dos columnas). Toda celda y
+# toda fórmula de la hoja cita estas posiciones, nunca una letra fija.
+_COBRANZA_HEADERS: list[str] = [
+    "CLAVE",
+    ENCABEZADO_CLIENTE,
+    ENCABEZADO_NUM_VUELO_CLIENTE,
+    "FECHA",
+    "RUTA",
+    "ESTADO",
+    "STATUS\nCOBRO",
+    "TOTAL A COBRAR\nMXN (venta avión)",
+    "COBRADO\nMXN",
+    "POR COBRAR\nMXN",
+    "POR COBRAR\nUSD",
+    "TOTAL COTIZACIÓN\nMXN (c/extras)",
+    "COBRADO REAL\nMXN",
+    "COMISIÓN\nBANCO MXN",
+    "DETALLE DE COBROS\n(fecha · monto · método · cuenta · comisión)",
+]
+
+
+def _col_cobranza(encabezado: str) -> int:
+    return _COBRANZA_HEADERS.index(encabezado) + 1
+
+
+_COB_CLIENTE = _col_cobranza(ENCABEZADO_CLIENTE)
+_COB_NUM_VUELO = _col_cobranza(ENCABEZADO_NUM_VUELO_CLIENTE)
+_COB_FECHA = _col_cobranza("FECHA")
+_COB_RUTA = _col_cobranza("RUTA")
+_COB_ESTADO = _col_cobranza("ESTADO")
+_COB_STATUS = _col_cobranza("STATUS\nCOBRO")
+_COB_TOTAL = _col_cobranza("TOTAL A COBRAR\nMXN (venta avión)")
+_COB_COBRADO = _col_cobranza("COBRADO\nMXN")
+_COB_POR_COBRAR = _col_cobranza("POR COBRAR\nMXN")
+_COB_POR_COBRAR_USD = _col_cobranza("POR COBRAR\nUSD")
+_COB_COTIZACION = _col_cobranza("TOTAL COTIZACIÓN\nMXN (c/extras)")
+_COB_COBRADO_REAL = _col_cobranza("COBRADO REAL\nMXN")
+_COB_COMISION = _col_cobranza("COMISIÓN\nBANCO MXN")
+
+
 def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = False) -> None:
     """Hoja 'cobranza' (26-ago-2026 · regla 28-ago): el estatus de cobro POR
     VUELO al frente — cuánto se debía cobrar (VENTA DEL AVIÓN), cuánto YA se
@@ -3957,8 +4006,19 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
     cuenta que recibió cada parcialidad. Los mismos números del bloque
     STATUS DE COBROS del final de la hoja maestra, en formato legible.
     `general` (7-oct-2026) solo cambia la nota de los netos: en el Balance
-    general la columna COMISIONES ya no está en su hoja de vuelos."""
-    n_cols = 13
+    general la columna COMISIONES ya no está en su hoja de vuelos.
+    23-oct-2026 (API 0.0.105): CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA
+    (`_COBRANZA_HEADERS`); toda celda y fórmula cita las posiciones de ahí."""
+    n_cols = len(_COBRANZA_HEADERS)
+    # Letras de las columnas de dinero que citan las fórmulas de la hoja.
+    l_estado = get_column_letter(_COB_ESTADO)
+    l_total = get_column_letter(_COB_TOTAL)
+    l_cobrado = get_column_letter(_COB_COBRADO)
+    l_por_cobrar = get_column_letter(_COB_POR_COBRAR)
+    l_por_cobrar_usd = get_column_letter(_COB_POR_COBRAR_USD)
+    l_cotizacion = get_column_letter(_COB_COTIZACION)
+    l_cobrado_real = get_column_letter(_COB_COBRADO_REAL)
+    l_comision = get_column_letter(_COB_COMISION)
     # Ancho (en caracteres) de la columna DETALLE DE COBROS: sirve para
     # estimar cuántos renglones envuelve cada parcialidad y no recortar.
     ancho_detalle = 46
@@ -4007,14 +4067,14 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
     # esta hoja (que a su vez es Σ de las columnas) y % COBRADO = COBRADO ÷
     # TOTAL A COBRAR.
     fila_tot = 8 + len(req.vuelos)
-    _formula(ws, 5, 1, f"F{fila_tot}", t.total_mxn, MONEY, bold=True)
-    _formula(ws, 5, 2, f"G{fila_tot}", t.cobrado_mxn, MONEY, bold=True)
-    pc = _formula(ws, 5, 3, f"H{fila_tot}", t.por_cobrar_mxn, MONEY, bold=True)
+    _formula(ws, 5, 1, f"{l_total}{fila_tot}", t.total_mxn, MONEY, bold=True)
+    _formula(ws, 5, 2, f"{l_cobrado}{fila_tot}", t.cobrado_mxn, MONEY, bold=True)
+    pc = _formula(ws, 5, 3, f"{l_por_cobrar}{fila_tot}", t.por_cobrar_mxn, MONEY, bold=True)
     if (t.por_cobrar_mxn or 0) > 0.005:
         pc.font = Font(bold=True, color=RED)
-    _formula(ws, 5, 4, f"I{fila_tot}", t.por_cobrar_usd, MONEY)
-    _formula(ws, 5, 5, f"J{fila_tot}", tot_cotizacion, MONEY, bold=True)
-    _formula(ws, 5, 6, f"K{fila_tot}", tot_cobrado_real, MONEY, bold=True)
+    _formula(ws, 5, 4, f"{l_por_cobrar_usd}{fila_tot}", t.por_cobrar_usd, MONEY)
+    _formula(ws, 5, 5, f"{l_cotizacion}{fila_tot}", tot_cotizacion, MONEY, bold=True)
+    _formula(ws, 5, 6, f"{l_cobrado_real}{fila_tot}", tot_cobrado_real, MONEY, bold=True)
     # % COBRADO = COBRADO ÷ TOTAL A COBRAR: la MISMA base que POR COBRAR
     # (ambos al TC de venta). Nunca cobrado real ÷ total cotización: son
     # pesos a TCs distintos (el depósito trae su propio TC) y contradecían
@@ -4024,22 +4084,7 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
     for c in range(1, 8):
         ws.cell(row=5, column=c).border = _border
 
-    headers = [
-        "CLAVE",
-        "FECHA",
-        "RUTA",
-        "ESTADO",
-        "STATUS\nCOBRO",
-        "TOTAL A COBRAR\nMXN (venta avión)",
-        "COBRADO\nMXN",
-        "POR COBRAR\nMXN",
-        "POR COBRAR\nUSD",
-        "TOTAL COTIZACIÓN\nMXN (c/extras)",
-        "COBRADO REAL\nMXN",
-        "COMISIÓN\nBANCO MXN",
-        "DETALLE DE COBROS\n(fecha · monto · método · cuenta · comisión)",
-    ]
-    _header_row(ws, 7, headers)
+    _header_row(ws, 7, _COBRANZA_HEADERS)
     ws.row_dimensions[7].height = 42
     row = 8
     for v in req.vuelos:
@@ -4047,9 +4092,13 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
         avion_fill = _hex(v.avion_color)
         if avion_fill:
             cc.fill = PatternFill("solid", fgColor=avion_fill)
-        ws.cell(row=row, column=2, value=_fecha(v.fecha))
-        ws.cell(row=row, column=3, value=v.ruta)
-        ec = ws.cell(row=row, column=4, value=v.estado)
+        # CLIENTE y Nº VUELO CLIENTE (23-oct-2026): lo que manda el API; sin
+        # dato (API previo) la celda queda vacía — nunca se saca de la CLAVE.
+        ws.cell(row=row, column=_COB_CLIENTE, value=v.cliente)
+        ws.cell(row=row, column=_COB_NUM_VUELO, value=v.consecutivo_cliente)
+        ws.cell(row=row, column=_COB_FECHA, value=_fecha(v.fecha))
+        ws.cell(row=row, column=_COB_RUTA, value=v.ruta)
+        ec = ws.cell(row=row, column=_COB_ESTADO, value=v.estado)
         if _marca_en_estado(v):
             # CIERRE DE MES (16-oct-2026): la marca del API en ESTADO; la
             # fila sombra («Pasa a …») va con sus celdas vacías (el API las
@@ -4057,7 +4106,7 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
             ec.fill = PatternFill("solid", fgColor=_pintar_estado_cierre(ec, v))
         else:
             ec.font = Font(color=RED if v.estado == "CANCELADO" else MUTED, size=9)
-        st = ws.cell(row=row, column=5, value=v.status_cobro or "—")
+        st = ws.cell(row=row, column=_COB_STATUS, value=v.status_cobro or "—")
         if v.status_cobro == "Cobrado":
             st.fill = PatternFill("solid", fgColor="D1FAE5")
             st.font = Font(color="065F46", bold=True, size=9)
@@ -4071,20 +4120,26 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
             # «Pasa a oct-2026» (status del API en la fila sombra).
             st.fill = PatternFill("solid", fgColor=_FILL_CIERRE_SALE)
             st.font = Font(color=_COLOR_CIERRE_SALE, bold=True, size=9)
-        _num(ws, row, 6, v.total_mxn)
-        _num(ws, row, 7, v.cobrado_mxn)
+        _num(ws, row, _COB_TOTAL, v.total_mxn)
+        _num(ws, row, _COB_COBRADO, v.cobrado_mxn)
         # POR COBRAR = round2(venta avión − cobrado), igual que el API.
-        pcc = _formula(ws, row, 8, f"ROUND(F{row}-G{row},2)", v.por_cobrar_mxn)
+        pcc = _formula(
+            ws,
+            row,
+            _COB_POR_COBRAR,
+            f"ROUND({l_total}{row}-{l_cobrado}{row},2)",
+            v.por_cobrar_mxn,
+        )
         if (v.por_cobrar_mxn or 0) > 0.005:
             pcc.font = Font(color=RED)
-        _num(ws, row, 9, v.por_cobrar_usd)
-        cot = _num(ws, row, 10, v.total_cotizacion_mxn)
+        _num(ws, row, _COB_POR_COBRAR_USD, v.por_cobrar_usd)
+        cot = _num(ws, row, _COB_COTIZACION, v.total_cotizacion_mxn)
         if v.estado == "CANCELADO":
             # Solo referencia de lo cotizado: no se cobró ni se cobrará y NO
             # suma en el total del periodo (el API la excluye).
             cot.font = Font(color=MUTED, italic=True)
-        _num(ws, row, 11, v.cobrado_real_mxn)
-        _num(ws, row, 12, _comision_banco(v))
+        _num(ws, row, _COB_COBRADO_REAL, v.cobrado_real_mxn)
+        _num(ws, row, _COB_COMISION, _comision_banco(v))
         # Detalle: depósitos REALES (fecha · monto · método · cuenta ·
         # comisión) — las partes que no vienen se omiten. Con la regla de
         # septiembre 2026 el monto es el NETO que entró, con el bruto al lado.
@@ -4127,21 +4182,36 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
     def _suma_col(letra: str) -> str | None:
         return f"ROUND(SUM({letra}8:{letra}{ult}),2)" if req.vuelos else None
 
-    _formula(ws, row, 6, _suma_col("F"), t.total_mxn, MONEY, bold=True)
-    _formula(ws, row, 7, _suma_col("G"), t.cobrado_mxn, MONEY, bold=True)
-    _formula(ws, row, 8, _suma_col("H"), t.por_cobrar_mxn, MONEY, bold=True)
-    _formula(ws, row, 9, _suma_col("I"), t.por_cobrar_usd, MONEY, bold=True)
+    _formula(ws, row, _COB_TOTAL, _suma_col(l_total), t.total_mxn, MONEY, bold=True)
+    _formula(ws, row, _COB_COBRADO, _suma_col(l_cobrado), t.cobrado_mxn, MONEY, bold=True)
+    _formula(ws, row, _COB_POR_COBRAR, _suma_col(l_por_cobrar), t.por_cobrar_mxn, MONEY, bold=True)
     _formula(
         ws,
         row,
-        10,
-        f'ROUND(SUMIF(D8:D{ult},"<>CANCELADO",J8:J{ult}),2)' if req.vuelos else None,
+        _COB_POR_COBRAR_USD,
+        _suma_col(l_por_cobrar_usd),
+        t.por_cobrar_usd,
+        MONEY,
+        bold=True,
+    )
+    _formula(
+        ws,
+        row,
+        _COB_COTIZACION,
+        (
+            f'ROUND(SUMIF({l_estado}8:{l_estado}{ult},"<>CANCELADO",'
+            f"{l_cotizacion}8:{l_cotizacion}{ult}),2)"
+            if req.vuelos
+            else None
+        ),
         tot_cotizacion,
         MONEY,
         bold=True,
     )
-    _formula(ws, row, 11, _suma_col("K"), tot_cobrado_real, MONEY, bold=True)
-    _formula(ws, row, 12, _suma_col("L"), tot_comision, MONEY, bold=True)
+    _formula(
+        ws, row, _COB_COBRADO_REAL, _suma_col(l_cobrado_real), tot_cobrado_real, MONEY, bold=True
+    )
+    _formula(ws, row, _COB_COMISION, _suma_col(l_comision), tot_comision, MONEY, bold=True)
     for c in range(1, n_cols + 1):
         cell = ws.cell(row=row, column=c)
         cell.border = _border
@@ -4190,19 +4260,14 @@ def _hoja_cobranza(ws: Worksheet, req: BalanceAvionRequest, *, general: bool = F
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
         row += 1
 
-    # CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75): la columna A
-    # va POR CONTENIDO (con tope) solo si alguna fila trae `clave_cliente`;
-    # sin él, los 22 de siempre.
-    ancho_clave = ancho_columna_clave(
-        (v.clave for v in req.vuelos),
-        base=22,
-        tope=ANCHO_CLAVE_TOPE_BALANCE,
-        con_id_cliente=hay_id_cliente(req.vuelos),
-    )
+    # Anchos (23-oct-2026): CLAVE 22 de siempre (ya es solo el folio), CLIENTE
+    # por contenido con tope, Nº VUELO CLIENTE angosta; el resto como antes.
     ancho_estado = _ANCHO_ESTADO_CIERRE if _hay_marcas_cierre(req.vuelos) else 12
     anchos_cobranza = [
-        ancho_clave, 11, 26, ancho_estado, 11, 16, 15, 15, 13, 16, 15, 14, ancho_detalle,
+        22, ancho_columna_cliente(v.cliente for v in req.vuelos), ANCHO_NUM_VUELO_CLIENTE,
+        11, 26, ancho_estado, 11, 16, 15, 15, 13, 16, 15, 14, ancho_detalle,
     ]  # fmt: skip
+    assert len(anchos_cobranza) == n_cols
     for i, w in enumerate(anchos_cobranza, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A8"
@@ -7273,6 +7338,62 @@ def _hoja_resumen_general(
     ws.freeze_panes = "A4"
 
 
+# Columnas de 'otros movimientos' (23-oct-2026, API 0.0.105; pedido del
+# cliente sobre esta hoja: «#223 · morena08-010926» sin nombre ni ruta ⇒
+# «mejor eliminar esos apodos de todos lados, y de hecho faltan las columnas
+# de nombre, ruta»): entre la clave y la fecha del vuelo entran cliente
+# (nombre completo), ruta y nº vuelo cliente —esta hoja no tenía ruta—; todo
+# lo demás corre TRES columnas (egreso D→G, ingreso G→J, remanente I→L,
+# factura J→M). Toda celda y toda fórmula —también las de los bloques AFAC—
+# cita estas posiciones, nunca una letra fija. Las filas sueltas (ING-n, gas
+# sin avión, tuas sin vuelo) y las AFAC no traen cliente ni ruta: vacías.
+_OM_HEADERS: list[str] = [
+    "clave",
+    "cliente",
+    "ruta",
+    "nº vuelo\ncliente",
+    "fecha\nvuelo",
+    "concepto",
+    "egreso",
+    "fecha",
+    "concepto",
+    "ingreso",
+    "fecha",
+    "remanente",
+    "factura\nvuelatour",
+]
+_OM_N_COLS = len(_OM_HEADERS)
+_OM_COL_CLIENTE = 2
+_OM_COL_RUTA = 3
+_OM_COL_NUM_VUELO = 4
+_OM_COL_FECHA_VUELO = 5
+_OM_COL_CONCEPTO_EGRESO = 6
+_OM_COL_EGRESO = 7
+_OM_COL_FECHA_EGRESO = 8
+_OM_COL_CONCEPTO_INGRESO = 9
+_OM_COL_INGRESO = 10
+_OM_COL_FECHA_INGRESO = 11
+_OM_COL_REMANENTE = 12
+_OM_COL_FACTURA = 13
+_OM_L_EGRESO = get_column_letter(_OM_COL_EGRESO)
+_OM_L_INGRESO = get_column_letter(_OM_COL_INGRESO)
+_OM_L_REMANENTE = get_column_letter(_OM_COL_REMANENTE)
+# Las ÚNICAS columnas con formato de dinero (el nº de vuelo es un entero).
+_OM_COLS_DINERO = frozenset((_OM_COL_EGRESO, _OM_COL_INGRESO, _OM_COL_REMANENTE))
+
+
+def _fila_otros_movimientos(ws: Worksheet, row: int, celdas: dict[int, object]) -> None:
+    """Una fila de la tabla de 'otros movimientos' (o de sus bloques AFAC) con
+    TODAS sus celdas bordeadas: `celdas` = {columna: valor}; las demás quedan
+    vacías y las columnas de dinero llevan su formato."""
+    for i in range(1, _OM_N_COLS + 1):
+        v = celdas.get(i)
+        cell = ws.cell(row=row, column=i, value=v)
+        cell.border = _border
+        if isinstance(v, (int, float)) and i in _OM_COLS_DINERO:
+            cell.number_format = MONEY
+
+
 # Estados de vuelo que NO se anotan junto a la clave en 'otros movimientos'
 # (los normales); cualquier otro (RESERVA, CANCELADO…) se marca.
 _ESTADOS_NORMALES = ("CONFIRMADO", "EN_VUELO", "COMPLETADO")
@@ -7309,7 +7430,7 @@ def _clave_otro_movimiento(f: BalanceOtroMovimientoFila) -> str:
 _MARCA_PROVISION = re.compile(r"·\s*PROVISI[OÓ]N\s*\(")
 _LEYENDA_PROVISION = "Amarillo = provisión (sin gasto real capturado)"
 # Columnas que se pintan: concepto y monto del egreso.
-_COLUMNAS_PROVISION = (3, 4)
+_COLUMNAS_PROVISION = (_OM_COL_CONCEPTO_EGRESO, _OM_COL_EGRESO)
 
 
 def _es_provision(f: BalanceOtroMovimientoFila) -> bool:
@@ -7429,37 +7550,25 @@ def _hoja_otros_movimientos(
         "aparecen: no son resultado (29-ago: los gastos de empresa viven en "
         "la hoja 'otros gastos' — antes llamada 'gastos VuelaTour')." + leyenda_afac + leyenda_oi,
     ).font = Font(italic=True, size=9, color=MUTED)
-    headers = [
-        "clave",
-        "fecha\nvuelo",
-        "concepto",
-        "egreso",
-        "fecha",
-        "concepto",
-        "ingreso",
-        "fecha",
-        "remanente",
-        "factura\nvuelatour",
-    ]
-    for i, h in enumerate(headers, start=1):
+    for i, h in enumerate(_OM_HEADERS, start=1):
         c = ws.cell(row=3, column=i, value=h)
         c.font = Font(bold=True, color="FFFFFF", size=9)
         c.fill = PatternFill("solid", fgColor=BRAND)
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = _border
         ws.column_dimensions[get_column_letter(i)].width = 15
-    # CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75): «#376 ·
-    # january02-211026» (+ « · CANCELADO»…) va POR CONTENIDO (con tope) solo
-    # si alguna fila trae `clave_cliente`; sin él, los 18 de siempre.
+    # Anchos (23-oct-2026): CLAVE 18 de siempre (ya es solo el folio, más
+    # « · CANCELADO» si aplica), cliente POR CONTENIDO con tope —midiendo
+    # también las sueltas y las AFAC, que no traen cliente—, nº vuelo cliente
+    # angosta y los dos conceptos como antes.
     filas_om = (*hoja.filas, *hoja.filas_sueltas)
-    ws.column_dimensions["A"].width = ancho_columna_clave(
-        (_clave_otro_movimiento(f) for f in filas_om),
-        base=18,
-        tope=ANCHO_CLAVE_TOPE_BALANCE,
-        con_id_cliente=hay_id_cliente(filas_om),
+    ws.column_dimensions["A"].width = 18
+    ws.column_dimensions[get_column_letter(_OM_COL_CLIENTE)].width = ancho_columna_cliente(
+        f.cliente for f in filas_om
     )
-    ws.column_dimensions["C"].width = 28
-    ws.column_dimensions["F"].width = 32
+    ws.column_dimensions[get_column_letter(_OM_COL_NUM_VUELO)].width = ANCHO_NUM_VUELO_CLIENTE
+    ws.column_dimensions[get_column_letter(_OM_COL_CONCEPTO_EGRESO)].width = 28
+    ws.column_dimensions[get_column_letter(_OM_COL_CONCEPTO_INGRESO)].width = 32
     row = 4
     tot_e = tot_i = 0.0
     hay_provision = False
@@ -7472,6 +7581,9 @@ def _hoja_otros_movimientos(
         clave = _clave_otro_movimiento(f)
         vals = [
             clave,
+            f.cliente,
+            f.ruta,
+            f.consecutivo_cliente,
             _fecha(f.fecha_vuelo),
             f.concepto_egreso,
             f.egreso_mxn,
@@ -7482,16 +7594,21 @@ def _hoja_otros_movimientos(
             f.remanente_mxn,
             f.factura,
         ]
+        assert len(vals) == _OM_N_COLS
         for i, v in enumerate(vals, start=1):
             cell = ws.cell(row=row, column=i, value=v if v != "" else None)
             cell.border = _border
-            if isinstance(v, (int, float)):
+            # Solo las columnas de dinero llevan formato de dinero (el nº de
+            # vuelo del cliente es un entero, no pesos).
+            if isinstance(v, (int, float)) and i in _OM_COLS_DINERO:
                 cell.number_format = MONEY
-                if i == 9:
+                if i == _OM_COL_REMANENTE:
                     # REMANENTE = round2(ingreso − egreso), igual que el API
                     # (5-oct-2026: fórmula visible).
-                    xlsx_formulas.escribir(cell, f"ROUND(G{row}-D{row},2)", v)
-            if i == 10:
+                    xlsx_formulas.escribir(
+                        cell, f"ROUND({_OM_L_INGRESO}{row}-{_OM_L_EGRESO}{row},2)", v
+                    )
+            if i == _OM_COL_FACTURA:
                 # FACTURA: la MISMA etiqueta que la columna FACTURA
                 # VUELATOUR de la hoja maestra (30-sep-2026) — un folio
                 # tecleado «=A-12» se queda como TEXTO aquí también; si no,
@@ -7503,7 +7620,7 @@ def _hoja_otros_movimientos(
         if estado == "CANCELADO":
             ws.cell(row=row, column=1).font = Font(color=RED)
         if isinstance(f.remanente_mxn, (int, float)) and f.remanente_mxn < 0:
-            ws.cell(row=row, column=9).font = Font(color=RED)
+            ws.cell(row=row, column=_OM_COL_REMANENTE).font = Font(color=RED)
         # PROVISIÓN (pago al vendedor sin gasto real): concepto y monto del
         # egreso en amarillo; la leyenda va al pie.
         if _es_provision(f):
@@ -7512,7 +7629,7 @@ def _hoja_otros_movimientos(
                 ws.cell(row=row, column=col).fill = PatternFill("solid", fgColor=AMBER)
         # Una fila por vuelo: el desglose de cada celda va en su COMENTARIO
         # (el equipo lo pidió así para ahorrar espacio y entenderlo mejor).
-        for col, nota in ((7, f.nota_ingreso), (4, f.nota_egreso)):
+        for col, nota in ((_OM_COL_INGRESO, f.nota_ingreso), (_OM_COL_EGRESO, f.nota_egreso)):
             if nota:
                 lineas = nota.count("\n") + 1
                 com = Comment(nota, "VuelaTour")
@@ -7548,7 +7665,7 @@ def _hoja_otros_movimientos(
         if encabezado_afac_pendiente and f.seccion == "AFAC":
             t = ws.cell(row=row, column=1, value=_OM_SECCION_AFAC)
             t.font = Font(bold=True, size=10, color=NAVY)
-            for i in range(1, 11):
+            for i in range(1, _OM_N_COLS + 1):
                 ws.cell(row=row, column=i).fill = PatternFill("solid", fgColor=LIGHT)
             row += 1
             encabezado_afac_pendiente = False
@@ -7558,7 +7675,7 @@ def _hoja_otros_movimientos(
             # merge y sin fila en blanco antes.
             t = ws.cell(row=row, column=1, value=_OM_SECCION_AFAC_VUELO)
             t.font = Font(bold=True, size=10, color=NAVY)
-            for i in range(1, 11):
+            for i in range(1, _OM_N_COLS + 1):
                 ws.cell(row=row, column=i).fill = PatternFill("solid", fgColor=LIGHT)
             row += 1
             separador_afac_pendiente = False
@@ -7567,7 +7684,7 @@ def _hoja_otros_movimientos(
             filas_afac_vuelo.append(row)
         pinta(f)
         if es_afac_vuelo:
-            _marca_afac_vuelo(ws.cell(row=row - 1, column=4), f)
+            _marca_afac_vuelo(ws.cell(row=row - 1, column=_OM_COL_EGRESO), f)
     if not hoja.filas and not hoja.filas_sueltas:
         ws.cell(row=row, column=1, value="Sin otros movimientos en el periodo.").font = Font(
             color=MUTED, italic=True
@@ -7578,7 +7695,7 @@ def _hoja_otros_movimientos(
         t = ws.cell(row=row, column=1, value="MOVIMIENTOS SIN AVIÓN / SIN VUELO")
         t.font = Font(bold=True, size=10, color=NAVY)
         t.fill = PatternFill("solid", fgColor=LIGHT)
-        for i in range(2, 11):
+        for i in range(2, _OM_N_COLS + 1):
             ws.cell(row=row, column=i).fill = PatternFill("solid", fgColor=LIGHT)
         row += 1
         for f in hoja.filas_sueltas:
@@ -7588,19 +7705,25 @@ def _hoja_otros_movimientos(
     # Fórmulas (5-oct-2026): Σ egresos, Σ ingresos y remanente = ingresos −
     # egresos (los encabezados de sección no traen montos: SUM los ignora).
     formulas = {
-        4: f"ROUND(SUM(D4:D{row - 1}),2)",
-        7: f"ROUND(SUM(G4:G{row - 1}),2)",
-        9: f"ROUND(G{row}-D{row},2)",
+        _OM_COL_EGRESO: f"ROUND(SUM({_OM_L_EGRESO}4:{_OM_L_EGRESO}{row - 1}),2)",
+        _OM_COL_INGRESO: f"ROUND(SUM({_OM_L_INGRESO}4:{_OM_L_INGRESO}{row - 1}),2)",
+        _OM_COL_REMANENTE: f"ROUND({_OM_L_INGRESO}{row}-{_OM_L_EGRESO}{row},2)",
     }
-    for col, val in ((4, round(tot_e, 2)), (7, round(tot_i, 2)), (9, round(rem, 2))):
+    for col, val in (
+        (_OM_COL_EGRESO, round(tot_e, 2)),
+        (_OM_COL_INGRESO, round(tot_i, 2)),
+        (_OM_COL_REMANENTE, round(rem, 2)),
+    ):
         cell = ws.cell(row=row, column=col, value=val)
-        cell.font = Font(bold=True, color=RED if col == 9 and rem < 0 else "000000")
+        cell.font = Font(
+            bold=True, color=RED if col == _OM_COL_REMANENTE and rem < 0 else "000000"
+        )
         cell.number_format = MONEY
         cell.fill = PatternFill("solid", fgColor=LIGHT)
         if row > 4:
             xlsx_formulas.escribir(cell, formulas[col], val)
     # REMANENTE negativo en rojo (filas + TOTALES), 8-oct-2026.
-    _rojo_si_negativo(ws, f"I4:I{row}")
+    _rojo_si_negativo(ws, f"{_OM_L_REMANENTE}4:{_OM_L_REMANENTE}{row}")
     # PERMISOS AFAC: provisión vs pagado, INFORMATIVO (12-oct-2026). Debajo
     # de TOTALES para que no entre en sus sumas. Solo para un API
     # 0.0.69–0.0.73: con `afac_en_filas` (API 0.0.74) las filas AFAC ya suman
@@ -7686,74 +7809,67 @@ def _bloque_afac_otros_movimientos(
     AFAC suman en la tabla y este bloque no se pinta."""
     t = ws.cell(row=row, column=1, value=_TITULO_AFAC_OM)
     t.font = Font(bold=True, size=10, color=NAVY)
-    for i in range(1, 11):
+    for i in range(1, _OM_N_COLS + 1):
         ws.cell(row=row, column=i).fill = PatternFill("solid", fgColor=LIGHT)
     row += 1
     ley = ws.cell(row=row, column=1, value=_LEYENDA_AFAC_OM)
     ley.font = Font(italic=True, size=9, color=MUTED)
     ley.alignment = Alignment(wrap_text=True, vertical="top")
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=10)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=_OM_N_COLS)
     ws.row_dimensions[row].height = 48
     row += 1
     inicio = row
     for p in afac.provision:
         tarifa = f" · tarifa {p.tarifa_usd_hr:,.2f} USD/hr" if p.tarifa_usd_hr else ""
         vuelos = f"{p.vuelos} vuelo{'s' if p.vuelos != 1 else ''}"
-        vals: list = [
-            p.matricula,
-            None,
-            None,
-            None,
-            None,
-            f"provisión AFAC del periodo · {vuelos}{tarifa}",
-            p.monto_mxn,
-            None,
-            None,
-            None,
-        ]
-        for i, v in enumerate(vals, start=1):
-            cell = ws.cell(row=row, column=i, value=v)
-            cell.border = _border
-            if isinstance(v, (int, float)):
-                cell.number_format = MONEY
+        _fila_otros_movimientos(
+            ws,
+            row,
+            {
+                1: p.matricula,
+                _OM_COL_CONCEPTO_INGRESO: f"provisión AFAC del periodo · {vuelos}{tarifa}",
+                _OM_COL_INGRESO: p.monto_mxn,
+            },
+        )
         row += 1
     for g in afac.pagados:
-        vals = [
-            g.matricula,
-            None,
-            f"permiso AFAC pagado · {g.detalle}",
-            g.monto_mxn,
-            _fecha(g.fecha),
-            None,
-            None,
-            None,
-            None,
-            None,
-        ]
-        for i, v in enumerate(vals, start=1):
-            cell = ws.cell(row=row, column=i, value=v)
-            cell.border = _border
-            if isinstance(v, (int, float)):
-                cell.number_format = MONEY
+        _fila_otros_movimientos(
+            ws,
+            row,
+            {
+                1: g.matricula,
+                _OM_COL_CONCEPTO_EGRESO: f"permiso AFAC pagado · {g.detalle}",
+                _OM_COL_EGRESO: g.monto_mxn,
+                _OM_COL_FECHA_EGRESO: _fecha(g.fecha),
+            },
+        )
         row += 1
     ws.cell(row=row, column=1, value="SUBTOTAL AFAC").font = Font(bold=True)
+    le, li, lr = _OM_L_EGRESO, _OM_L_INGRESO, _OM_L_REMANENTE
     subtotales = {
-        4: (afac.pagados_total_mxn, f"ROUND(SUM(D{inicio}:D{row - 1}),2)"),
-        7: (afac.provision_total_mxn, f"ROUND(SUM(G{inicio}:G{row - 1}),2)"),
-        9: (afac.remanente_mxn, f"ROUND(G{row}-D{row},2)"),
+        _OM_COL_EGRESO: (afac.pagados_total_mxn, f"ROUND(SUM({le}{inicio}:{le}{row - 1}),2)"),
+        _OM_COL_INGRESO: (
+            afac.provision_total_mxn,
+            f"ROUND(SUM({li}{inicio}:{li}{row - 1}),2)",
+        ),
+        _OM_COL_REMANENTE: (afac.remanente_mxn, f"ROUND({li}{row}-{le}{row},2)"),
     }
     for col, (val, formula) in subtotales.items():
         cell = ws.cell(row=row, column=col, value=val)
-        cell.font = Font(bold=True, color=RED if col == 9 and val < 0 else "000000")
+        cell.font = Font(
+            bold=True, color=RED if col == _OM_COL_REMANENTE and val < 0 else "000000"
+        )
         cell.number_format = MONEY
         cell.fill = PatternFill("solid", fgColor=LIGHT)
         cell.border = _border
         if row > inicio:
             xlsx_formulas.escribir(cell, formula, val)
-    ws.cell(row=row, column=6, value="provisión − pagado = remanente del fondo AFAC").font = Font(
-        italic=True, size=9, color=MUTED
-    )
-    _rojo_si_negativo(ws, f"I{row}:I{row}")
+    ws.cell(
+        row=row,
+        column=_OM_COL_CONCEPTO_INGRESO,
+        value="provisión − pagado = remanente del fondo AFAC",
+    ).font = Font(italic=True, size=9, color=MUTED)
+    _rojo_si_negativo(ws, f"{lr}{row}:{lr}{row}")
     return row + 1
 
 
@@ -7806,7 +7922,8 @@ _COLUMNA_PAGO_AFAC = "pagado a AFAC"
 def _vinculo_afac_real(f: BalanceOtroMovimientoFila) -> dict | None:
     """Metadato de la celda EDITABLE del costo real (libro JSON de la vista
     en pantalla; contrato del 16-oct-2026, §5.3 con el «CAMBIO DEL CLIENTE»:
-    va en la celda EGRESO (D) de cada fila AFAC_VUELO, nunca en la del
+    va en la celda EGRESO (`_OM_COL_EGRESO`: G desde el 23-oct-2026, antes
+    D) de cada fila AFAC_VUELO, nunca en la del
     reservado). `valor` null = sin capturar. Función PURA: copia lo que el API
     mandó en `f.afac`; sin `afac` o sin `vuelo_id` ⇒ None (celda de solo
     lectura)."""
@@ -7830,7 +7947,7 @@ def _vinculo_afac_real(f: BalanceOtroMovimientoFila) -> dict | None:
 
 
 def _marca_afac_vuelo(cell, f: BalanceOtroMovimientoFila) -> None:
-    """Celda EGRESO (D) de una fila AFAC_VUELO ya pintada por `pinta()`: el
+    """Celda EGRESO (`_OM_COL_EGRESO`) de una fila AFAC_VUELO ya pintada por `pinta()`: el
     vínculo `afac_real` (solo viaja al libro JSON; el .xlsx no lo ve) y, si
     el API la manda `editable`, el verde suave «aquí se escribe». El valor,
     la nota y el borde son los de `pinta()`: aquí no se toca el dinero."""
@@ -7860,17 +7977,20 @@ def _bloque_afac_periodo(
 ) -> int:
     """Bloque «AFAC DEL PERIODO» al pie de 'otros movimientos' (16-oct-2026,
     API 0.0.89, invariante 90 del API), DEBAJO de TOTALES (no entra a sus
-    sumas). Mismas columnas que la tabla: costo real / pagado en D (egreso),
-    reservado en G (ingreso), remanente en I.
-      AFAC por vuelo: D = ROUND(SUM(D a:b),2) (Σ costo real capturado),
-        G = ROUND(SUM(G a:b),2) (Σ reservado), I = ROUND(SUM(I a:b),2)
-        (remanente de VuelaTour). `rango` = (a, b), las filas AFAC_VUELO
-        contiguas de arriba; None (sin filas, o no contiguas) ⇒ valores.
-      Un renglón por pago marcado (fecha en E, detalle en C, monto en D con
-        su vínculo de gasto en el libro JSON: «Ver en balance general» de
-        Conciliación/Caja chica); USD sin T.C. ⇒ D vacía con nota.
-      PAGADO A AFAC: D = ROUND(SUM(D de los pagos),2).
-      DIFERENCIA: D = ROUND(D pagado − D costo real,2), en rojo si ≠ 0.
+    sumas). Mismas columnas que la tabla (`_OM_COL_*`; desde el 23-oct-2026
+    egreso = G, ingreso = J, remanente = L): costo real / pagado en la columna
+    del egreso, reservado en la del ingreso, remanente en la del remanente.
+      AFAC por vuelo: egreso = ROUND(SUM(egreso a:b),2) (Σ costo real
+        capturado), ingreso = ROUND(SUM(ingreso a:b),2) (Σ reservado),
+        remanente = ROUND(SUM(remanente a:b),2) (remanente de VuelaTour).
+        `rango` = (a, b), las filas AFAC_VUELO contiguas de arriba; None (sin
+        filas, o no contiguas) ⇒ valores.
+      Un renglón por pago marcado (fecha en la del egreso, detalle en su
+        concepto, monto en egreso con su vínculo de gasto en el libro JSON:
+        «Ver en balance general» de Conciliación/Caja chica); USD sin T.C. ⇒
+        egreso vacío con nota.
+      PAGADO A AFAC: egreso = ROUND(SUM(egreso de los pagos),2).
+      DIFERENCIA: egreso = ROUND(pagado − costo real,2), en rojo si ≠ 0.
       Fuera de libro (solo > 0): el costo real capturado en vuelos que no
         aparecen en ningún libro del periodo (red del API), como valor.
     Los números son los del API (`res`); cada fórmula se verifica y, si no
@@ -7878,15 +7998,17 @@ def _bloque_afac_periodo(
     siguiente al bloque."""
     t = ws.cell(row=row, column=1, value=_TITULO_AFAC_PERIODO)
     t.font = Font(bold=True, size=10, color=NAVY)
-    for i in range(1, 11):
+    for i in range(1, _OM_N_COLS + 1):
         ws.cell(row=row, column=i).fill = PatternFill("solid", fgColor=LIGHT)
     row += 1
     ley = ws.cell(row=row, column=1, value=_LEYENDA_AFAC_PERIODO)
     ley.font = Font(italic=True, size=9, color=MUTED)
     ley.alignment = Alignment(wrap_text=True, vertical="top")
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=10)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=_OM_N_COLS)
     ws.row_dimensions[row].height = 36
     row += 1
+    c_e, c_i, c_r = _OM_COL_EGRESO, _OM_COL_INGRESO, _OM_COL_REMANENTE
+    le, li, lr = _OM_L_EGRESO, _OM_L_INGRESO, _OM_L_REMANENTE
 
     def celda(r: int, col: int, formula: str | None, valor: float | None, **font) -> None:
         cell = _formula(ws, r, col, formula, valor, MONEY, **font)
@@ -7907,24 +8029,25 @@ def _bloque_afac_periodo(
     )
     if res.vuelos_sin_real:
         capturado += f" · {res.vuelos_sin_real} por capturar"
-    texto(row, 3, capturado)
-    texto(row, 6, f"reservado (lo aporta el avión) · {res.vuelos_con_reservado} vuelo"
+    texto(row, _OM_COL_CONCEPTO_EGRESO, capturado)
+    texto(row, _OM_COL_CONCEPTO_INGRESO,
+          f"reservado (lo aporta el avión) · {res.vuelos_con_reservado} vuelo"
           + ("s" if res.vuelos_con_reservado != 1 else ""))  # fmt: skip
-    celda(row, 4, f"ROUND(SUM(D{a}:D{b}),2)" if a else None, res.costo_real_mxn, bold=True)
-    celda(row, 7, f"ROUND(SUM(G{a}:G{b}),2)" if a else None, res.reservado_mxn, bold=True)
-    celda(row, 9, f"ROUND(SUM(I{a}:I{b}),2)" if a else None, res.remanente_mxn, bold=True)
-    _rojo_si_negativo(ws, f"I{row}:I{row}")
+    celda(row, c_e, f"ROUND(SUM({le}{a}:{le}{b}),2)" if a else None, res.costo_real_mxn, bold=True)
+    celda(row, c_i, f"ROUND(SUM({li}{a}:{li}{b}),2)" if a else None, res.reservado_mxn, bold=True)
+    celda(row, c_r, f"ROUND(SUM({lr}{a}:{lr}{b}),2)" if a else None, res.remanente_mxn, bold=True)
+    _rojo_si_negativo(ws, f"{lr}{row}:{lr}{row}")
     row += 1
 
     # (2) Pagos marcados «Pago de AFAC», uno por renglón.
     inicio_pagos = row
     for p in res.pagos:
         texto(row, 1, _AFAC_PERIODO_PAGO)
-        dc = ws.cell(row=row, column=3, value=p.detalle or None)
+        dc = ws.cell(row=row, column=_OM_COL_CONCEPTO_EGRESO, value=p.detalle or None)
         dc.border = _border
-        celda(row, 4, None, p.monto_mxn)
-        texto(row, 5, _fecha(p.fecha))
-        d = ws.cell(row=row, column=4)
+        celda(row, c_e, None, p.monto_mxn)
+        texto(row, _OM_COL_FECHA_EGRESO, _fecha(p.fecha))
+        d = ws.cell(row=row, column=c_e)
         if p.monto_mxn is None and p.monto_original is not None:
             moneda = p.moneda_original or "USD"
             d.comment = _nota_celda(
@@ -7947,18 +8070,18 @@ def _bloque_afac_periodo(
         row += 1
     if not res.pagos:
         texto(row, 1, _AFAC_PERIODO_PAGO)
-        texto(row, 3, _AFAC_PERIODO_SIN_PAGOS, italic=True, color=MUTED)
+        texto(row, _OM_COL_CONCEPTO_EGRESO, _AFAC_PERIODO_SIN_PAGOS, italic=True, color=MUTED)
         row += 1
     fin_pagos = row - 1
 
     # (3) PAGADO A AFAC: Σ de los pagos con pesos.
     fila_pag = row
     texto(row, 1, _AFAC_PERIODO_PAGADO, bold=True)
-    texto(row, 3, _texto_pagos_afac(len(res.pagos), res.pagos_sin_tc))
+    texto(row, _OM_COL_CONCEPTO_EGRESO, _texto_pagos_afac(len(res.pagos), res.pagos_sin_tc))
     celda(
         row,
-        4,
-        f"ROUND(SUM(D{inicio_pagos}:D{fin_pagos}),2)" if res.pagos else None,
+        c_e,
+        f"ROUND(SUM({le}{inicio_pagos}:{le}{fin_pagos}),2)" if res.pagos else None,
         res.pagado_mxn,
         bold=True,
     )
@@ -7966,13 +8089,13 @@ def _bloque_afac_periodo(
 
     # (4) DIFERENCIA: pagado a AFAC − costo real capturado (rojo si ≠ 0).
     texto(row, 1, _AFAC_PERIODO_DIFERENCIA, bold=True)
-    texto(row, 3, "pagado a AFAC − costo real capturado")
+    texto(row, _OM_COL_CONCEPTO_EGRESO, "pagado a AFAC − costo real capturado")
     dif = res.diferencia_pagado_mxn
     distinto = dif is not None and abs(dif) >= 0.005
     celda(
         row,
-        4,
-        f"ROUND(D{fila_pag}-D{fila_sub},2)",
+        c_e,
+        f"ROUND({le}{fila_pag}-{le}{fila_sub},2)",
         dif,
         bold=True,
         color=RED if distinto else "000000",
@@ -7985,13 +8108,13 @@ def _bloque_afac_periodo(
         texto(row, 1, _AFAC_PERIODO_FUERA, italic=True, color=MUTED)
         texto(
             row,
-            3,
+            _OM_COL_CONCEPTO_EGRESO,
             "costo real capturado en vuelos que no aparecen en ningún libro del "
             "periodo (revisa su avión y su fecha; ver 'pendientes de captura')",
             italic=True,
             color=MUTED,
         )
-        celda(row, 4, None, fuera, italic=True, color=MUTED)
+        celda(row, c_e, None, fuera, italic=True, color=MUTED)
         row += 1
     return row
 

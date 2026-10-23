@@ -48,7 +48,14 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from app.schemas.reportes import DineroOtroIngresoFila, DineroVueloFila, DineroXlsxRequest
 from app.services import cierre_mes
-from app.services._formato import ANCHO_CLAVE_TOPE_DINERO, ancho_columna_clave, hay_id_cliente
+from app.services._formato import (
+    ANCHO_CLAVE_TOPE_DINERO,
+    ANCHO_NUM_VUELO_CLIENTE,
+    ENCABEZADO_CLIENTE,
+    ENCABEZADO_NUM_VUELO_CLIENTE,
+    ancho_columna_cliente,
+    ancho_columna_por_contenido,
+)
 
 NAVY = "102A43"
 LIGHT = "EEF2F7"
@@ -93,8 +100,14 @@ def _hex(color: str | None) -> str | None:
 # Columnas de la hoja dinero-vlos en el ORDEN del libro (A..BE). Cada entrada:
 # (grupo, encabezado, attr de DineroVueloFila o None, formato o None).
 # attr None + fmt None = columna sin regla todavía (celda vacía) o especial.
+# 23-oct-2026 (API 0.0.105, apodos fuera de los documentos): la CLAVE pinta lo
+# que manda el API (solo «#376») y entre ella y FECHA entran CLIENTE (nombre
+# completo; «Vuelo de servicio» en los de servicio) y Nº VUELO CLIENTE; todo
+# lo demás corre dos columnas (nada se cita por letra fija en esta hoja).
 _COLS: list[tuple[str, str, str | None, str | None]] = [
     ("", "CLAVE", "clave", None),
+    ("", ENCABEZADO_CLIENTE, "cliente", None),
+    ("", ENCABEZADO_NUM_VUELO_CLIENTE, "consecutivo_cliente", None),
     ("", "FECHA", "fecha", None),
     ("", "RUTA", "ruta", None),
     ("VENTA", "TIEMPO\nCALZOS HOBS\ncobrado", "tiempo", HORAS),
@@ -162,6 +175,10 @@ _COLS: list[tuple[str, str, str | None, str | None]] = [
     ("", "FACTURA\nPROVEEDOR", None, None),
 ]
 _COBRO1_COL = next(i for i, c in enumerate(_COLS, start=1) if c[1] == "COBRO 1\nFECHA")
+# Columnas de texto del frente (por LLAVE, nunca por letra fija).
+_COL_CLIENTE = next(i for i, c in enumerate(_COLS, start=1) if c[2] == "cliente")
+_COL_NUM_VUELO = next(i for i, c in enumerate(_COLS, start=1) if c[2] == "consecutivo_cliente")
+_COL_RUTA = next(i for i, c in enumerate(_COLS, start=1) if c[2] == "ruta")
 _GROUP_FILLS = {
     "VENTA": "DDEBF7",
     "COSTO PROVEEDOR": "FCE4D6",
@@ -233,20 +250,24 @@ def _hoja_vuelos(ws: Worksheet, req: DineroXlsxRequest) -> None:
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = _border
         ws.column_dimensions[get_column_letter(i)].width = 11
-    # CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75):
-    # «january02-211026 (50 % N4142R)» va POR CONTENIDO (con tope) solo si
-    # alguna fila trae `clave_cliente`; sin él, los 14 de siempre.
-    # Con la marca del cierre de mes (16-oct-2026) la CLAVE crece POR
-    # CONTENIDO (mismo tope) aunque no haya ID por cliente: «vtbeh · Viene de
-    # septiembre 2026» no cabe en 14.
+    # CLAVE: 14 de siempre; con la marca del cierre de mes (16-oct-2026) crece
+    # POR CONTENIDO con tope («vtbeh · Viene de septiembre 2026» no cabe en
+    # 14). Desde el 23-oct-2026 (API 0.0.105) la clave es solo el folio y el
+    # apodo ya no la ensancha: el nombre va en CLIENTE (por contenido, con
+    # tope) y el consecutivo en Nº VUELO CLIENTE.
     hay_marcas = any(v.cierre_marca for v in req.vuelos)
-    ws.column_dimensions["A"].width = ancho_columna_clave(
-        (_clave_pintada(v) for v in req.vuelos),
-        base=14,
-        tope=ANCHO_CLAVE_TOPE_DINERO,
-        con_id_cliente=hay_id_cliente(req.vuelos) or hay_marcas,
+    ws.column_dimensions["A"].width = (
+        ancho_columna_por_contenido(
+            (_clave_pintada(v) for v in req.vuelos), base=14, tope=ANCHO_CLAVE_TOPE_DINERO
+        )
+        if hay_marcas
+        else 14
     )
-    ws.column_dimensions["C"].width = 20
+    ws.column_dimensions[get_column_letter(_COL_CLIENTE)].width = ancho_columna_cliente(
+        v.cliente for v in req.vuelos
+    )
+    ws.column_dimensions[get_column_letter(_COL_NUM_VUELO)].width = ANCHO_NUM_VUELO_CLIENTE
+    ws.column_dimensions[get_column_letter(_COL_RUTA)].width = 20
     ws.row_dimensions[4].height = 34
 
     totales: dict[str, float] = {}
@@ -347,7 +368,8 @@ def _hoja_vuelos(ws: Worksheet, req: DineroXlsxRequest) -> None:
     ws.merge_cells(start_row=nrow, start_column=1, end_row=nrow, end_column=14)
     _lineas_cierre(ws, nrow + 2, req)
 
-    ws.freeze_panes = ws.cell(row=5, column=4)
+    # Paneles congelados bajo el encabezado y a la derecha de RUTA.
+    ws.freeze_panes = ws.cell(row=5, column=_COL_RUTA + 1)
 
 
 # ===== CIERRE DE MES (16-oct-2026, API 0.0.88, invariante 89 del API) =====
@@ -501,6 +523,24 @@ def _hay_pago_vendedor_real(req: DineroXlsxRequest) -> bool:
     return req.utilidades_comision_vendedor_pagada_mxn is not None
 
 
+# Columnas de la hoja 'Otros ingresos' (23-oct-2026, API 0.0.105): entre la
+# clave y la fecha del vuelo entran cliente (nombre completo), ruta y nº de
+# vuelo del cliente —esta hoja no tenía ruta—; todo lo demás corre tres
+# columnas. Los índices de dinero salen de aquí, nunca de una letra fija.
+_OI_HEADERS = [
+    "clave", "cliente", "ruta", "nº vuelo\ncliente", "fecha\nvuelo", "concepto",
+    "egreso", "fecha", "concepto", "ingreso", "fecha", "remanente", "factura\nvuelatour",
+]  # fmt: skip
+_OI_COL_CLIENTE = _OI_HEADERS.index("cliente") + 1
+_OI_COL_NUM_VUELO = _OI_HEADERS.index("nº vuelo\ncliente") + 1
+_OI_COL_CONCEPTO_EGRESO = _OI_HEADERS.index("egreso")  # el concepto va justo antes
+_OI_COL_EGRESO = _OI_HEADERS.index("egreso") + 1
+_OI_COL_CONCEPTO_INGRESO = _OI_HEADERS.index("ingreso")
+_OI_COL_INGRESO = _OI_HEADERS.index("ingreso") + 1
+_OI_COL_REMANENTE = _OI_HEADERS.index("remanente") + 1
+_OI_COLS_DINERO = frozenset((_OI_COL_EGRESO, _OI_COL_INGRESO, _OI_COL_REMANENTE))
+
+
 def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
     ws.title = "Otros ingresos"
     ws.cell(row=1, column=1, value="RELACION DE OTROS INGRESOS VUELATOUR").font = Font(
@@ -522,45 +562,40 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
         "cuentan como cobro del vuelo al aplicarse."
         + (_LEYENDA_OTROS_INGRESOS_AVION if req.otros_ingresos_avion else ""),
     ).font = Font(italic=True, size=9, color="5B6470")
-    headers = [
-        "clave", "fecha\nvuelo", "concepto", "egreso", "fecha", "concepto",
-        "ingreso", "fecha", "remanente", "factura\nvuelatour",
-    ]
-    for i, h in enumerate(headers, start=1):
+    for i, h in enumerate(_OI_HEADERS, start=1):
         c = ws.cell(row=3, column=i, value=h)
         c.font = Font(bold=True, color="FFFFFF", size=9)
         c.fill = PatternFill("solid", fgColor=NAVY)
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = _border
         ws.column_dimensions[get_column_letter(i)].width = 15
-    ws.column_dimensions["C"].width = 26
-    ws.column_dimensions["F"].width = 26
-    # CLAVE con ID de vuelo por cliente (13-oct-2026, API 0.0.75): las filas de
-    # un vuelo llevan su ID («january02-211026»); la columna A va POR
-    # CONTENIDO (con tope) solo si alguna fila trae `clave_cliente` — se miden
-    # todas las claves que se pintan en ella, también las ING-n de la sección
-    # de ingresos asignados a un avión. Sin él, los 15 de siempre.
-    filas_clave = (*req.otros_ingresos, *req.otros_ingresos_avion)
-    ws.column_dimensions["A"].width = ancho_columna_clave(
-        (f.clave for f in filas_clave),
-        base=15,
-        tope=ANCHO_CLAVE_TOPE_DINERO,
-        con_id_cliente=hay_id_cliente(filas_clave),
+    # CLAVE: 15 de siempre (desde el 23-oct-2026 es solo el folio: el apodo ya
+    # no la ensancha). CLIENTE va POR CONTENIDO con tope, midiendo todas las
+    # filas que se pintan (también las de la sección de ingresos asignados a
+    # un avión, que no traen cliente).
+    filas_todas = (*req.otros_ingresos, *req.otros_ingresos_avion)
+    ws.column_dimensions[get_column_letter(_OI_COL_CLIENTE)].width = ancho_columna_cliente(
+        f.cliente for f in filas_todas
     )
+    ws.column_dimensions[get_column_letter(_OI_COL_NUM_VUELO)].width = ANCHO_NUM_VUELO_CLIENTE
+    ws.column_dimensions[get_column_letter(_OI_COL_CONCEPTO_EGRESO)].width = 26
+    ws.column_dimensions[get_column_letter(_OI_COL_CONCEPTO_INGRESO)].width = 26
     row = 4
     tot_e = tot_i = 0.0
 
     def pinta(f: DineroOtroIngresoFila) -> None:
         nonlocal row
         vals = [
-            f.clave, _fecha(f.fecha_vuelo), f.concepto_egreso, f.egreso_mxn,
-            _fecha(f.fecha_egreso), f.concepto_ingreso, f.ingreso_mxn,
-            _fecha(f.fecha_ingreso), f.remanente_mxn, f.factura,
-        ]
+            f.clave, f.cliente, f.ruta, f.consecutivo_cliente, _fecha(f.fecha_vuelo),
+            f.concepto_egreso, f.egreso_mxn, _fecha(f.fecha_egreso), f.concepto_ingreso,
+            f.ingreso_mxn, _fecha(f.fecha_ingreso), f.remanente_mxn, f.factura,
+        ]  # fmt: skip
         for i, v in enumerate(vals, start=1):
             cell = ws.cell(row=row, column=i, value=v if v != "" else None)
             cell.border = _border
-            if isinstance(v, (int, float)):
+            # Solo las columnas de dinero llevan formato de dinero (el Nº de
+            # vuelo del cliente es un entero, no pesos).
+            if isinstance(v, (int, float)) and i in _OI_COLS_DINERO:
                 cell.number_format = MONEY
         # El detalle del egreso (la nota del gasto real «Comisión del
         # vendedor»; con un API ≤ 0.0.73, también la de su provisión = comisión
@@ -571,7 +606,7 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
             com = Comment(f.nota_egreso, "VuelaTour")
             com.width = 420
             com.height = max(60, 18 * lineas + 20)
-            ws.cell(row=row, column=4).comment = com
+            ws.cell(row=row, column=_OI_COL_EGRESO).comment = com
 
     for f in req.otros_ingresos:
         pinta(f)
@@ -581,7 +616,11 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
             tot_i += f.ingreso_mxn
         row += 1
     ws.cell(row=row, column=1, value="TOTALES").font = Font(bold=True)
-    for col, val in ((4, tot_e), (7, tot_i), (9, tot_i - tot_e)):
+    for col, val in (
+        (_OI_COL_EGRESO, tot_e),
+        (_OI_COL_INGRESO, tot_i),
+        (_OI_COL_REMANENTE, tot_i - tot_e),
+    ):
         cell = ws.cell(row=row, column=col, value=round(val, 2))
         cell.font = Font(bold=True)
         cell.number_format = MONEY
@@ -596,7 +635,7 @@ def _hoja_otros_ingresos(ws: Worksheet, req: DineroXlsxRequest) -> None:
         sec = ws.cell(row=row, column=1, value=_SECCION_OTROS_INGRESOS_AVION)
         sec.font = Font(bold=True, size=10, color=NAVY)
         sec.fill = PatternFill("solid", fgColor=LIGHT)
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=10)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=len(_OI_HEADERS))
         row += 1
         for f in req.otros_ingresos_avion:
             pinta(f)

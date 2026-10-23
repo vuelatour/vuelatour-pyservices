@@ -128,20 +128,26 @@ NOTA_USD_POR_GASTO = (
 # sin ella (None) — .xlsx: todos los miembros salvo docProps/core.xml; vista
 # en pantalla: el JSON con `vinculos_gasto: true`. Las de `None` son las de
 # `test_balance_en_pesos`. Si una se mueve, un API ≤ 0.0.97 ya no ve su libro.
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
 _HUELLAS_HEAD = {
     ("individual", True): (
-        "fb790b3fd7b19acb4f236c6fcea6df3cfef5af55c3d3edd593c06db0912390d3",
-        "ad3e0f1069946132797ea9cba354ddbd7fad42032486163db310a3d7543d2181",
+        "63cb2b0705b92da37c170a30699fa868c4adea22474ee33ce9cf1ee66ca9d280",
+        "1ded22c0e26d3d564cd775ba7f77e61fceb0df84c1887b31c70145a1f9c4a8c6",
     ),
     ("individual", None): tp._HUELLAS_HEAD["individual"],
     ("general-mensual", True): (
-        "f6a6349d3661e4a74536870d6a9288c7463f6d1693f517d94c3e52247a421d32",
-        "b05e8991dcf4e09dba3819387104528aa711c4839d3ea151ca17b735112fe91c",
+        "66265494e02c5ee3cbfd9af216fdcce84c8e9195edc984dbe36f638c3b897b8e",
+        "69e13b5cd9c4fa2174f7f86a9a12f99d1563692ee30230c32d8252473cc078d0",
     ),
     ("general-mensual", None): tp._HUELLAS_HEAD["general-mensual"],
     ("general-general", True): (
-        "96bdbecc12135a028dbea3868fb864ec22e02eea06b4c9560fb9ccc1ba64007e",
-        "5d8625df58455e1e7fb8cc34014d39b4b887ff913c2e40518546f6eaecec8a4e",
+        "35be7ddd056ce8188a61b0e1f869c0b3556006cbff0e504ebb5cdc779e8c5549",
+        "15c7a42ba91be97d675ca5b40ee33e225631ae0ee0b46817d940dac9a11bc16e",
     ),
     ("general-general", None): tp._HUELLAS_HEAD["general-general"],
 }
@@ -817,12 +823,12 @@ def test_usd_por_gasto_individual_valores_con_nota_y_cero_degradadas(registros) 
 
 
 def test_usd_por_gasto_individual_xa_tst_solo_la_degradacion_de_siempre(registros) -> None:
-    """XA-TST: la única fórmula que vuelve a valor es U7 (COSTO TOTAL MXN del
+    """XA-TST: la única fórmula que vuelve a valor es W7 (COSTO TOTAL MXN del
     #405, redondeo intermedio del espejo del API, en PESOS: nada que ver con
     la regla B); 'Gastos Indirectos'!C5, que hoy se degrada, ya es valor."""
     p = con_usd_por_gasto(pp.individual(bandera=None))
     data = render_balance_avion_xlsx(BalanceAvionRequest.model_validate(p))
-    assert registros[-1].degradadas() == [(MAESTRA_TST, "U7")]
+    assert registros[-1].degradadas() == [(MAESTRA_TST, "W7")]
     verificar_libro(data)
     wb = load_workbook(BytesIO(data))
     _columnas_valor(wb[MAESTRA_TST], _DISP_MENSUAL, p["vuelos"])
@@ -866,7 +872,7 @@ def test_usd_por_gasto_general_mensual_ganancia_usd_vacia_con_comisiones(registr
     p = general_usd_por_gasto("mensual", en_consolidado=False)
     assert "usd_por_gasto" not in p["consolidado"]
     data = render_balance_general_xlsx(BalanceGeneralRequest.model_validate(p))
-    assert registros[-1].degradadas() == [(MAESTRA_FLOTA, "U9")]  # la de siempre (pesos)
+    assert registros[-1].degradadas() == [(MAESTRA_FLOTA, "W9")]  # la de siempre (pesos)
     verificar_libro(data)
     ws = load_workbook(BytesIO(data))[MAESTRA_FLOTA]
     vuelos = p["consolidado"]["vuelos"]
@@ -904,7 +910,7 @@ def test_usd_por_gasto_general_mensual_ganancia_antes_comisiones_pintada(registr
     quedó vacía) y TOTALES = Σ de las celdas visibles, con fórmula viva."""
     p = general_usd_por_gasto("mensual", en_consolidado=True, antes_comisiones="todas")
     data = render_balance_general_xlsx(BalanceGeneralRequest.model_validate(p))
-    assert registros[-1].degradadas() == [(MAESTRA_FLOTA, "U9")]
+    assert registros[-1].degradadas() == [(MAESTRA_FLOTA, "W9")]
     verificar_libro(data)
     wb, wv = tp._libros(data)
     ws = wb[MAESTRA_FLOTA]
@@ -934,7 +940,7 @@ def test_usd_por_gasto_general_mensual_una_fila_sin_la_llave_vacia_y_nota(regist
     vacía y el encabezado lo explica; las demás, el valor del API."""
     p = general_usd_por_gasto("mensual", en_consolidado=True, antes_comisiones="una-null")
     data = render_balance_general_xlsx(BalanceGeneralRequest.model_validate(p))
-    assert registros[-1].degradadas() == [(MAESTRA_FLOTA, "U9")]
+    assert registros[-1].degradadas() == [(MAESTRA_FLOTA, "W9")]
     verificar_libro(data)
     ws = load_workbook(BytesIO(data))[MAESTRA_FLOTA]
     vuelos = p["consolidado"]["vuelos"]

@@ -73,18 +73,24 @@ MAESTRA_TST = "reporte horas XA-TST"
 # `vinculos_gasto: true`. Coinciden con las de `test_cierre_mes` porque las
 # llaves `*_mxn` sin la bandera NO mueven nada. Si una se mueve, un API que no
 # manda la bandera (≤ 0.0.92) ya no ve su libro de siempre.
+# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
+# consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
+# maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
+# movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
+# mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
 _HUELLAS_HEAD = {
     "individual": (
-        "5ff8072c668e207a77822c0463cc24ee31a19b329873b2d5412156ab57f6e7e2",
-        "68324b8e36a303b0a4620088433230e8bda79ba8868ce8041cd2034e3c1cb3cf",
+        "3a088800bfd81c515b73bc5b2b0cf3f8522fa7afebf5ed5013c5aa299d02714e",
+        "11cef9feb0e6a43564704490ea3a552aad8e546f8d2a5956733c50bdb4036096",
     ),
     "general-mensual": (
-        "00a974b56179ed1e8ffc1d0e4dc2d27711c5ffc76a714f186d5fec8c2bc8913c",
-        "9abf85a8fa27a7200d4b642240a74110a9f84190a57a289c3331cd0a81ad2a90",
+        "22d118a1a3df1b26d2bbca1827bd396ef1474c2c84db3af549035f8b2a1945bb",
+        "61247cf3aa3d6752721a24a5295a17bfbc72b2a2cd50deb716259942b669280a",
     ),
     "general-general": (
-        "818589cf5528e33b95a2c5c72c635be9593a774f6886e119b426cd4ddca4d8b1",
-        "ad7064d3103b9c562d0983c415c6cb020b95314d69bc3997816d130601041c9b",
+        "34afb591acef40817ae27b1e0ee2aa753fafa401674d55701b1da7c56df3a20e",
+        "9817ca0aa214074160e32e5a1ed1f8e83732dbb70aa14ac9a985613fa4132e25",
     ),
 }
 
@@ -276,7 +282,7 @@ def test_individual_cascada_en_pesos(registros) -> None:
     assert not any("USD" in (c.value or "") for c in ws["A"][k - 1 : k + 9])
     # Fórmulas: la misma cascada citando el TOTAL MXN de cada hoja.
     formulas = [ws.cell(row=k + i, column=2).value for i in range(9)]
-    assert formulas[0] == f"='{MAESTRA_TST}'!$AD$9"  # GANANCIA MXN de TOTALES
+    assert formulas[0] == f"='{MAESTRA_TST}'!$AF$9"  # GANANCIA MXN de TOTALES
     assert formulas[1:6] == [
         "='combustible'!$A$5",
         "='Gastos Indirectos'!$A$5",
@@ -285,7 +291,7 @@ def test_individual_cascada_en_pesos(registros) -> None:
         "='Otros ingresos'!$A$5",
     ]
     assert formulas[6] == f"=ROUND(B{k}-B{k + 1}-B{k + 2}-B{k + 3}-B{k + 4}+B{k + 5},2)"
-    assert formulas[7] == f"='{MAESTRA_TST}'!$AS$9"  # POR COBRAR MXN de TOTALES
+    assert formulas[7] == f"='{MAESTRA_TST}'!$AU$9"  # POR COBRAR MXN de TOTALES
     assert formulas[8] == f"=ROUND(B{k + 6}-B{k + 7},2)"
     # Valores = los `*_mxn` del API (la caché).
     esperados_mxn = [
