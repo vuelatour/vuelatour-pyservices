@@ -372,6 +372,24 @@ class RepartoAvion(BaseModel):
     afac_tarifa_usd_hr: float | None = None
     reserva_retenida_usd: float | None = None
     reserva_retenida_mxn: float | None = None
+    # ADITIVOS (23-oct-2026, API 0.0.103, invariante 104 del API; pedido del
+    # cliente: «debemos separar gastos directos del combustible, porque los
+    # está uniendo, porque no nos está coincidiendo con el excel»). El
+    # COMBUSTIBLE (categoría GAS, Gasavión/Turbosina) del periodo, que desde
+    # ese API YA NO está dentro de `gastos_directos_usd/_mxn`, y la línea
+    # «UTILIDAD ANTES DE GASTOS» del Excel del cliente = venta cobrada −
+    # comisiones − gastos directos (sin combustible) − provisión AFAC
+    # (`afac_reservado_*`), redondeada a 2 decimales con componentes ya
+    # redondeados. `saldo_*` = utilidad antes de gastos − combustible −
+    # indirectos − permisos − fijos + otros ingresos del avión (lo calcula el
+    # API; aquí jamás se resta). La PRESENCIA de `combustible_usd` (0.0
+    # cuenta) pinta la cascada en el ORDEN DEL EXCEL (ver
+    # `services/reparto_combustible.py`); None (API ≤ 0.0.102) ⇒ los
+    # documentos de siempre, byte a byte.
+    combustible_usd: float | None = None
+    combustible_mxn: float | None = None
+    utilidad_antes_gastos_usd: float | None = None
+    utilidad_antes_gastos_mxn: float | None = None
 
     @field_validator(
         "otros_ingresos_avion_usd", "otros_ingresos_avion_sin_tc_mxn", mode="before"

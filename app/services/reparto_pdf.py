@@ -30,6 +30,16 @@ from app.schemas.reparto import (
 )
 from app.services import cierre_mes
 from app.services._formato import _tc_txt
+from app.services.reparto_combustible import (
+    FILA_COMBUSTIBLE,
+    FILA_GASTOS_DIRECTOS_SIN_COMBUSTIBLE,
+    FILA_UTILIDAD_ANTES_GASTOS,
+    combustible_separado,
+    hay_combustible_separado,
+    pie_combustible,
+    utilidad_antes_gastos_mxn,
+    utilidad_antes_gastos_usd,
+)
 from app.services.reparto_comisiones import (
     ETIQUETA_FILA,
     LINEA_COMISION_VENDEDOR,
@@ -437,8 +447,11 @@ def _pie(req: RepartoPdfRequest) -> str:
     2026) la frase «el pago de la comisión al vendedor sale de VuelaTour, no
     del avión» ya no es verdad: dice qué absorbe el avión y dónde resta. Con
     la cascada del balance (20-oct-2026) dice cómo se arma el saldo y que la
-    reserva solo se informa."""
+    reserva solo se informa. Con el combustible separado (23-oct-2026) dice
+    que va en su propia línea y cómo se arma la utilidad antes de gastos."""
     fin = _PIE_FIN_PESOS if req.reparto_en_pesos else _PIE_FIN
+    if hay_combustible_separado(req):
+        fin = pie_combustible(req) + fin
     if req.reparto_como_balance:
         fin = _PIE_CASCADA_BALANCE + fin
     if not comisiones_al_avion(req):
@@ -922,8 +935,11 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
 def _gastos_avion(a: RepartoAvion, como_balance: bool = False) -> float:
     """Gastos del periodo del avión para el resumen global. Con la cascada
     del balance (20-oct-2026) entra la provisión AFAC y sale la reserva de
-    overhaul (ya no resta), para que venta − gastos = saldo siga cuadrando."""
+    overhaul (ya no resta), para que venta − gastos = saldo siga cuadrando.
+    Con el combustible separado (23-oct-2026, API 0.0.103) el combustible ya
+    no viene dentro de los directos y se suma aparte; sin la llave, nada."""
     base = a.gastos_directos_usd + a.gastos_indirectos_usd + a.permisos_usd + a.otros_usd
+    base += a.combustible_usd or 0.0
     if como_balance:
         return base + (a.afac_reservado_usd or 0.0)
     return base + a.reserva_overhaul_usd
@@ -988,32 +1004,61 @@ def _bloque_avion(
         filas.append([texto, _usd(pendiente)])
     # Otros ingresos ASIGNADOS al avión (13-oct-2026, API 0.0.75): la fila (+)
     # SUMA (ya dentro de `saldo_usd`) y su detalle va en gris; sin ellos,
-    # ninguna fila (el PDF de siempre).
+    # ninguna fila (el PDF de siempre). Con el combustible separado
+    # (23-oct-2026) van DESPUÉS de los fijos, como en el Excel del cliente.
     filas_oi, grises_oi = _filas_otros_ingresos_avion(avion)
-    info_rows += [len(filas) + i for i in grises_oi]
-    filas += filas_oi
+    con_combustible = combustible_separado(avion)
+    if not con_combustible:
+        info_rows += [len(filas) + i for i in grises_oi]
+        filas += filas_oi
+    # Comisiones que absorbe el avión: desde la regla de septiembre 2026
+    # (API 0.0.65) la parte del avión de la comisión bancaria + lo del
+    # vendedor (su provisión hasta el API 0.0.73; el pago «Comisión del
+    # vendedor (avión)» desde el 0.0.74). 0 (regla A del 28-ago, o sin
+    # comisiones) ⇒ la fila NO se imprime.
+    if avion.comisiones_venta_usd:
+        filas.append([ETIQUETA_FILA, _usd(-avion.comisiones_venta_usd)])
+    # EL ORDEN DEL EXCEL DEL CLIENTE (23-oct-2026, API 0.0.103, invariante
+    # 104): directos SIN combustible → provisión AFAC → «= Utilidad antes de
+    # gastos» (subtotal) → combustible → indirectos → permisos → fijos →
+    # otros ingresos del avión → saldo. Sin `combustible_usd`, la cascada de
+    # siempre (filas y textos intactos).
+    idx_utilidad: int | None = None
+    if con_combustible:
+        filas.append([FILA_GASTOS_DIRECTOS_SIN_COMBUSTIBLE, _usd(-avion.gastos_directos_usd)])
+        if como_balance:
+            filas.append(
+                [etiqueta_provision_afac(avion), _dinero_neg(avion.afac_reservado_usd)]
+            )
+        idx_utilidad = len(filas)
+        filas.append(
+            [
+                FILA_UTILIDAD_ANTES_GASTOS,
+                _usd(utilidad_antes_gastos_usd(avion, como_balance=como_balance)),
+            ]
+        )
+        filas.append([FILA_COMBUSTIBLE, _usd(-avion.combustible_usd)])
+    else:
+        filas.append(["(-) Gastos directos", _usd(-avion.gastos_directos_usd)])
     filas += [
-        # Comisiones que absorbe el avión: desde la regla de septiembre 2026
-        # (API 0.0.65) la parte del avión de la comisión bancaria + lo del
-        # vendedor (su provisión hasta el API 0.0.73; el pago «Comisión del
-        # vendedor (avión)» desde el 0.0.74). 0 (regla A del 28-ago, o sin
-        # comisiones) ⇒ la fila NO se imprime.
-        *(
-            [[ETIQUETA_FILA, _usd(-avion.comisiones_venta_usd)]]
-            if avion.comisiones_venta_usd
-            else []
-        ),
-        ["(-) Gastos directos", _usd(-avion.gastos_directos_usd)],
         ["(-) Gastos indirectos", _usd(-avion.gastos_indirectos_usd)],
         ["(-) Permisos", _usd(-avion.permisos_usd)],
         ["(-) Fijos (prorrateo + reparto manual)", _usd(-avion.otros_usd)],
     ]
     # LA CASCADA DEL BALANCE (20-oct-2026): la provisión AFAC resta en lugar
     # de la reserva; la reserva va DESPUÉS del saldo, en gris (no se resta).
+    # Con el combustible separado la provisión ya restó arriba (orden del
+    # Excel).
     if como_balance:
-        filas.append([etiqueta_provision_afac(avion), _dinero_neg(avion.afac_reservado_usd)])
+        if not con_combustible:
+            filas.append(
+                [etiqueta_provision_afac(avion), _dinero_neg(avion.afac_reservado_usd)]
+            )
     else:
         filas.append(["(-) Reserva overhaul", _usd(-avion.reserva_overhaul_usd)])
+    if con_combustible:
+        info_rows += [len(filas) + i for i in grises_oi]
+        filas += filas_oi
     # El saldo se resalta por su índice: con la cascada del balance ya no es
     # la última fila.
     idx_saldo = len(filas)
@@ -1034,6 +1079,13 @@ def _bloque_avion(
         ("TEXTCOLOR", (0, idx_saldo), (-1, idx_saldo), BRAND),
         ("BACKGROUND", (0, idx_saldo), (-1, idx_saldo), LIGHT),
     ]
+    # Subtotal «= Utilidad antes de gastos» (combustible separado): en
+    # negritas con una línea arriba, sin el fondo ni el azul del saldo.
+    if idx_utilidad is not None:
+        estilo += [
+            ("LINEABOVE", (0, idx_utilidad), (-1, idx_utilidad), 0.4, MUTED),
+            ("FONTNAME", (0, idx_utilidad), (-1, idx_utilidad), "Helvetica-Bold"),
+        ]
     for info_idx in info_rows:
         estilo += [
             ("TEXTCOLOR", (0, info_idx), (-1, info_idx), MUTED),
@@ -1233,10 +1285,13 @@ def _suma_pesos(valores: list[float | None]) -> float | None:
 def _gastos_avion_pesos(a: RepartoAvion, como_balance: bool = False) -> float | None:
     """Gastos del periodo del avión EN PESOS (+ comisiones), para el resumen.
     Con la cascada del balance (20-oct-2026): la provisión AFAC en lugar de
-    la reserva de overhaul (que ya no resta)."""
+    la reserva de overhaul (que ya no resta). Con el combustible separado
+    (23-oct-2026): el combustible aparte (un `combustible_mxn` en None ⇒ el
+    total es «—»); sin la llave, nada."""
     return _suma_pesos(
         [
             a.gastos_directos_mxn,
+            a.combustible_mxn if combustible_separado(a) else 0.0,
             a.gastos_indirectos_mxn,
             a.permisos_mxn,
             a.otros_mxn,
@@ -1443,8 +1498,12 @@ def _bloque_avion_pesos(
         info_rows.append(len(filas))
         filas.append([texto, _dinero(avion.pendiente_cobro_mxn), _usd(pendiente)])
     filas_oi, grises_oi = _filas_otros_ingresos_avion_pesos(avion)
-    info_rows += [len(filas) + i for i in grises_oi]
-    filas += filas_oi
+    # Con el combustible separado (23-oct-2026) los otros ingresos del avión
+    # van DESPUÉS de los fijos, como en el Excel del cliente.
+    con_combustible = combustible_separado(avion)
+    if not con_combustible:
+        info_rows += [len(filas) + i for i in grises_oi]
+        filas += filas_oi
     if avion.comisiones_venta_usd or avion.comisiones_venta_mxn:
         filas.append(
             [
@@ -1453,12 +1512,54 @@ def _bloque_avion_pesos(
                 _usd(-avion.comisiones_venta_usd),
             ]
         )
-    filas += [
+    fila_afac = (
         [
-            "(-) Gastos directos",
-            _dinero_neg(avion.gastos_directos_mxn),
-            _usd(-avion.gastos_directos_usd),
-        ],
+            etiqueta_provision_afac(avion),
+            _dinero_neg(avion.afac_reservado_mxn),
+            _dinero_neg(avion.afac_reservado_usd),
+        ]
+        if como_balance
+        else None
+    )
+    # EL ORDEN DEL EXCEL DEL CLIENTE (23-oct-2026, API 0.0.103, invariante
+    # 104): directos SIN combustible → provisión AFAC → «= Utilidad antes de
+    # gastos» → combustible → indirectos → permisos → fijos → otros ingresos
+    # del avión → saldo. Sin `combustible_usd`, la cascada de siempre.
+    idx_utilidad: int | None = None
+    if con_combustible:
+        filas.append(
+            [
+                FILA_GASTOS_DIRECTOS_SIN_COMBUSTIBLE,
+                _dinero_neg(avion.gastos_directos_mxn),
+                _usd(-avion.gastos_directos_usd),
+            ]
+        )
+        if fila_afac is not None:
+            filas.append(fila_afac)
+        idx_utilidad = len(filas)
+        filas.append(
+            [
+                FILA_UTILIDAD_ANTES_GASTOS,
+                _dinero(utilidad_antes_gastos_mxn(avion, como_balance=como_balance)),
+                _usd(utilidad_antes_gastos_usd(avion, como_balance=como_balance)),
+            ]
+        )
+        filas.append(
+            [
+                FILA_COMBUSTIBLE,
+                _dinero_neg(avion.combustible_mxn),
+                _usd(-avion.combustible_usd),
+            ]
+        )
+    else:
+        filas.append(
+            [
+                "(-) Gastos directos",
+                _dinero_neg(avion.gastos_directos_mxn),
+                _usd(-avion.gastos_directos_usd),
+            ]
+        )
+    filas += [
         [
             "(-) Gastos indirectos",
             _dinero_neg(avion.gastos_indirectos_mxn),
@@ -1473,14 +1574,10 @@ def _bloque_avion_pesos(
     ]
     # LA CASCADA DEL BALANCE (20-oct-2026): la provisión AFAC resta en lugar
     # de la reserva; la reserva va DESPUÉS del saldo, en gris (no se resta).
-    if como_balance:
-        filas.append(
-            [
-                etiqueta_provision_afac(avion),
-                _dinero_neg(avion.afac_reservado_mxn),
-                _dinero_neg(avion.afac_reservado_usd),
-            ]
-        )
+    # Con el combustible separado la provisión ya restó arriba.
+    if fila_afac is not None:
+        if not con_combustible:
+            filas.append(fila_afac)
     else:
         filas.append(
             [
@@ -1489,6 +1586,9 @@ def _bloque_avion_pesos(
                 _usd(-avion.reserva_overhaul_usd),
             ]
         )
+    if con_combustible:
+        info_rows += [len(filas) + i for i in grises_oi]
+        filas += filas_oi
     idx_saldo = len(filas)
     filas.append(["Saldo disponible", _dinero(avion.saldo_mxn), _usd(avion.saldo_usd)])
     if como_balance:
@@ -1518,6 +1618,13 @@ def _bloque_avion_pesos(
         ("TEXTCOLOR", (0, idx_saldo), (1, idx_saldo), BRAND),
         ("BACKGROUND", (0, idx_saldo), (-1, idx_saldo), LIGHT),
     ]
+    # Subtotal «= Utilidad antes de gastos» (combustible separado): pesos en
+    # negritas con una línea arriba; los dólares siguen informativos.
+    if idx_utilidad is not None:
+        estilo += [
+            ("LINEABOVE", (0, idx_utilidad), (-1, idx_utilidad), 0.4, MUTED),
+            ("FONTNAME", (0, idx_utilidad), (1, idx_utilidad), "Helvetica-Bold"),
+        ]
     for info_idx in info_rows:
         estilo += [
             ("TEXTCOLOR", (0, info_idx), (1, info_idx), MUTED),

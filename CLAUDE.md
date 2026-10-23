@@ -2277,6 +2277,47 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `tests/test_balance_entregas_socios.py` (38). Orden de deploy: pyservices ⇒
   API (ambos sentidos seguros).
 
+- **Reparto: COMBUSTIBLE separado de los gastos directos, cascada en el orden
+  del Excel del cliente (23-oct-2026, API 0.0.103, invariante 104 del API).**
+  Pedido: «debemos separar gastos directos del combustible, porque los está
+  uniendo, porque no nos está coincidiendo con el excel» (N621TX sep-2026: la
+  card decía «Gastos directos 187,865.72» = 147,277.58 de combustible +
+  40,588.14). Llaves ADITIVAS por avión (`RepartoAvion`, `float | None =
+  None`): `combustible_usd/_mxn` (el GAS del periodo, que con ese API YA NO
+  viene dentro de `gastos_directos_*`) y `utilidad_antes_gastos_usd/_mxn`
+  (venta cobrada − comisiones − gastos directos − provisión AFAC, componentes
+  ya redondeados: la línea «UTILIDAD ANTES DE GASTOS» del Excel); `saldo_*` =
+  utilidad antes de gastos − combustible − indirectos − permisos − fijos +
+  otros ingresos del avión. **La PRESENCIA de `combustible_usd` (0.0 cuenta)
+  enciende el orden del Excel**; textos y helpers en
+  `app/services/reparto_combustible.py` (fuente única PDF/Excel; la utilidad
+  antes de gastos es la del API y solo se re-suma si no viene, en pesos «—»
+  si falta un componente). PDF (`_bloque_avion` / `_bloque_avion_pesos`):
+  «(-) Comisiones…» → «(-) Gastos directos (sin combustible)» → «(-) Provisión
+  AFAC (…)» (solo con `reparto_como_balance`) → **«= Utilidad antes de
+  gastos»** (subtotal en negritas con línea arriba) → «(-) Combustible» →
+  «(-) Gastos indirectos» → «(-) Permisos» → «(-) Fijos (prorrateo + reparto
+  manual)» → «(+) Otros ingresos del avión…» (que sin la llave sigue ANTES de
+  las comisiones) → «Saldo disponible»; «Gastos del periodo» del resumen suma
+  el combustible (venta − gastos = saldo) y el pie gana `pie_combustible`.
+  Excel (`render_reparto_xlsx` / `_render_reparto_xlsx_pesos`, también la
+  tabla USD informativa): tras «Pendiente de cobro» el bloque «Gastos
+  directos (sin combustible)» · «Provisión AFAC» (columna 8, SOLO con la
+  cascada del balance: ya no va al final) · «Utilidad antes de gastos»
+  (comentario `NOTA_ENCABEZADO_UTILIDAD_ANTES_GASTOS`) · «Combustible», y lo
+  demás corre `oc` = 2 o 3 lugares (`_corrimiento_combustible`: `money_cols`,
+  `info_col`, `deuda_col`, `oi_col`, `reserva_col`, anchos y merges);
+  totales = re-suma de cada columna (comisiones + directos + AFAC +
+  combustible + indirectos + permisos + fijos = venta + otros ingresos −
+  saldo); nota `NOTA_COMBUSTIBLE_SEPARADO`. **Sin la llave (o en null): PDF
+  y Excel BYTE A BYTE** (huellas congeladas de `test_reparto_en_pesos` /
+  `test_cierre_mes` / `test_reparto_otros_ingresos_avion` intactas y 56
+  payloads × PDF/XLSX contra el HEAD previo en el mismo intérprete 3.12: cero
+  diferencias). Orden de deploy: pyservices ⇒ API 0.0.103 (seguro con el API
+  viejo). Tests: `tests/test_reparto_combustible_separado.py` (22; caso
+  N621TX: 787,851.13 − 2,591.00 − 40,588.14 − 42,575.49 = 702,096.50,
+  combustible 147,277.58, saldo 541,473.25).
+
 ## Conciliación
 
 - Estado de cuenta de PAYWISE (9-sep-2026): `estado_cuenta._parse_paywise`

@@ -6,6 +6,7 @@ directos/indirectos, permisos, otros, reserva overhaul, saldo) y el reparto por
 socio de cada avión.
 """
 
+from collections.abc import Callable
 from io import BytesIO
 
 from openpyxl import Workbook
@@ -14,6 +15,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from app.schemas.reparto import (
+    RepartoAvion,
     RepartoCierre,
     RepartoOtrosIngresosDesglose,
     RepartoPdfRequest,
@@ -21,6 +23,20 @@ from app.schemas.reparto import (
 )
 from app.services import cierre_mes
 from app.services._formato import _tc_txt
+from app.services.reparto_combustible import (
+    ENCABEZADO_COMBUSTIBLE,
+    ENCABEZADO_COMBUSTIBLE_PESOS,
+    ENCABEZADO_GASTOS_DIRECTOS_SIN_COMBUSTIBLE,
+    ENCABEZADO_GASTOS_DIRECTOS_SIN_COMBUSTIBLE_PESOS,
+    ENCABEZADO_UTILIDAD_ANTES_GASTOS,
+    ENCABEZADO_UTILIDAD_ANTES_GASTOS_PESOS,
+    NOTA_COMBUSTIBLE_SEPARADO,
+    NOTA_ENCABEZADO_UTILIDAD_ANTES_GASTOS,
+    combustible_separado,
+    hay_combustible_separado,
+    utilidad_antes_gastos_mxn,
+    utilidad_antes_gastos_usd,
+)
 from app.services.reparto_comisiones import (
     ETIQUETA_COLUMNA,
     comisiones_al_avion,
@@ -270,6 +286,90 @@ NOTA_REPARTO_SOCIO_BALANCE = (
 )
 
 
+# ===== COMBUSTIBLE SEPARADO DE LOS GASTOS DIRECTOS (23-oct-2026, API 0.0.103,
+# invariante 104; textos y helpers en `reparto_combustible`) =====
+# Con `combustible_usd` en algún avión, tras «Pendiente de cobro» va el bloque
+# «Gastos directos (sin combustible)» · «Provisión AFAC» (solo con la cascada
+# del balance: ya no va al final) · «Utilidad antes de gastos» ·
+# «Combustible», en el orden del Excel del cliente, y todo lo que sigue corre
+# `oc` = 2 o 3 lugares (`money_cols`, `info_col`, `deuda_col`, `oi_col`,
+# `reserva_col`, anchos y merges). Sin la llave, `oc` = 0: la hoja de siempre.
+_Lector = Callable[[RepartoAvion], float | None]
+
+
+def _corrimiento_combustible(req: RepartoPdfRequest) -> tuple[bool, bool, int]:
+    """(con_comb, afac_en_bloque, oc) de la tabla principal."""
+    con_comb = hay_combustible_separado(req)
+    afac_en_bloque = con_comb and req.reparto_como_balance
+    oc = (3 if afac_en_bloque else 2) if con_comb else 0
+    return con_comb, afac_en_bloque, oc
+
+
+def _bloque_combustible_encabezados(
+    con_comb: bool, afac_en_bloque: bool, *, pesos: bool = False
+) -> list[str]:
+    """Encabezados de la(s) columna(s) que siguen a «Pendiente de cobro»:
+    solo «Gastos directos» sin el combustible separado; con él, el bloque en
+    el orden del Excel del cliente."""
+    if not con_comb:
+        return ["Gastos directos (MXN)" if pesos else "Gastos directos"]
+    if pesos:
+        return [
+            ENCABEZADO_GASTOS_DIRECTOS_SIN_COMBUSTIBLE_PESOS,
+            *([ENCABEZADO_PROVISION_AFAC_PESOS] if afac_en_bloque else []),
+            ENCABEZADO_UTILIDAD_ANTES_GASTOS_PESOS,
+            ENCABEZADO_COMBUSTIBLE_PESOS,
+        ]
+    return [
+        ENCABEZADO_GASTOS_DIRECTOS_SIN_COMBUSTIBLE,
+        *([ENCABEZADO_PROVISION_AFAC] if afac_en_bloque else []),
+        ENCABEZADO_UTILIDAD_ANTES_GASTOS,
+        ENCABEZADO_COMBUSTIBLE,
+    ]
+
+
+def _bloque_combustible_valores(
+    a: RepartoAvion,
+    con_comb: bool,
+    afac_en_bloque: bool,
+    *,
+    como_balance: bool,
+    pesos: bool = False,
+) -> list[float | None]:
+    """Los valores de ese bloque para un avión (copiados del API): sin el
+    combustible separado, solo sus gastos directos; con él, directos (sin
+    combustible), provisión AFAC (si va en el bloque), utilidad antes de
+    gastos y combustible. Un avión SIN la llave en un reparto que sí la trae
+    deja vacías (None ⇒ «—» en pesos) las celdas nuevas: nada se inventa."""
+    directos = a.gastos_directos_mxn if pesos else a.gastos_directos_usd
+    if not con_comb:
+        return [directos]
+    if not combustible_separado(a):
+        utilidad = combustible = None
+    elif pesos:
+        utilidad = utilidad_antes_gastos_mxn(a, como_balance=como_balance)
+        combustible = a.combustible_mxn
+    else:
+        utilidad = utilidad_antes_gastos_usd(a, como_balance=como_balance)
+        combustible = a.combustible_usd
+    afac = a.afac_reservado_mxn if pesos else a.afac_reservado_usd
+    return [directos, *([afac] if afac_en_bloque else []), utilidad, combustible]
+
+
+def _lectores_bloque_combustible(
+    con_comb: bool, afac_en_bloque: bool, *, como_balance: bool, pesos: bool
+) -> dict[int, _Lector]:
+    """Columnas 7.. del bloque y cómo se LEE cada una del avión."""
+
+    def lector(i: int) -> _Lector:
+        return lambda a: _bloque_combustible_valores(
+            a, con_comb, afac_en_bloque, como_balance=como_balance, pesos=pesos
+        )[i]
+
+    n = (4 if afac_en_bloque else 3) if con_comb else 1
+    return {7 + i: lector(i) for i in range(n)}
+
+
 def _si_no(v: bool | None) -> str:
     """«Sí» / «No» de `descuenta_reserva`; vacío si el API no lo mandó."""
     if v is None:
@@ -342,12 +442,17 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     # intactas); el saldo del API ya los incluye.
     con_oi = any(a.otros_ingresos_avion_usd for a in req.aviones)
     como_balance = req.reparto_como_balance
-    n_cols = 15 if con_oi else 14
+    # Combustible separado (23-oct-2026, API 0.0.103): bloque tras los
+    # directos y corrimiento `oc` de todo lo que sigue; sin la llave, 0.
+    con_comb, afac_en_bloque, oc = _corrimiento_combustible(req)
+    n_cols = (15 if con_oi else 14) + oc
     # Cascada del balance (20-oct-2026): columna «Provisión AFAC» AL FINAL
     # (después de «Otros ingresos del avión» si está); la reserva queda en K
-    # como informativa. D..L no se mueven.
-    afac_col = n_cols + 1 if como_balance else None
-    if como_balance:
+    # como informativa. D..L no se mueven. Con el combustible separado la
+    # provisión va en el bloque (columna 8), no al final.
+    afac_al_final = como_balance and not con_comb
+    afac_col = 8 if afac_en_bloque else (n_cols + 1 if afac_al_final else None)
+    if afac_al_final:
         n_cols += 1
     _title(ws, "VuelaTour — Reporte mensual por avión", 1, n_cols, size=16)
     # Sello del cierre de mes (16-oct-2026) al final del subtítulo; sin
@@ -360,7 +465,9 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
 
     headers = [
         "Matrícula", "Modelo", "Horas voladas", "Venta del avión cobrada", ETIQUETA_COLUMNA,
-        "Pendiente de cobro (parte avión)", "Gastos directos", "Gastos indirectos", "Permisos",
+        "Pendiente de cobro (parte avión)",
+        *_bloque_combustible_encabezados(con_comb, afac_en_bloque),
+        "Gastos indirectos", "Permisos",
         "Fijos (prorrateo + reparto)",
         ENCABEZADO_RESERVA_INFORMATIVA if como_balance else "Reserva overhaul",
         "Saldo disponible",
@@ -370,7 +477,7 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         "Otros ingr. VuelaTour (informativo)",
         "Deuda total del cliente (informativo)",
         *([ENCABEZADO_OTROS_INGRESOS_AVION] if con_oi else []),
-        *([ENCABEZADO_PROVISION_AFAC] if como_balance else []),
+        *([ENCABEZADO_PROVISION_AFAC] if afac_al_final else []),
     ]
     # Columna E con las comisiones que absorbe el avión (regla de septiembre
     # 2026: banco + lo del vendedor —su provisión hasta el API 0.0.73, el
@@ -382,20 +489,26 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     _header_row(ws, hrow, headers)
     if como_balance:
         ws.cell(row=hrow, column=afac_col).comment = Comment(NOTA_ENCABEZADO_AFAC, "VuelaTour")
+    if con_comb:
+        ws.cell(row=hrow, column=6 + oc).comment = Comment(
+            NOTA_ENCABEZADO_UTILIDAD_ANTES_GASTOS, "VuelaTour"
+        )
 
-    money_cols = list(range(4, 13))  # columnas D..L son montos (C = horas)
+    # Columnas D..L (más el bloque del combustible, que corre `oc` lugares a
+    # las que siguen) son montos (C = horas).
+    money_cols = list(range(4, 13 + oc))
     totals = {c: 0.0 for c in money_cols}
-    info_col = 13  # M: otros ingresos VuelaTour (total propio, no suma al saldo)
+    info_col = 13 + oc  # M: otros ingresos VuelaTour (total propio, no suma al saldo)
     total_info = 0.0
     # N: deuda total del cliente — solo cuando supera la parte del avión
     # (pendiente_bruto_usd > pendiente_cobro_usd); en gris, sin total.
-    deuda_col = 14
+    deuda_col = 14 + oc
     # O: otros ingresos del avión (13-oct-2026) — SUMAN al saldo; total propio.
-    oi_col = 15
+    oi_col = 15 + oc
     total_oi = 0.0
     # K: con la cascada del balance la reserva es informativa (no resta):
     # gris y cursiva, como M. La última columna: provisión AFAC (resta).
-    reserva_col = 11
+    reserva_col = 11 + oc
     total_afac = 0.0
 
     r = hrow + 1
@@ -403,7 +516,10 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         valores = [
             a.matricula, a.modelo, a.horas_voladas_hr, a.ingresos_cobrado_usd,
             a.comisiones_venta_usd, a.pendiente_cobro_usd,
-            a.gastos_directos_usd, a.gastos_indirectos_usd, a.permisos_usd,
+            *_bloque_combustible_valores(
+                a, con_comb, afac_en_bloque, como_balance=como_balance
+            ),
+            a.gastos_indirectos_usd, a.permisos_usd,
             a.otros_usd, a.reserva_overhaul_usd, a.saldo_usd,
             a.otros_ingresos_vuelatour_usd,
         ]
@@ -435,7 +551,7 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
             oc.number_format = MONEY
             oc.border = _border
             total_oi += float(a.otros_ingresos_avion_usd or 0)
-        if como_balance:
+        if afac_al_final:
             ac = ws.cell(row=r, column=afac_col, value=a.afac_reservado_usd)
             ac.number_format = MONEY
             ac.border = _border
@@ -470,7 +586,7 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         co.fill = PatternFill("solid", fgColor=LIGHT)
         co.number_format = MONEY
         co.border = _border
-    if como_balance:
+    if afac_al_final:
         ca = ws.cell(row=r, column=afac_col, value=round(total_afac, 2))
         ca.font = Font(bold=True)
         ca.fill = PatternFill("solid", fgColor=LIGHT)
@@ -502,6 +618,13 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         r += 1
         nb = ws.cell(row=r, column=1, value=NOTA_CASCADA_BALANCE)
         nb.font = Font(italic=True, size=9, color="5B6470")
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
+    # Combustible separado (23-oct-2026): los directos van sin combustible y
+    # la utilidad antes de gastos se arma como en el Balance.
+    if con_comb:
+        r += 1
+        ncb = ws.cell(row=r, column=1, value=NOTA_COMBUSTIBLE_SEPARADO)
+        ncb.font = Font(italic=True, size=9, color="5B6470")
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
     # Composición cotizada de "Otros ingr. VuelaTour" (regla A: incluye la
     # comisión del vendedor) — global y por avión, solo si el API la manda.
@@ -545,9 +668,12 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
 
     # Anchos de columna.
     widths = [12, 16, 13, 16, 16, 17, 15, 16, 12, 16, 16, 16, 18, 18]
+    if con_comb:
+        # El bloque tras «Gastos directos (sin combustible)» (columna 7).
+        widths[7:7] = [*([18] if afac_en_bloque else []), 18, 16]
     if con_oi:
         widths.append(18)
-    if como_balance:
+    if afac_al_final:
         widths.append(18)
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
@@ -681,11 +807,15 @@ ENCABEZADO_OTROS_INGRESOS_AVION_PESOS = "Otros ingresos del avión (MXN, suman a
 SIN_PESOS = "—"
 
 
-def encabezados_pesos(con_oi: bool, como_balance: bool = False) -> list[str]:
+def encabezados_pesos(
+    con_oi: bool, como_balance: bool = False, con_comb: bool = False
+) -> list[str]:
     """Encabezados de la tabla principal en pesos (mismas 14/15 columnas y
     mismo orden que la de dólares). Con la cascada del balance
     (20-oct-2026): la reserva rotulada como informativa y «Provisión AFAC
-    (MXN)» AL FINAL."""
+    (MXN)» AL FINAL. Con el combustible separado (23-oct-2026): el bloque
+    tras «Pendiente de cobro» (y la provisión AFAC dentro de él)."""
+    afac_en_bloque = con_comb and como_balance
     return [
         "Matrícula",
         "Modelo",
@@ -693,7 +823,7 @@ def encabezados_pesos(con_oi: bool, como_balance: bool = False) -> list[str]:
         "Venta del avión cobrada (MXN)",
         f"{ETIQUETA_COLUMNA} (MXN)",
         "Pendiente de cobro (parte avión) (MXN)",
-        "Gastos directos (MXN)",
+        *_bloque_combustible_encabezados(con_comb, afac_en_bloque, pesos=True),
         "Gastos indirectos (MXN)",
         "Permisos (MXN)",
         "Fijos (prorrateo + reparto) (MXN)",
@@ -702,7 +832,7 @@ def encabezados_pesos(con_oi: bool, como_balance: bool = False) -> list[str]:
         "Otros ingr. VuelaTour (USD, informativo)",
         "Deuda total del cliente (USD, informativo)",
         *([ENCABEZADO_OTROS_INGRESOS_AVION_PESOS] if con_oi else []),
-        *([ENCABEZADO_PROVISION_AFAC_PESOS] if como_balance else []),
+        *([ENCABEZADO_PROVISION_AFAC_PESOS] if como_balance and not con_comb else []),
     ]
 
 
@@ -767,10 +897,15 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
 
     con_oi = any(a.otros_ingresos_avion_usd or a.otros_ingresos_avion_mxn for a in req.aviones)
     como_balance = req.reparto_como_balance
-    n_cols = 15 if con_oi else 14
-    # Cascada del balance (20-oct-2026): «Provisión AFAC (MXN)» AL FINAL.
-    afac_col = n_cols + 1 if como_balance else None
-    if como_balance:
+    # Combustible separado (23-oct-2026): el mismo bloque y corrimiento `oc`
+    # que la hoja en dólares.
+    con_comb, afac_en_bloque, oc = _corrimiento_combustible(req)
+    n_cols = (15 if con_oi else 14) + oc
+    # Cascada del balance (20-oct-2026): «Provisión AFAC (MXN)» AL FINAL (en
+    # el bloque, columna 8, con el combustible separado).
+    afac_al_final = como_balance and not con_comb
+    afac_col = 8 if afac_en_bloque else (n_cols + 1 if afac_al_final else None)
+    if afac_al_final:
         n_cols += 1
     _title(ws, "VuelaTour — Reporte mensual por avión", 1, n_cols, size=16)
     sello_cierre = cierre_mes.texto_estado_cierre(req.cierre)
@@ -784,24 +919,33 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=n_cols)
 
     hrow = 4
-    _header_row(ws, hrow, encabezados_pesos(con_oi, como_balance))
-    _header_info(ws, hrow, [encabezados_pesos(con_oi)[12], encabezados_pesos(con_oi)[13]], 13)
+    enc = encabezados_pesos(con_oi, como_balance, con_comb)
+    _header_row(ws, hrow, enc)
+    _header_info(ws, hrow, [enc[12 + oc], enc[13 + oc]], 13 + oc)
     if como_balance:
         ws.cell(row=hrow, column=afac_col).comment = Comment(NOTA_ENCABEZADO_AFAC, "VuelaTour")
+    if con_comb:
+        ws.cell(row=hrow, column=6 + oc).comment = Comment(
+            NOTA_ENCABEZADO_UTILIDAD_ANTES_GASTOS, "VuelaTour"
+        )
 
-    # Columnas en pesos (D..L) y su atributo del API.
-    attrs_mxn = {
-        4: "ingresos_cobrado_mxn",
-        5: "comisiones_venta_mxn",
-        6: "pendiente_cobro_mxn",
-        7: "gastos_directos_mxn",
-        8: "gastos_indirectos_mxn",
-        9: "permisos_mxn",
-        10: "otros_mxn",
-        11: "reserva_overhaul_mxn",
-        12: "saldo_mxn",
+    # Columnas en pesos (D..L, más el bloque del combustible) y cómo se LEE
+    # cada una del avión (el API manda el número; aquí solo se copia).
+    col_reserva, col_saldo = 11 + oc, 12 + oc
+    col_vt, col_deuda, col_oi = 13 + oc, 14 + oc, 15 + oc
+    lectores_mxn: dict[int, _Lector] = {
+        4: lambda a: a.ingresos_cobrado_mxn,
+        5: lambda a: a.comisiones_venta_mxn,
+        6: lambda a: a.pendiente_cobro_mxn,
+        **_lectores_bloque_combustible(
+            con_comb, afac_en_bloque, como_balance=como_balance, pesos=True
+        ),
+        8 + oc: lambda a: a.gastos_indirectos_mxn,
+        9 + oc: lambda a: a.permisos_mxn,
+        10 + oc: lambda a: a.otros_mxn,
+        col_reserva: lambda a: a.reserva_overhaul_mxn,
+        col_saldo: lambda a: a.saldo_mxn,
     }
-    col_vt, col_deuda, col_oi = 13, 14, 15
     r = hrow + 1
     for a in req.aviones:
         ws.cell(row=r, column=1, value=a.matricula).border = _border
@@ -809,14 +953,14 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
         hc = ws.cell(row=r, column=3, value=a.horas_voladas_hr)
         hc.number_format = "0.0"
         hc.border = _border
-        for col, attr in attrs_mxn.items():
-            c = _celda_mxn(ws, r, col, getattr(a, attr), bold=col == 12)
-            if col == 11 and a.reserva_tc:
+        for col, leer in lectores_mxn.items():
+            c = _celda_mxn(ws, r, col, leer(a), bold=col == col_saldo)
+            if col == col_reserva and a.reserva_tc:
                 c.comment = Comment(
                     f"Reserva pasada a pesos al T.C. oficial del cierre: {_tc_txt(a.reserva_tc)}.",
                     "VuelaTour",
                 )
-            if col == 11 and como_balance:
+            if col == col_reserva and como_balance:
                 # Reserva informativa (no resta): gris y cursiva.
                 c.font = _FONT_INFO
         _celda_info(ws, r, col_vt, a.otros_ingresos_vuelatour_usd)
@@ -825,7 +969,7 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
         _celda_info(ws, r, col_deuda, bruto if bruto > pendiente + 0.005 else None)
         if con_oi:
             _celda_mxn(ws, r, col_oi, a.otros_ingresos_avion_mxn)
-        if como_balance:
+        if afac_al_final:
             _celda_mxn(ws, r, afac_col, a.afac_reservado_mxn)
         r += 1
 
@@ -833,17 +977,15 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
     tcell.font = Font(bold=True)
     tcell.fill = PatternFill("solid", fgColor=LIGHT)
     ws.cell(row=r, column=2).fill = PatternFill("solid", fgColor=LIGHT)
-    totales_cols = dict(attrs_mxn)
+    totales_cols = dict(lectores_mxn)
     if con_oi:
-        totales_cols[col_oi] = "otros_ingresos_avion_mxn"
-    if como_balance:
-        totales_cols[afac_col] = "afac_reservado_mxn"
-    for col, attr in totales_cols.items():
-        c = _celda_mxn(
-            ws, r, col, _suma_columna([getattr(a, attr) for a in req.aviones]), bold=True
-        )
+        totales_cols[col_oi] = lambda a: a.otros_ingresos_avion_mxn
+    if afac_al_final:
+        totales_cols[afac_col] = lambda a: a.afac_reservado_mxn
+    for col, leer in totales_cols.items():
+        c = _celda_mxn(ws, r, col, _suma_columna([leer(a) for a in req.aviones]), bold=True)
         c.fill = PatternFill("solid", fgColor=LIGHT)
-        if col == 11 and como_balance:
+        if col == col_reserva and como_balance:
             c.font = Font(bold=True, italic=True, size=9, color=GRIS_INFO)
     ci = _celda_info(
         ws, r, col_vt, sum(a.otros_ingresos_vuelatour_usd for a in req.aviones), bold=True
@@ -875,6 +1017,9 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
     elif como_balance:
         r += 1
         _nota(ws, r, NOTA_CASCADA_BALANCE, n_cols)
+    if con_comb:
+        r += 1
+        _nota(ws, r, NOTA_COMBUSTIBLE_SEPARADO, n_cols)
     desglose_txt = _desglose_txt(req.otros_ingresos_vuelatour_desglose, " USD")
     if desglose_txt:
         r += 1
@@ -905,33 +1050,37 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
     r += 1
     headers_usd = [
         "Matrícula", "Modelo", "Horas voladas", "Venta del avión cobrada", ETIQUETA_COLUMNA,
-        "Pendiente de cobro (parte avión)", "Gastos directos", "Gastos indirectos", "Permisos",
+        "Pendiente de cobro (parte avión)",
+        *_bloque_combustible_encabezados(con_comb, afac_en_bloque),
+        "Gastos indirectos", "Permisos",
         "Fijos (prorrateo + reparto)",
         ENCABEZADO_RESERVA_INFORMATIVA if como_balance else "Reserva overhaul",
         "Saldo disponible",
         "Otros ingr. VuelaTour (informativo)",
         "Deuda total del cliente (informativo)",
         *([ENCABEZADO_OTROS_INGRESOS_AVION] if con_oi else []),
-        *([ENCABEZADO_PROVISION_AFAC] if como_balance else []),
+        *([ENCABEZADO_PROVISION_AFAC] if afac_al_final else []),
     ]  # fmt: skip
     _header_info(ws, r, headers_usd)
     r += 1
-    attrs_usd = {
-        4: "ingresos_cobrado_usd",
-        5: "comisiones_venta_usd",
-        6: "pendiente_cobro_usd",
-        7: "gastos_directos_usd",
-        8: "gastos_indirectos_usd",
-        9: "permisos_usd",
-        10: "otros_usd",
-        11: "reserva_overhaul_usd",
-        12: "saldo_usd",
-        13: "otros_ingresos_vuelatour_usd",
+    lectores_usd: dict[int, _Lector] = {
+        4: lambda a: a.ingresos_cobrado_usd,
+        5: lambda a: a.comisiones_venta_usd,
+        6: lambda a: a.pendiente_cobro_usd,
+        **_lectores_bloque_combustible(
+            con_comb, afac_en_bloque, como_balance=como_balance, pesos=False
+        ),
+        8 + oc: lambda a: a.gastos_indirectos_usd,
+        9 + oc: lambda a: a.permisos_usd,
+        10 + oc: lambda a: a.otros_usd,
+        col_reserva: lambda a: a.reserva_overhaul_usd,
+        col_saldo: lambda a: a.saldo_usd,
+        col_vt: lambda a: a.otros_ingresos_vuelatour_usd,
     }
     if con_oi:
-        attrs_usd[col_oi] = "otros_ingresos_avion_usd"
-    if como_balance:
-        attrs_usd[afac_col] = "afac_reservado_usd"
+        lectores_usd[col_oi] = lambda a: a.otros_ingresos_avion_usd
+    if afac_al_final:
+        lectores_usd[afac_col] = lambda a: a.afac_reservado_usd
     for a in req.aviones:
         for col, val in ((1, a.matricula), (2, a.modelo)):
             c = ws.cell(row=r, column=col, value=val)
@@ -941,23 +1090,25 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
         hc.number_format = "0.0"
         hc.font = _FONT_INFO
         hc.border = _border
-        for col, attr in attrs_usd.items():
-            _celda_info(ws, r, col, getattr(a, attr))
+        for col, leer in lectores_usd.items():
+            _celda_info(ws, r, col, leer(a))
         pendiente = a.pendiente_cobro_usd or 0.0
         bruto = a.pendiente_bruto_usd or 0.0
         _celda_info(ws, r, col_deuda, bruto if bruto > pendiente + 0.005 else None)
         r += 1
     t2 = ws.cell(row=r, column=1, value="TOTAL USD")
     t2.font = Font(bold=True, italic=True, size=9, color="64748B")
-    for col, attr in attrs_usd.items():
-        _celda_info(ws, r, col, round(sum(float(getattr(a, attr) or 0) for a in req.aviones), 2),
+    for col, leer in lectores_usd.items():
+        _celda_info(ws, r, col, round(sum(float(leer(a) or 0) for a in req.aviones), 2),
                     bold=True)  # fmt: skip
     r += 1
 
     widths = [12, 16, 13, 18, 18, 19, 16, 17, 14, 18, 17, 18, 20, 20]
+    if con_comb:
+        widths[7:7] = [*([18] if afac_en_bloque else []), 18, 16]
     if con_oi:
         widths.append(20)
-    if como_balance:
+    if afac_al_final:
         widths.append(20)
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
