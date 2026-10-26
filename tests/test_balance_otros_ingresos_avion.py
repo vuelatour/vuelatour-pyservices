@@ -110,11 +110,11 @@ NOTA_HOJA = (
     "total de 'Otros ingresos' del Libro Dinero. Los anticipos y las "
     "aportaciones nunca llevan avión."
 )
+# Nota de CELDA de la línea de la cascada: corta desde el 26-oct-2026 (pedido
+# del cliente: las notas «causan ruido»; una idea, 1–2 líneas).
 NOTA_CASCADA = (
-    "Ingresos registrados en Ingresos y asignados a este avión (hoja 'Otros "
-    "ingresos' de su libro), netos de comisión bancaria, al T.C. promedio del "
-    "libro. Suman a la utilidad del avión y a su reparto a socios; no cuentan "
-    "como ingreso de VuelaTour."
+    "Otros ingresos asignados a este avión en Ingresos (hoja 'Otros ingresos' "
+    "de su libro), netos de comisión bancaria, al T.C. promedio del libro."
 )
 NOTA_GENERAL = (
     "Ingresos registrados en Ingresos y asignados a un avión (clave ING-n), "
@@ -171,13 +171,10 @@ NOTA_GENERAL_POR_INGRESO = (
     "su neto tal cual; un reembolso ligado a un gasto de su libro, con el T.C. "
     "de ese gasto), como en el reparto; TOTAL USD = suma de NETO USD."
 )
-NOTA_CASCADA_POR_INGRESO = (
-    "Ingresos registrados en Ingresos y asignados a este avión (hoja 'Otros "
-    "ingresos' de su libro), netos de comisión bancaria, cada uno a USD con su "
-    "T.C. propio o el oficial de su día, como en el reparto a socios (un "
-    "reembolso ligado a un gasto de este libro usa el T.C. de ese gasto para "
-    "anularse con él). Suman a la utilidad del avión y a su reparto; no "
-    "cuentan como ingreso de VuelaTour."
+NOTA_CASCADA_POR_INGRESO = (  # corta desde el 26-oct-2026 (nota de celda)
+    "Otros ingresos asignados a este avión en Ingresos (hoja 'Otros ingresos' "
+    "de su libro), netos de comisión bancaria, cada uno a dólares con su "
+    "propio T.C., como en el reparto a socios."
 )
 ENCABEZADOS_POR_INGRESO = [
     "FECHA",
@@ -567,9 +564,9 @@ def test_individual_cascada_suma_los_otros_ingresos(registros) -> None:
     data = render_balance_avion_xlsx(req)
     wb, wv = _libros(data)
     ws, wsv = wb["balance"], wv["balance"]
-    k = _fila_de(ws, "UTILIDAD ANTES DE GASTOS USD")
+    k = _fila_de(ws, "UTILIDAD DESPUÉS DE COMISIONES USD")
     assert [ws.cell(row=k + i, column=1).value for i in range(9)] == [
-        "UTILIDAD ANTES DE GASTOS USD",
+        "UTILIDAD DESPUÉS DE COMISIONES USD",
         "(−) COMBUSTIBLE DEL MES USD",
         "(−) GASTOS INDIRECTOS USD",
         "(−) REFACCIONES (INVENTARIO) USD",
@@ -717,11 +714,14 @@ def _general(**kw) -> BalanceGeneralRequest:
 
 
 def _bloque(ws, matricula: str) -> int:
-    """Fila de «UTILIDAD ANTES DE GASTOS USD» del bloque de `matricula` en la
-    hoja 'balance' del general."""
+    """Fila de «UTILIDAD DESPUÉS DE COMISIONES USD» (hasta el 26-oct-2026
+    «UTILIDAD ANTES DE GASTOS USD») del bloque de `matricula` en la hoja
+    'balance' del general."""
     inicio = _fila_de(ws, matricula)
     return next(
-        c.row for c in ws["A"] if c.row > inicio and c.value == "UTILIDAD ANTES DE GASTOS USD"
+        c.row
+        for c in ws["A"]
+        if c.row > inicio and c.value == "UTILIDAD DESPUÉS DE COMISIONES USD"
     )
 
 
@@ -792,7 +792,7 @@ def test_general_bloques_con_la_linea_como_valor_y_comentario() -> None:
 def test_general_con_comisiones_la_linea_va_tras_las_dos_previas(registros) -> None:
     """Cascada del general con «antes de comisiones» y «(−) COMISIONES» (API
     0.0.66): la línea de otros ingresos sigue en k + 5 contando desde UTILIDAD
-    ANTES DE GASTOS (que ya va corrida dos filas)."""
+    DESPUÉS DE COMISIONES (que ya va corrida dos filas)."""
     p = tcg._payload()
     tst = next(a for a in p["aviones"] if a["matricula"] == "XA-TST")
     con = _con_otros_ingresos(tst, [_FILA_MXN])
@@ -803,9 +803,7 @@ def test_general_con_comisiones_la_linea_va_tras_las_dos_previas(registros) -> N
     wb, wv = _libros(data)
     ws, wsv = wb["balance"], wv["balance"]
     k = _bloque(ws, "XA-TST")
-    assert ws.cell(row=k - 2, column=1).value == (
-        "UTILIDAD ANTES DE GASTOS USD (antes de comisiones)"
-    )
+    assert ws.cell(row=k - 2, column=1).value == "UTILIDAD ANTES DE COMISIONES USD"
     assert ws.cell(row=k + 5, column=1).value == _FILA_OTROS_INGRESOS
     assert ws.cell(row=k + 6, column=2).value == (
         f"=ROUND(B{k}-B{k + 1}-B{k + 2}-B{k + 3}-B{k + 4}+B{k + 5},2)"
@@ -984,18 +982,25 @@ def _huella_json(libro: dict) -> str:
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
 _HUELLAS_FORMA_REAL_0076 = {
     "individual": (
-        "2a7e8752c32d3d815737abb4cf8c834cde8f62dc1df791d0e08007ecbf5cf34f",
-        "9216b85f79d914e5bb8f656e4614404a476c4916a4785134b43e58cf2f8dac13",
+        "a5ffd145f01ecb468f5e029e529619548b4a00ad7f1801f48ed7189c4b0e65b7",
+        "ba100ced1bc76dd7a09f7084c2ab348a0618a1c0b3d743a629ecabb4c36bf8af",
     ),
     "general-mensual": (
-        "91fdff257a2aec29f28b0af2499ba34fe02ed44d5a5a6ad84192d2e67cd12374",
-        "74985dcd29f3931928af5e974ae49949e36e1e8f04ae8b3d9dcb484a2d6102de",
+        "2dac2da477bf5d06fec3331a24bd12999e5b8a63a8a55ae0791fb1f8d430d9eb",
+        "5eec315e45c89401e4b05530540894ff5eb5b80135def15d1c8775d47c03cf21",
     ),
     "general-general": (
-        "690e40ad8caded86d9190045e4dfda1b93d52535cca8d25cb7186ec744cc2bed",
-        "10eefa675c8e883f0ecc90fe6c4091d176786400bca953ec97a4d6cc6138dd70",
+        "e6a9d59d220f8eba3c354b40af482395c3c772a0beca6b58c849cc5f35880184",
+        "bc91c8e31df1e4a10ad831770890ac771c024af1fca7d49d2dc2d0b9d7735a52",
     ),
 }
 
@@ -1415,11 +1420,25 @@ def test_rutas_aceptan_el_payload_0077(monkeypatch, request) -> None:
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
-_HUELLA_INDIVIDUAL_HEAD = "9440bb643782d8a5412721f83ab4392cf16a7e8170910340067916eac4651f66"
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
+_HUELLA_INDIVIDUAL_HEAD = "46b6a00f097c426983d65fe2c818ccb5f9a090c7ff4995cb8976b2102c908eb6"
 # Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
 # del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
 # consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
-_HUELLA_GENERAL_HEAD = "87aa1e3888fe12457be497983cd5ffc601f8a0f763b9a6aab95b21b40d73fa09"
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
+_HUELLA_GENERAL_HEAD = "90370114c7bb1a02d2043e0f8c5c9315abc9a66c07f283db36f0828582a49c0a"

@@ -456,7 +456,7 @@ _COLS_FLOTA_AFAC: list[tuple[str, str, str | None, str | None]] = [*_COLS_FLOTA,
 # SIEMPRE partes iguales por tramo vendido (nunca por horas); 'unico' no
 # lleva base.
 _FUENTE_PARTICIPACION = {
-    "tramos": "partes iguales por tramo vendido (ferries/tramos operativos no reparten)",
+    "tramos": "partes iguales por tramo vendido; los ferries no reparten",
 }
 # Fuente del TC oficial de referencia (TipoCambioService.oficialDetallePara).
 _TC_FUENTE_LABEL = {
@@ -1377,47 +1377,42 @@ def _comentario_cobro(texto: str) -> Comment:
 # general (las dos variantes) va sin ella y antes de comisiones; sus notas
 # (`_COMISIONES_FUERA_DE_LA_HOJA`, `_NOTA_COMISIONES_FLOTA`) dicen dónde
 # quedaron: en el libro individual y en la cascada de la hoja 'balance'.
+# Notas de CELDA cortas (26-oct-2026, pedido del cliente: «unas cosas nos
+# causan ruido»): una idea en 1–2 líneas, sin fórmulas que ya se ven, sin
+# fechas ni versiones. La regla de comisiones y su vigencia las explica el pie
+# de la hoja (con la etiqueta del API, `_con_regla`); las notas de celda ya no
+# la nombran y `_con_regla` las deja tal cual.
 _NOTA_ENCABEZADO_COMISIONES = (
-    "COMISIONES (regla de septiembre 2026, por fecha del vuelo) = lo que "
-    "absorbe el avión: su parte de la comisión bancaria de los cobros del "
-    "vuelo (en la misma proporción con que el cobro se prorratea al avión) + "
-    "la comisión del vendedor como PROVISIÓN (lo cobrado al cliente por ese "
-    "concepto, comisión + IVA). La nota de cada celda dice cuáles son. "
-    "Vuelos anteriores: vacía (la comisión era de VuelaTour)."
+    "Comisiones a cargo del avión: su parte de la comisión bancaria de los "
+    "cobros del vuelo y la comisión del vendedor (provisión). La nota de cada "
+    "celda dice cuáles son."
 )
 # Hoja de vuelos del Balance GENERAL sin COMISIONES (7-oct-2026): las notas
 # de encabezado de GANANCIA MXN (variante mensual) y de REMANENTE VENTA MENOS
 # COMPRA (variante general) dicen que van antes de comisiones y dónde están.
 _COMISIONES_FUERA_DE_LA_HOJA = (
-    "Las comisiones que absorbe cada avión (regla de septiembre 2026, por "
-    "fecha del vuelo: su parte de la comisión bancaria de sus cobros y la "
-    "comisión del vendedor como PROVISIÓN) no van en esta hoja: están en la "
-    "columna COMISIONES del libro individual de cada avión y ya van restadas "
-    "en la cascada de cada avión de la hoja 'balance'."
+    "Las comisiones a cargo de cada avión (banco y provisión del vendedor) no "
+    "van en esta hoja: restan en la hoja 'balance', columna COMISIONES de su "
+    "Balance por avión."
 )
 _NOTA_ENCABEZADO_GANANCIA_FLOTA = (
-    "GANANCIA (MXN y su equivalente en USD) = REMANENTE (VENTA − COSTO "
-    "TOTAL), antes de comisiones. " + _COMISIONES_FUERA_DE_LA_HOJA
+    "Ganancia de la fila antes de comisiones. " + _COMISIONES_FUERA_DE_LA_HOJA
 )
 _NOTA_ENCABEZADO_REMANENTE = (
-    "REMANENTE VENTA MENOS COMPRA = VENTA AVIÓN MXN − TOTAL PARA PROVEEDOR "
-    "(PESOS), antes de comisiones. " + _COMISIONES_FUERA_DE_LA_HOJA
+    "Remanente de la fila antes de comisiones. " + _COMISIONES_FUERA_DE_LA_HOJA
 )
 # Llave de la columna → nota de su encabezado en una hoja SIN COMISIONES.
 # TARIFA AFAC por fila en la hoja de la flota (12-oct-2026): nota de su
 # encabezado y de la constante B1 (que en el general queda vacía).
 _NOTA_ENCABEZADO_TARIFA_AFAC = (
-    "Aportación AFAC USD/hr de la ficha de CADA avión (la tarifa AFAC es por "
-    "avión y esta hoja mezcla aviones). PERMISO AFAC (PROVISIÓN) de cada "
-    "fila = ROUND(esta tarifa × TIPO CAMBIO COSTOS × HORAS COBRADAS, 2). Vacía "
-    "= avión sin tarifa configurada (su PERMISO AFAC va vacío; ver la hoja "
-    "'balance') o vuelo externo."
+    "Tarifa AFAC (USD/hr) de la ficha de cada avión, con la que se calcula el "
+    "PERMISO AFAC de su fila. Vacía: avión sin tarifa configurada o vuelo "
+    "externo."
 )
 _NOTA_B1_TARIFA_POR_AVION = (
-    "La tarifa AFAC es POR AVIÓN y esta hoja mezcla aviones: cada fila trae "
-    "la tarifa del suyo en la columna AFAC USD/HR (al final) y PERMISO AFAC "
-    "(PROVISIÓN) lleva ahí su fórmula, ROUND(tarifa × TIPO CAMBIO COSTOS × "
-    "HORAS COBRADAS, 2). La tarifa de cada avión se captura en su ficha."
+    "La tarifa AFAC es por avión y esta hoja mezcla aviones: cada fila trae la "
+    "de su avión en la columna AFAC USD/HR (al final), con la que se calcula "
+    "su PERMISO AFAC."
 )
 _NOTAS_ENCABEZADO_SIN_COMISIONES = {
     "ganancia_mxn": _NOTA_ENCABEZADO_GANANCIA_FLOTA,
@@ -1447,31 +1442,21 @@ _NOTAS_ENCABEZADO_SIN_COMISIONES = {
 # ANTERIOR a la vigencia que absorbe un pago «(avión)» también trae
 # COMISIONES y estas leyendas (`_regla_vigente`): siguen siendo verdad.
 _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL = (
-    "COMISIONES = lo que absorbe el avión: su parte de la comisión bancaria de "
-    "los cobros del vuelo (regla de septiembre 2026, por fecha del vuelo; en "
-    "la misma proporción con que el cobro se prorratea al avión) + el pago al "
-    "vendedor capturado en Gastos como «Comisión del vendedor (avión)» y "
-    "ligado al vuelo (en cualquier fecha, en vuelos completados o cancelados "
-    "con cobros retenidos; en un vuelo de varios aviones, su parte de la "
-    "venta). La «Comisión del vendedor (VuelaTour)» no va aquí: la paga "
-    "VuelaTour en 'otros movimientos'. Sin pago capturado no se resta nada. La "
-    "nota de cada celda dice cuáles son."
+    "Comisiones a cargo del avión: su parte de la comisión bancaria de los "
+    "cobros del vuelo y el pago «Comisión del vendedor (avión)» ligado al "
+    "vuelo (la «(VuelaTour)» la paga VuelaTour). La nota de cada celda dice "
+    "cuáles son."
 )
 _COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL = (
-    "Las comisiones que absorbe cada avión (su parte de la comisión bancaria "
-    "de sus cobros —regla de septiembre 2026, por fecha del vuelo— y el pago "
-    "al vendedor capturado como «Comisión del vendedor (avión)» ligado al "
-    "vuelo; sin ese pago no se resta nada del vendedor) no van en esta hoja: "
-    "están en la columna COMISIONES del libro individual de cada avión y ya "
-    "van restadas en la cascada de cada avión de la hoja 'balance'."
+    "Las comisiones a cargo de cada avión (banco y pago «Comisión del vendedor "
+    "(avión)») no van en esta hoja: restan en la hoja 'balance', columna "
+    "COMISIONES de su Balance por avión."
 )
 _NOTA_ENCABEZADO_GANANCIA_FLOTA_GASTO_REAL = (
-    "GANANCIA (MXN y su equivalente en USD) = REMANENTE (VENTA − COSTO "
-    "TOTAL), antes de comisiones. " + _COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL
+    "Ganancia de la fila antes de comisiones. " + _COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL
 )
 _NOTA_ENCABEZADO_REMANENTE_GASTO_REAL = (
-    "REMANENTE VENTA MENOS COMPRA = VENTA AVIÓN MXN − TOTAL PARA PROVEEDOR "
-    "(PESOS), antes de comisiones. " + _COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL
+    "Remanente de la fila antes de comisiones. " + _COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL
 )
 
 
@@ -1764,7 +1749,7 @@ def _pct(factor: float | None) -> str:
 # de VuelaTour y no se reparte). Solo con la bandera raíz y si la fila lo
 # absorbió (`comision_vendedor_real_pagos > 0`).
 _NOTA_PARTICIPACION_PAGO_VENDEDOR_AVION = (
-    " El pago «Comisión del vendedor (avión)» es la excepción: se reparte "
+    "\nEl pago «Comisión del vendedor (avión)» es la excepción: se reparte "
     "entre los aviones como la venta (va en COMISIONES)."
 )
 # Alto de esa nota (la caja de siempre; con la excepción, dos renglones más).
@@ -1781,12 +1766,10 @@ def _nota_participacion(v: BalanceAvionVuelo, solo_gasto_real: bool = False) -> 
     base = _FUENTE_PARTICIPACION.get(v.participacion_fuente or "")
     nota = (
         f"Vuelo multi-avión: esta fila trae el {_pct(v.participacion)} de la "
-        "venta del avión (repartida entre las matrículas del vuelo"
-        + (f" por {base}" if base else "")
-        + "); horas cobradas, cobros y por cobrar van en la misma "
-        "proporción. Los gastos de la fila son los de ESTE avión (por "
-        "tramo), sin repartir. TUAs/extras/pernocta/comisión del vendedor "
-        "son de VuelaTour y no se reparten."
+        "venta del avión"
+        + (f" ({base})" if base else "")
+        + "; cobros y horas cobradas van en la misma proporción y los gastos "
+        "son solo los de este avión."
     )
     if solo_gasto_real and (v.comision_vendedor_real_pagos or 0) > 0:
         nota += _NOTA_PARTICIPACION_PAGO_VENDEDOR_AVION
@@ -2196,18 +2179,17 @@ def _fragmento_resumen_pago_vendedor(om: BalanceHojaOtrosMovimientos | None) -> 
 # (OPERACIONES, GANANCIA, COSTO TOTAL USD, COSTO X HORA USD…); estas dicen lo
 # mismo con las columnas del bloque COSTO POR HORA.
 _CPH_NOTA_AFAC = (
-    "La tarifa AFAC es POR AVIÓN y este Balance general ya no lleva la "
-    "columna PERMISO AFAC: el permiso (provisión) de cada vuelo va dentro de "
-    "TOTAL PARA PROVEEDOR (PESOS) — su monto está en la nota de esa celda. La "
-    "fórmula con la tarifa de cada avión está en su libro individual "
-    "(Reportes › Balance por avión)."
+    "Este Balance general no lleva la columna PERMISO AFAC: el permiso de cada "
+    "vuelo va dentro de TOTAL PARA PROVEEDOR (PESOS) y su monto está en la "
+    "nota de esa celda."
 )
-_CPH_NOTA_FACTOR_IVA = (
-    "IVA de los costos (16 %): COSTO X HORA (DLLS S/IVA) = TOTAL PARA "
-    "PROVEEDOR (PESOS) ÷ TIPO CAMBIO ÷ TIEMPO CALZOS/HOBS ÷ este factor e IVA "
-    "TOTAL PAGADO (DLLS) = TOTAL PARA PROVEEDOR (DLLS) − TOTAL PARA PROVEEDOR "
-    "(DLLS) ÷ este factor."
+# Nota de la constante D1 (factor del IVA) en las dos variantes de la hoja de
+# vuelos: las fórmulas ya se ven en las celdas; la nota solo dice qué es.
+_NOTA_FACTOR_IVA = (
+    "Factor del IVA de los costos (16 %): las cifras sin IVA (S/IVA) y el IVA "
+    "pagado se calculan con él."
 )
+_CPH_NOTA_FACTOR_IVA = _NOTA_FACTOR_IVA
 _CPH_NOTA_BLOQUE = (
     "BALANCE GENERAL · COSTO POR HORA: COSTO X HORA (DLLS S/IVA) = TOTAL PARA "
     "PROVEEDOR (PESOS) ÷ TIPO CAMBIO ÷ TIEMPO CALZOS/HOBS ÷ 1.16 — el total de "
@@ -2285,18 +2267,15 @@ _CPH_RENGLON_EXTENSION = (
 # columna; en otra hoja, en la celda).
 _NOTA_CALCULADO_POR_SISTEMA = {
     "cph_proveedor_mxn": (
-        "Calculado por el sistema: TOTAL PARA PROVEEDOR (PESOS) = COSTO TOTAL "
-        "del vuelo = operación + piloto + otros + permiso AFAC (provisión), sin "
-        "combustible. Esas columnas no van en este Balance general: el "
-        "desglose de cada vuelo está en la nota de su celda y en el Balance "
-        "mensual la columna COSTO TOTAL MXN es la fórmula que las suma."
+        "Calculado por el sistema: TOTAL PARA PROVEEDOR (PESOS) = operación + "
+        "piloto + otros + permiso AFAC, sin combustible. Esas columnas no van "
+        "en este Balance general; el desglose de cada vuelo está en la nota de "
+        "su celda."
     ),
     "costo_total_mxn": (
         "Calculado por el sistema: COSTO TOTAL = operación + piloto + otros + "
-        "permiso AFAC (provisión) del vuelo, sin combustible. Esas columnas no "
-        "van en este Balance general: el desglose de cada vuelo está en la "
-        "nota de TOTAL PARA PROVEEDOR (PESOS) y en el Balance mensual esta "
-        "celda es la fórmula que las suma."
+        "permiso AFAC, sin combustible. Esas columnas no van en este Balance "
+        "general; el desglose está en la nota de TOTAL PARA PROVEEDOR (PESOS)."
     ),
 }
 _NOTA_CALCULADO_POR_SISTEMA_GENERICA = (
@@ -2336,9 +2315,9 @@ _COLS_USD_POR_GASTO = frozenset(
     )
 )
 _NOTA_ENCABEZADO_USD_POR_GASTO = (
-    "USD calculado gasto por gasto: cada gasto a dólares con su T.C. propio o "
-    "el oficial del día en que se pagó (criterio del reparto a socios); no es "
-    "el total en pesos ÷ T.C. promedio."
+    "USD calculado gasto por gasto (cada gasto con su T.C. propio o el oficial "
+    "del día en que se pagó, como en el reparto a socios), no el total en "
+    "pesos ÷ T.C. promedio."
 )
 # GANANCIA USD de la hoja de vuelos del GENERAL (antes de comisiones): con la
 # bandera se pinta la `ganancia_antes_comisiones_usd` que manda el API por
@@ -2346,11 +2325,8 @@ _NOTA_ENCABEZADO_USD_POR_GASTO = (
 # fila con comisiones quedó vacía por no traerla
 # (`_hay_ganancia_usd_sin_antes_comisiones`); si no, la genérica.
 _NOTA_ENCABEZADO_GANANCIA_USD_POR_GASTO_FLOTA = (
-    _NOTA_ENCABEZADO_USD_POR_GASTO + " En esta hoja la GANANCIA va antes de "
-    "comisiones: en los vuelos con comisiones es la ganancia en dólares antes "
-    "de comisiones que manda el API; donde el API no la manda, la celda queda "
-    "vacía (su GANANCIA USD después de comisiones está en el Balance mensual "
-    "del avión)."
+    _NOTA_ENCABEZADO_USD_POR_GASTO
+    + " En los vuelos con comisiones sin ese dato, la celda queda vacía."
 )
 
 
@@ -2680,9 +2656,8 @@ def _constantes_maestra(
     ca.border = _border
     if hay_afac:
         texto_afac = (
-            "Aportación AFAC USD/hr de la ficha del avión. PERMISO AFAC "
-            "(PROVISIÓN) de cada vuelo = ROUND(esta tarifa × TIPO CAMBIO "
-            "COSTOS × HORAS COBRADAS, 2)."
+            "Tarifa AFAC (USD/hr) de la ficha del avión, con la que se calcula "
+            "el PERMISO AFAC (PROVISIÓN) de cada vuelo."
         )
     elif costo_por_hora:
         texto_afac = _CPH_NOTA_AFAC
@@ -2690,10 +2665,9 @@ def _constantes_maestra(
         texto_afac = _NOTA_B1_TARIFA_POR_AVION
     elif general:
         texto_afac = (
-            "La tarifa AFAC es POR AVIÓN: en el Balance general la columna "
-            "PERMISO AFAC (PROVISIÓN) va como valor; la fórmula con la tarifa "
-            "de cada avión está en su libro individual (Reportes › Balance "
-            "por avión)."
+            "La tarifa AFAC es por avión y esta hoja mezcla aviones: el PERMISO "
+            "AFAC de cada vuelo se calculó con la tarifa de su avión (ver su "
+            "Balance por avión)."
         )
     else:
         texto_afac = (
@@ -2708,14 +2682,7 @@ def _constantes_maestra(
     cf = _num(ws, 1, 4, FACTOR_IVA_COSTOS, "0.00", bold=True)
     cf.fill = PatternFill("solid", fgColor=FILL_COSTOS)
     cf.border = _border
-    nota_iva = Comment(
-        _CPH_NOTA_FACTOR_IVA
-        if costo_por_hora
-        else "IVA de los costos (16 %): COSTO TOTAL USD S/IVA = COSTO TOTAL USD ÷ "
-        "este factor y COSTO X HORA USD S/IVA = COSTO X HORA USD ÷ este "
-        "factor.",
-        "VuelaTour",
-    )
+    nota_iva = Comment(_CPH_NOTA_FACTOR_IVA if costo_por_hora else _NOTA_FACTOR_IVA, "VuelaTour")
     nota_iva.width = 300
     nota_iva.height = 100 if costo_por_hora else 70
     cf.comment = nota_iva
@@ -3629,10 +3596,8 @@ _NOTA_OTROS_INGRESOS_AVIONES_GENERAL = (
     "T.C. promedio)."
 )
 _NOTA_CASCADA_OTROS_INGRESOS = (
-    "Ingresos registrados en Ingresos y asignados a este avión (hoja 'Otros "
-    "ingresos' de su libro), netos de comisión bancaria, al T.C. promedio del "
-    "libro. Suman a la utilidad del avión y a su reparto a socios; no cuentan "
-    "como ingreso de VuelaTour."
+    "Otros ingresos asignados a este avión en Ingresos (hoja 'Otros ingresos' "
+    "de su libro), netos de comisión bancaria, al T.C. promedio del libro."
 )
 
 # ===== Conversión ÚNICA del ingreso de un avión (14-oct-2026, API 0.0.77) =====
@@ -3695,12 +3660,9 @@ _NOTA_OTROS_INGRESOS_AVIONES_GENERAL_POR_INGRESO = (
     "de ese gasto), como en el reparto; TOTAL USD = suma de NETO USD."
 )
 _NOTA_CASCADA_OTROS_INGRESOS_POR_INGRESO = (
-    "Ingresos registrados en Ingresos y asignados a este avión (hoja 'Otros "
-    "ingresos' de su libro), netos de comisión bancaria, cada uno a USD con su "
-    "T.C. propio o el oficial de su día, como en el reparto a socios (un "
-    "reembolso ligado a un gasto de este libro usa el T.C. de ese gasto para "
-    "anularse con él). Suman a la utilidad del avión y a su reparto; no "
-    "cuentan como ingreso de VuelaTour."
+    "Otros ingresos asignados a este avión en Ingresos (hoja 'Otros ingresos' "
+    "de su libro), netos de comisión bancaria, cada uno a dólares con su "
+    "propio T.C., como en el reparto a socios."
 )
 
 
@@ -4494,53 +4456,49 @@ _FILA_INDIRECTOS = "(−) GASTOS INDIRECTOS USD"
 # COMISIONES visibles en la cascada del Balance GENERAL (7-oct-2026, API
 # 0.0.66): la hoja de vuelos de ese libro va antes de comisiones, así que el
 # bloque de cada avión arranca antes de ellas y las resta en una línea; de
-# UTILIDAD ANTES DE GASTOS para abajo, los números de siempre del API (los
-# mismos de su libro individual).
-# Las dos notas NO prometen cuadres que no siempre se dan (revisión 7-oct-2026):
-# - «(−) COMISIONES»: por vuelo es la cifra en USD del reparto a socios
-#   (`comisionesDelVuelo`), pero el TOTAL puede no coincidir con el del
-#   reparto: el anticipo con comisión bancaria de un vuelo que aún no se
-#   completa cuenta en el balance y no en el reparto, que solo lee vuelos
-#   COMPLETADOS o CANCELADOS (caso real: el #314 de N4142R, CONFIRMADO del
-#   15-sep-2026, cobro de $100,000 con $5,000 de comisión bancaria);
-# - «antes de comisiones»: puede no cuadrar al centavo con la Σ de GANANCIA
-#   USD de los vuelos del avión en la hoja de vuelos, que convierte cada
-#   remanente con su T.C. de costos (y queda vacía sin él), mientras que la
-#   comisión va con la cifra USD del reparto (la bancaria al T.C. de su
-#   cobro; la provisión del vendedor, en los USD cotizados).
-_FILA_ANTES_COMISIONES = "UTILIDAD ANTES DE GASTOS USD (antes de comisiones)"
+# UTILIDAD DESPUÉS DE COMISIONES para abajo, los números de siempre del API
+# (los mismos de su libro individual).
+# Rótulos desde el 26-oct-2026 (pedido del cliente): «UTILIDAD ANTES DE
+# COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (hasta entonces «UTILIDAD
+# ANTES DE GASTOS, ANTES DE COMISIONES» y «UTILIDAD ANTES DE GASTOS»). La
+# segunda es la llave `antes` del API (`utilidad_antes_usd/_mxn`) y existe
+# también sin las dos previas: en el individual su hoja de vuelos ya resta
+# las comisiones en cada fila. Ningún número ni fórmula cambia.
+# Las notas NO prometen cuadres que no siempre se dan (revisión 7-oct-2026):
+# el total de «(−) COMISIONES» puede no coincidir con el del reparto a socios
+# (un anticipo con comisión bancaria de un vuelo que aún no se completa cuenta
+# aquí y no en el reparto, que solo lee vuelos completados o cancelados) y
+# «antes de comisiones» puede no cuadrar con la Σ de GANANCIA USD de la hoja
+# de vuelos (T.C. de costos por fila contra la cifra USD del reparto). Desde
+# el 26-oct-2026 las notas son cortas —una idea, sin la fecha de la regla— y
+# simplemente no afirman ese cuadre.
+_FILA_ANTES_COMISIONES = "UTILIDAD ANTES DE COMISIONES USD"
 _FILA_COMISIONES = "(−) COMISIONES (banco + vendedor) USD"
+_FILA_ANTES = "UTILIDAD DESPUÉS DE COMISIONES USD"
+# Nota de la fila UTILIDAD DESPUÉS DE COMISIONES (la misma en dólares y en
+# pesos): qué es la cifra y qué se le resta a partir de ahí.
+_NOTA_CASCADA_ANTES = (
+    "Utilidad de los vuelos del avión ya con las comisiones restadas; de aquí "
+    "se restan combustible, gastos indirectos, refacciones y permisos."
+)
 _NOTA_CASCADA_ANTES_COMISIONES = (
-    "Utilidad de los vuelos del avión ANTES de comisiones = UTILIDAD ANTES DE "
-    "GASTOS + COMISIONES (la hoja de vuelos de este libro va antes de "
-    "comisiones). Puede no cuadrar al centavo con la suma de GANANCIA USD de "
-    "sus vuelos en esa hoja: ahí cada vuelo convierte su remanente con su T.C. "
-    "de costos (sin él, la celda va vacía) y aquí las comisiones van con su "
-    "cifra en USD por vuelo, la del reparto a socios."
+    "Utilidad de los vuelos del avión antes de restar comisiones (la hoja de "
+    "vuelos de este libro va antes de comisiones). Puede no cuadrar exacto con "
+    "la suma de GANANCIA USD de esa hoja: cada vuelo convierte con su propio "
+    "T.C."
 )
 _NOTA_CASCADA_COMISIONES = (
-    "Comisiones que absorbe el avión (regla de septiembre 2026, por fecha del "
-    "vuelo): su parte de la comisión bancaria de sus cobros y la provisión de "
-    "la comisión del vendedor, en USD — las de la columna COMISIONES de su "
-    "libro individual. Por vuelo es la misma cifra que descuenta el reparto a "
-    "socios, pero el total puede no coincidir con el del reparto: por ejemplo, "
-    "si un vuelo que aún no se completa ya tiene un anticipo con comisión "
-    "bancaria, este balance cuenta ese cobro y su comisión, y el reparto no "
-    "(solo lee vuelos completados o cancelados)."
+    "Comisiones a cargo del avión en dólares (su parte de la comisión bancaria "
+    "de sus cobros y la provisión de la comisión del vendedor): las de la "
+    "columna COMISIONES de su Balance por avión."
 )
 # La misma nota con la bandera RAÍZ del avión del API 0.0.74 (invariante 61):
 # lo del vendedor son los pagos capturados como «Comisión del vendedor
 # (avión)» (los de «(VuelaTour)» no: los paga VuelaTour).
 _NOTA_CASCADA_COMISIONES_GASTO_REAL = (
-    "Comisiones que absorbe el avión, en USD — las de la columna COMISIONES de "
-    "su libro individual: su parte de la comisión bancaria de sus cobros "
-    "(regla de septiembre 2026, por fecha del vuelo) y el pago al vendedor "
-    "capturado como «Comisión del vendedor (avión)» ligado al vuelo. Por vuelo "
-    "es la misma cifra que descuenta el reparto a socios, pero el total puede "
-    "no coincidir con el del reparto: por ejemplo, si un vuelo que aún no se "
-    "completa ya tiene un anticipo con comisión bancaria, este balance cuenta "
-    "ese cobro y su comisión, y el reparto no (solo lee vuelos completados o "
-    "cancelados)."
+    "Comisiones a cargo del avión en dólares (su parte de la comisión bancaria "
+    "de sus cobros y el pago «Comisión del vendedor (avión)» ligado al vuelo): "
+    "las de la columna COMISIONES de su Balance por avión."
 )
 
 
@@ -4573,10 +4531,12 @@ def _nota_otros_en_indirectos(otros_usd: float, general: bool) -> Comment:
 
 # ===== RESERVA DE OVERHAUL MARCADA en el balance, SIN RESTAR (19-oct-2026,
 # API 0.0.98) =====
-# Decisión del cliente: el reparto a socios ya resta la reserva de overhaul
-# (horas voladas del periodo × Σ `monto_por_hora_usd` de los motores) y el
-# Balance por avión / Balance general NO la restan: solo la MARCAN, muy claro,
-# para que se entienda qué debe aportar el avión para el overhaul. SOLO cuando
+# Decisión del cliente: la reserva de overhaul (horas voladas del periodo × Σ
+# `monto_por_hora_usd` de los motores) NO se resta en el Balance por avión ni
+# en el Balance general: solo se MARCA, muy claro, para que se entienda qué
+# debe aportar el avión para el overhaul. (Hasta el API 0.0.100 el reparto a
+# socios la restaba; desde el 0.0.101 —20-oct-2026— ahí se informa por socio y
+# solo se descuenta a quien lo pidió: la nota al pie lo dice así.) SOLO cuando
 # el API manda `balance.reserva_overhaul_usd` (el discriminador), DESPUÉS de
 # los socios de cada cascada (hoja USD del individual, cada bloque del general
 # y la hoja en pesos) va un bloque aparte —fila en blanco, relleno ámbar
@@ -4589,9 +4549,9 @@ _FILA_RESERVA_PESOS = "Lo que debe aportar el avión (MXN)"
 _COMO_SE_CALCULA = "Cómo se calcula: "
 _NOTA_RESERVA_OVERHAUL = (
     "Es la aportación del periodo para el overhaul de los motores de este "
-    "avión: horas voladas × tarifa por hora de cada motor. No se resta en la "
-    "utilidad de este balance; el reparto a socios sí la descuenta antes de "
-    "repartir. No es dinero guardado en una cuenta ni un acumulado."
+    "avión: horas voladas × tarifa por hora de cada motor. No se resta en este "
+    "balance; en el reparto a socios se informa por socio y solo se descuenta "
+    "a quien lo pidió. No es dinero guardado en una cuenta ni un acumulado."
 )
 _NOTA_RESERVA_OVERHAUL_INCOMPLETA = (
     "Sin tarifa de reserva de overhaul configurada para este avión (ficha del "
@@ -4828,7 +4788,8 @@ def _bloque_reserva_overhaul(
 
 def _formulas_cascada(letra: str, k: int, *, con_oi: bool) -> tuple[str, str, int, int]:
     """Fórmulas de UTILIDAD DESPUÉS y UTILIDAD COBRADA de la cascada que
-    empieza en la fila `k` (UTILIDAD ANTES DE GASTOS), en la columna `letra`,
+    empieza en la fila `k` (UTILIDAD DESPUÉS DE COMISIONES, la llave `antes`
+    del API), en la columna `letra`,
     y las filas de DESPUÉS y COBRADA: `(despues, cobrada, fila_despues,
     fila_cobrada)`. Filas desde `k`: 1 combustible, 2 indirectos, 3
     refacciones, 4 permisos, [5 otros ingresos (SUMA), con `con_oi`],
@@ -4849,7 +4810,7 @@ def _formulas_cascada(letra: str, k: int, *, con_oi: bool) -> tuple[str, str, in
 # Filas de la cascada que, en el libro INDIVIDUAL, citan otra hoja (5-oct-2026):
 # clave de `refs` → etiqueta de la fila.
 _CASCADA_REFS = {
-    "UTILIDAD ANTES DE GASTOS USD": "antes",
+    _FILA_ANTES: "antes",
     "(−) COMBUSTIBLE DEL MES USD": "combustible",
     "(−) GASTOS INDIRECTOS USD": "indirectos",
     "(−) REFACCIONES (INVENTARIO) USD": "refacciones",
@@ -4939,11 +4900,11 @@ def _bloque_balance(
     COMISIONES en el GENERAL (7-oct-2026, API 0.0.66; pedido del cliente: las
     comisiones se duplicaban en el general): su hoja de vuelos va antes de
     comisiones, así que con `general` y comisiones del API
-    (`_cascada_con_comisiones`) el bloque abre con «UTILIDAD ANTES DE GASTOS
-    USD (antes de comisiones)» y «(−) COMISIONES (banco + vendedor) USD»
-    (valores del API, con nota; `regla` = la etiqueta de la regla para la
-    nota) y UTILIDAD ANTES DE GASTOS = ROUND(antes − comisiones, 2) — el
-    número del API de siempre: de ahí para abajo nada cambia, ni un centavo.
+    (`_cascada_con_comisiones`) el bloque abre con «UTILIDAD ANTES DE
+    COMISIONES USD» y «(−) COMISIONES (banco + vendedor) USD» (valores del
+    API, con nota; `regla` = la etiqueta de la regla para la nota) y UTILIDAD
+    DESPUÉS DE COMISIONES = ROUND(antes − comisiones, 2) — el número del API
+    de siempre: de ahí para abajo nada cambia, ni un centavo.
     El libro INDIVIDUAL nunca las pinta (ya restan en su columna
     COMISIONES).
     OTROS INGRESOS del avión (13-oct-2026, API 0.0.75, invariante «INGRESO
@@ -4981,15 +4942,15 @@ def _bloque_balance(
         ),
     }
     antes = f"ROUND(B{fila_ini}-B{fila_ini + 1},2)" if previas else None
-    # Filas de la cascada desde UTILIDAD ANTES DE GASTOS (`k`): 0 antes, 1
-    # combustible, 2 indirectos, 3 refacciones, 4 permisos, 5 después, 6
+    # Filas de la cascada desde UTILIDAD DESPUÉS DE COMISIONES (`k`): 0 antes,
+    # 1 combustible, 2 indirectos, 3 refacciones, 4 permisos, 5 después, 6
     # pendiente, 7 cobrada. Con otros ingresos del avión (`con_oi`): 5 otros
     # ingresos (SUMA), 6 después, 7 pendiente, 8 cobrada (`_formulas_cascada`).
     k = fila_ini + len(previas)
     despues, cobrada, _, fila_cobrada = _formulas_cascada("B", k, con_oi=con_oi)
     filas: list[tuple[str, float | None, bool]] = [
         *previas,
-        ("UTILIDAD ANTES DE GASTOS USD", b.utilidad_antes_usd, False),
+        (_FILA_ANTES, b.utilidad_antes_usd, False),
         ("(−) COMBUSTIBLE DEL MES USD", b.combustible_usd, False),
         # Indirectos + otros (reparto manual) en UNA fila — solo se muestran
         # juntos; la resta ya la hizo el API una sola vez.
@@ -5021,7 +4982,7 @@ def _bloque_balance(
             formula = despues
         elif label == "UTILIDAD COBRADA USD":
             formula = cobrada
-        elif label == "UTILIDAD ANTES DE GASTOS USD" and antes is not None:
+        elif label == _FILA_ANTES and antes is not None:
             formula = antes
         else:
             formula = refs.get(_CASCADA_REFS.get(label, ""))
@@ -5042,6 +5003,8 @@ def _bloque_balance(
             cell.comment = _nota_otros_en_indirectos(b.otros_usd, general)
         if label in notas_previas and val is not None:
             cell.comment = _comentario_cobro(notas_previas[label])
+        if label == _FILA_ANTES and val is not None:
+            cell.comment = _comentario_cobro(_NOTA_CASCADA_ANTES)
         if label == _FILA_OTROS_INGRESOS and val is not None:
             cell.comment = _comentario_cobro(_nota_cascada_otros_ingresos(req))
         row += 1
@@ -5507,7 +5470,7 @@ _ANCHO_ETIQUETA_BALANCE_PESOS = 48
 _PERIODO_PESOS = "(en pesos MXN; los dólares solo informativos)"
 
 # Rótulos de la cascada en pesos.
-_FILA_ANTES_PESOS = "UTILIDAD ANTES DE GASTOS (MXN)"
+_FILA_ANTES_PESOS = "UTILIDAD DESPUÉS DE COMISIONES (MXN)"
 _FILA_COMBUSTIBLE_PESOS = "(−) COMBUSTIBLE DEL MES (MXN)"
 _FILA_INDIRECTOS_PESOS = "(−) GASTOS INDIRECTOS (MXN)"
 _FILA_REFACCIONES_PESOS = "(−) REFACCIONES (INVENTARIO) (MXN)"
@@ -5517,7 +5480,7 @@ _FILA_DESPUES_PESOS = "UTILIDAD DESPUÉS DE GASTOS (MXN)"
 _FILA_POR_COBRAR_PESOS = "(−) PENDIENTE DE PAGO (COBRANZA PENDIENTE) (MXN)"
 _FILA_COBRADA_PESOS = "UTILIDAD COBRADA (MXN)"
 # Las dos previas de la cascada del GENERAL (con comisiones del API).
-_FILA_ANTES_COMISIONES_PESOS = "UTILIDAD ANTES DE GASTOS, ANTES DE COMISIONES (MXN)"
+_FILA_ANTES_COMISIONES_PESOS = "UTILIDAD ANTES DE COMISIONES (MXN)"
 _FILA_COMISIONES_PESOS = "(−) COMISIONES BANCO + VENDEDOR (MXN)"
 _TITULO_SOCIOS_PESOS = "Reparto a socios (utilidad COBRADA en pesos × % vigente)"
 _ENCABEZADOS_SOCIOS_PESOS = ["SOCIO", "PORCENTAJE", "MONTO MXN"]
@@ -5525,8 +5488,8 @@ _ENCABEZADOS_SOCIOS_PESOS = ["SOCIO", "PORCENTAJE", "MONTO MXN"]
 # Notas de las celdas en pesos.
 _NOTA_SIN_PESOS = (
     "Sin cifra en pesos: a alguna partida de esta línea le falta su monto en "
-    "pesos (por ejemplo, un gasto o ingreso en dólares sin tipo de cambio). "
-    "Revisa su hoja; la cifra en dólares de la derecha es solo informativa."
+    "pesos (p. ej. un gasto en dólares sin tipo de cambio); revísala en su "
+    "hoja."
 )
 _NOTA_SIN_PESOS_DERIVADA = (
     "Sin cifra en pesos: falta la cifra en pesos de alguna línea de arriba, "
@@ -5539,25 +5502,20 @@ _NOTA_SIN_PESOS_SOCIO = (
 # La reserva de overhaul (API 0.0.98) no tiene hoja: su None en pesos es «sin
 # T.C. oficial del cierre», no «una fila sin pesos en su hoja».
 _NOTA_SIN_PESOS_RESERVA = (
-    "Sin cifra en pesos: la reserva de overhaul se pasa a pesos con el T.C. "
-    "oficial del cierre del periodo y no hay T.C. oficial para ese día. La "
-    "cifra en dólares de la derecha es solo informativa."
+    "Sin cifra en pesos: la reserva se pasa a pesos con el T.C. oficial del "
+    "cierre del periodo y no hay T.C. oficial de ese día."
 )
 _NOTA_CASCADA_ANTES_COMISIONES_PESOS = (
-    "Utilidad en pesos de los vuelos del avión ANTES de comisiones = UTILIDAD "
-    "ANTES DE GASTOS (MXN) + COMISIONES (MXN): la hoja de vuelos de este libro "
-    "va antes de comisiones."
+    "Utilidad de los vuelos del avión antes de restar comisiones (la hoja de "
+    "vuelos de este libro va antes de comisiones)."
 )
 _NOTA_CASCADA_COMISIONES_PESOS = (
-    "Comisiones que absorbe el avión, en pesos: la suma de las COMISIONES MXN "
-    "que restaron sus vuelos (columna COMISIONES de su libro individual). La "
-    "cifra en dólares de la derecha es la del reparto a socios, solo "
-    "informativa."
+    "Comisiones a cargo del avión (banco y vendedor): la suma de la columna "
+    "COMISIONES de su Balance por avión."
 )
 _NOTA_CASCADA_OTROS_INGRESOS_PESOS = (
-    "Otros ingresos asignados a este avión (registrados en Ingresos), en "
-    "pesos: la suma del NETO MXN de sus filas (monto menos la comisión "
-    "bancaria; un ingreso en dólares, a su tipo de cambio)."
+    "Otros ingresos asignados a este avión en Ingresos: la suma del NETO MXN "
+    "de la hoja 'Otros ingresos' de su libro (ingreso menos comisión bancaria)."
 )
 # Pie de la hoja: qué son los pesos y qué es la columna USD.
 _NOTA_BALANCE_PESOS = (
@@ -5852,6 +5810,7 @@ def _bloque_balance_pesos(
     notas_mxn = {
         "antes_comisiones": _NOTA_CASCADA_ANTES_COMISIONES_PESOS,
         "comisiones": _NOTA_CASCADA_COMISIONES_PESOS,
+        "antes": _NOTA_CASCADA_ANTES,
         "otros_ingresos_avion": _NOTA_CASCADA_OTROS_INGRESOS_PESOS,
     }
     for clave, label, mxn, usd, bold, derivada in filas:
@@ -6268,10 +6227,9 @@ _NOTA_PERMISOS_TC = (
     "MXN = MONTO ORIGINAL y el T.C. va vacío."
 )
 _NOTA_ENCABEZADO_TC_PERMISOS = (
-    "Tipo de cambio con el que este gasto se convirtió a pesos: el capturado "
-    "en el gasto o, si no lo tiene, el TC promedio del periodo (el de la "
-    "celda TC PROMEDIO, sin redondear). Vacío en gastos capturados en pesos. "
-    "MONTO MXN = ROUND(MONTO ORIGINAL × T.C., 2)."
+    "Tipo de cambio con el que cada gasto se pasó a pesos: el capturado en el "
+    "gasto o, si no lo tiene, el T.C. promedio del periodo. Vacío en gastos "
+    "capturados en pesos."
 )
 _NOTA_REFACCIONES = (
     "REFACCIONES = salidas de INVENTARIO (bodega) cargadas al avión: gasto "

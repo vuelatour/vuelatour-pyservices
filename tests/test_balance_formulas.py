@@ -700,7 +700,7 @@ def test_constantes_del_encabezado_permiso_afac_y_factor_iva() -> None:
     assert ws["B1"].value == 25.0
     assert ws["C1"].value == "Factor IVA costos"
     assert ws["D1"].value == 1.16
-    assert "ROUND(esta tarifa × TIPO CAMBIO COSTOS × HORAS COBRADAS, 2)" in ws["B1"].comment.text
+    assert ws["B1"].comment.text.startswith("Tarifa AFAC (USD/hr) de la ficha del avión")
     # Los encabezados de grupo y de columna no se movieron.
     assert ws["G1"].value == "VENTA"
     assert ws.cell(row=2, column=1).value == "CLAVE"
@@ -1011,7 +1011,7 @@ def test_permisos_con_tc_por_fila_columna_y_formulas() -> None:
     ws, wsv = wb["permisos"], wv["permisos"]
     # Columna T.C. AL FINAL (G: no hay COSTO/VENTA), con su nota.
     assert ws["G7"].value == "T.C."
-    assert "ROUND(MONTO ORIGINAL × T.C., 2)" in ws["G7"].comment.text
+    assert ws["G7"].comment.text.startswith("Tipo de cambio con el que cada gasto se pasó a pesos")
     assert ws["H7"].value is None
     # Fila en PESOS: «MXN» + importe (COPIA del monto_mxn) y D = ROUND(F,2).
     assert ws["D8"].value == "=ROUND(F8,2)"
@@ -1132,7 +1132,7 @@ def test_general_maestra_tarifa_por_avion_y_promedios_como_valor() -> None:
     wb, wv = _libros(render_balance_general_xlsx(req))
     ws = wb["reporte horas FLOTA"]
     assert ws["B1"].value is None
-    assert "POR AVIÓN" in ws["B1"].comment.text
+    assert "por avión" in ws["B1"].comment.text
     assert "AFAC USD/HR" in ws["B1"].comment.text
     assert ws["D1"].value == 1.16
     filas = range(3, 3 + len(req.consolidado.vuelos))
@@ -1148,8 +1148,8 @@ def test_general_maestra_tarifa_por_avion_y_promedios_como_valor() -> None:
     assert ws_sin.cell(row=2, column=len(_COLS_FLOTA)).value == "FACTURA\nVUELATOUR"
     assert ws_sin.cell(row=2, column=len(_COLS_FLOTA) + 1).value is None
     letra_tarifa = get_column_letter(col_tarifa)
-    assert "ROUND(esta tarifa × TIPO CAMBIO COSTOS × HORAS COBRADAS, 2)" in (
-        ws.cell(row=2, column=col_tarifa).comment.text
+    assert ws.cell(row=2, column=col_tarifa).comment.text.startswith(
+        "Tarifa AFAC (USD/hr) de la ficha de cada avión"
     )
     con_formula = 0
     for fila, v in zip(filas, req.consolidado.vuelos, strict=True):
@@ -1319,13 +1319,20 @@ def _firma_valores(data: bytes) -> str:
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
 _FIRMAS_ANTES = {
-    "tst": "730a7c7804a6dbbbd66831a5b45386cd76f629576770d9bfc50a033f658a42b4",
-    "dos": "af6d841b3d7cc927dd7a719d37387fb625fd986c15684187cbd44f5a4b94e70c",
-    "general": "a25a315adfdb32d6360e7814f3471fc6734b7fa38a1ce6bf0f3610799246581d",
+    "tst": "a077675fbf65e822e8f61b7b38e96202ba5dcd0942ed5a4846366531d2458667",
+    "dos": "a2c08e5da69688c8ef36a8cef4cada7a34c82790a387eb45b866d67193222755",
+    "general": "24b784748e634a95a44989606e8cda8c29b2eda8b6d1b5cd01e78e596ae43666",
     # Con la caché en `repr` (17 cifras) esta daba 5472c557…: % COBRADO
     # difería del generador anterior en el último bit.
-    "pct17": "0be90b3e28df86cd962803e5dbdad9c90be90517f68edd887d42dea26dc6b111",
+    "pct17": "beebddb158246063265e46ce8a18f17f4348ef74c625daa3547cd79394b2f1ed",
 }
 
 

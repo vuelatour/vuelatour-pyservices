@@ -109,18 +109,25 @@ OM = "otros movimientos"
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
 _HUELLAS_0088 = {
     "general-mensual": (
-        "b4a67b907add75f41b916e8a50a2d8bf465e9f1a7ad4b3733af5619d72083670",
-        "83127849707027bd9dd2e5521e5854096212c37cf2e060ea6cedd4379e5839ed",
+        "271023b90a498513af80be8cd668a5f84e8dcc3c68063ce06e3448c35395f54a",
+        "dff201dc2d347d9743d22c9b85799394836547a5d9f75c0abc317db202f5699d",
     ),
     "general-general": (
-        "a7a33bdb297de51ce9ba461d301080d046bcd6251016d54639ac5276b0058ea1",
-        "ae149f3ba30d522d41823e90c5e32cc6fa407126895913428891fde0aecf03b5",
+        "25bdf44ce95cfae240f124537b6d3c1d30c73728d5148e343a38600c033fcd37",
+        "a2e4bee37e4569180a0fa2159f0b1b52bd05d8118047dfbd756aa273bbac1013",
     ),
     "individual": (
-        "3a088800bfd81c515b73bc5b2b0cf3f8522fa7afebf5ed5013c5aa299d02714e",
-        "d922679c9d23fb95434b4561b3d0b2440745efe47be1817c55babcc70b9d6884",
+        "b307e3e1af212b2b93e2297110f20eaf2eaa3144da81d731ae8ae05742757f40",
+        "698e92a7021cb01dba85b5ee4e6790daa7dc40d790e00822f7359e43b94bbdd6",
     ),
 }
 

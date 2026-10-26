@@ -16,8 +16,9 @@ pinta:
   hoja están en `tests/test_balance_comisiones.py`);
 - la cascada de cada avión de la hoja 'balance' del general gana dos líneas
   con `balance.utilidad_antes_comisiones_usd` y `balance.comisiones_usd`, y
-  UTILIDAD ANTES DE GASTOS = ROUND(antes − comisiones, 2): el número de
-  siempre. Sin ellas (API 0.0.65) o con comisiones en 0, la de siempre;
+  UTILIDAD DESPUÉS DE COMISIONES (hasta el 26-oct-2026 «UTILIDAD ANTES DE
+  GASTOS») = ROUND(antes − comisiones, 2): el número de siempre. Sin ellas
+  (API 0.0.65) o con comisiones en 0, la de siempre;
 - con ese API, las leyendas de 'otros movimientos', del RESUMEN y del bloque
   VUELATOUR (empresa) explican el pago al vendedor «cubierto por el avión»
   (la línea de INGRESO «a cargo del avión» ya no viaja).
@@ -113,7 +114,7 @@ from tests._evaluador_formulas import verificar_libro
 r2 = tf.r2
 
 MAESTRA = "reporte horas FLOTA"
-ANTES = "UTILIDAD ANTES DE GASTOS USD"
+ANTES = "UTILIDAD DESPUÉS DE COMISIONES USD"  # rótulo desde el 26-oct-2026
 DESPUES = "UTILIDAD DESPUÉS DE GASTOS USD"
 COBRADA = "UTILIDAD COBRADA USD"
 
@@ -453,11 +454,11 @@ def test_cascada_del_general_con_las_dos_lineas(variante, registros) -> None:
         assert valor_c == b["comisiones_usd"] > 0
         assert celda_a.comment.text == _NOTA_CASCADA_ANTES_COMISIONES
         assert celda_c.comment.text == _con_regla(_NOTA_CASCADA_COMISIONES, None)
-        # La etiqueta larga envuelve (no se corta en la columna A).
+        # Rótulo corto desde el 26-oct-2026: cabe en la columna A sin envolver.
         etiqueta = ws.cell(row=fa, column=1)
-        assert etiqueta.alignment.wrap_text and ws.row_dimensions[fa].height == 31
-        # UTILIDAD ANTES DE GASTOS = ROUND(antes − comisiones, 2): el número
-        # de siempre del API; de ahí para abajo, las fórmulas de siempre.
+        assert len(etiqueta.value) <= 40 and not etiqueta.alignment.wrap_text
+        # UTILIDAD DESPUÉS DE COMISIONES = ROUND(antes − comisiones, 2): el
+        # número de siempre del API; de ahí para abajo, las fórmulas de siempre.
         assert celda_u.value == f"=ROUND(B{fa}-B{fc},2)"
         assert valor_u == b["utilidad_antes_usd"]
         assert filas[DESPUES][1].value == f"=ROUND(B{fu}-B{fu + 1}-B{fu + 2}-B{fu + 3}-B{fu + 4},2)"
@@ -666,19 +667,11 @@ REGLA_API = "regla desde 15-oct-2026"
 @pytest.mark.parametrize(
     "texto",
     [
-        _COMISIONES_FUERA_DE_LA_HOJA,
-        _NOTA_ENCABEZADO_GANANCIA_FLOTA,
-        _NOTA_ENCABEZADO_REMANENTE,
         _NOTA_COMISIONES_FLOTA,
         _NOTA_COBRADO_REAL_FLOTA,
         _NOTA_COBRANZA_NETO_FLOTA,
-        _NOTA_CASCADA_COMISIONES,
-        # API 0.0.74 (13-oct-2026, invariante 61): las versiones «gasto real».
-        _COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL,
-        _NOTA_ENCABEZADO_GANANCIA_FLOTA_GASTO_REAL,
-        _NOTA_ENCABEZADO_REMANENTE_GASTO_REAL,
+        # API 0.0.74 (13-oct-2026, invariante 61): la versión «gasto real».
         _NOTA_COMISIONES_FLOTA_GASTO_REAL,
-        _NOTA_CASCADA_COMISIONES_GASTO_REAL,
     ],
 )
 def test_textos_nuevos_con_la_regla_del_api(texto) -> None:
@@ -688,6 +681,28 @@ def test_textos_nuevos_con_la_regla_del_api(texto) -> None:
     assert "septiembre" not in con and REGLA_API in con
 
 
+@pytest.mark.parametrize(
+    "texto",
+    [
+        _COMISIONES_FUERA_DE_LA_HOJA,
+        _NOTA_ENCABEZADO_GANANCIA_FLOTA,
+        _NOTA_ENCABEZADO_REMANENTE,
+        _NOTA_CASCADA_COMISIONES,
+        _COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL,
+        _NOTA_ENCABEZADO_GANANCIA_FLOTA_GASTO_REAL,
+        _NOTA_ENCABEZADO_REMANENTE_GASTO_REAL,
+        _NOTA_CASCADA_COMISIONES_GASTO_REAL,
+    ],
+)
+def test_notas_de_celda_sin_la_fecha_de_la_regla(texto) -> None:
+    """26-oct-2026 (pedido del cliente: las notas «causan ruido»): las notas
+    de CELDA ya no nombran la regla ni su mes —eso lo explica el pie de la
+    hoja con la etiqueta del API—, así que `_con_regla` las deja tal cual."""
+    assert "septiembre" not in texto and "regla" not in texto
+    assert _con_regla(texto, REGLA_API) == texto
+    assert len(texto) <= 240
+
+
 def test_notas_de_la_cascada_no_prometen_cuadres_que_no_siempre_se_dan() -> None:
     """Revisión 7-oct-2026. La nota de «(−) COMISIONES» decía «Son las mismas
     que descuenta el reparto a socios»: no es así cuando un vuelo que aún no
@@ -695,23 +710,16 @@ def test_notas_de_la_cascada_no_prometen_cuadres_que_no_siempre_se_dan() -> None
     N4142R, CONFIRMADO del 15-sep-2026, $5,000 de comisión) — el balance
     cuenta ese cobro y el reparto, que solo lee vuelos completados o
     cancelados, no. La de «antes de comisiones» tampoco cuadra siempre al
-    centavo con la suma de GANANCIA USD de la hoja de vuelos (T.C. de costos
-    por fila contra la cifra USD del reparto; sin T.C. de costos la celda va
-    vacía). Las dos lo dicen, sin cortarse en la nota."""
-    com = _NOTA_CASCADA_COMISIONES
-    assert "Son las mismas" not in com
-    assert "Por vuelo es la misma cifra que descuenta el reparto a socios" in com
-    assert "el total puede no coincidir con el del reparto" in com
-    assert "anticipo con comisión bancaria" in com
-    assert "(solo lee vuelos completados o cancelados)" in com
+    centavo con la suma de GANANCIA USD de la hoja de vuelos. Desde el
+    26-oct-2026 las notas son cortas: ninguna afirma ese cuadre."""
+    for com in (_NOTA_CASCADA_COMISIONES, _NOTA_CASCADA_COMISIONES_GASTO_REAL):
+        assert "Son las mismas" not in com
+        assert "misma cifra que descuenta el reparto" not in com
+        assert "reparto" not in com
     antes = _NOTA_CASCADA_ANTES_COMISIONES
-    assert "Puede no cuadrar al centavo con la suma de GANANCIA USD" in antes
-    assert "T.C. de costos (sin él, la celda va vacía)" in antes
-    # Con la etiqueta del API solo cambia el nombre de la regla.
-    con = _con_regla(com, REGLA_API)
-    assert "el total puede no coincidir con el del reparto" in con and REGLA_API in con
-    # La nota crece con el texto y no llega al tope de alto (no se corta).
-    for texto in (com, con, antes):
+    assert "Puede no cuadrar exacto con la suma de GANANCIA USD" in antes
+    # Ninguna llega al tope de alto de la nota (no se cortan).
+    for texto in (_NOTA_CASCADA_COMISIONES, _NOTA_CASCADA_COMISIONES_GASTO_REAL, antes):
         assert _comentario_cobro(texto).height < 260
 
 
@@ -842,11 +850,11 @@ def test_textos_gasto_real_son_los_del_contrato_y_sin_provision() -> None:
         "movimientos' es solo la parte de VuelaTour; la del avión resta en su columna "
         "COMISIONES, igual que los pagos «Comisión del vendedor (avión)»."
     )
-    assert _NOTA_CASCADA_COMISIONES_GASTO_REAL.startswith(
-        "Comisiones que absorbe el avión, en USD — las de la columna COMISIONES de su "
-        "libro individual: su parte de la comisión bancaria de sus cobros (regla de "
-        "septiembre 2026, por fecha del vuelo) y el pago al vendedor capturado como "
-        "«Comisión del vendedor (avión)» ligado al vuelo."
+    # Texto corto desde el 26-oct-2026 (notas de celda: una idea, sin fecha).
+    assert _NOTA_CASCADA_COMISIONES_GASTO_REAL == (
+        "Comisiones a cargo del avión en dólares (su parte de la comisión bancaria de sus "
+        "cobros y el pago «Comisión del vendedor (avión)» ligado al vuelo): las de la "
+        "columna COMISIONES de su Balance por avión."
     )
     # La nota de la cascada crece y no llega al tope de alto (no se corta).
     assert _comentario_cobro(_NOTA_CASCADA_COMISIONES_GASTO_REAL).height < 260

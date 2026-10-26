@@ -261,14 +261,28 @@ def _firma_hoja(data: bytes, nombre: str) -> str:
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
-_FIRMA_INDIVIDUAL_SIN_LLAVE = "754f9d138e3a2ec9597990882c8dcb24150b5f6784631de22b94f2dd1e553ebf"
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
+_FIRMA_INDIVIDUAL_SIN_LLAVE = "ac2bedffa6c8121add55222b34af0911d2ff43138d9356a4323de91d54c0800d"
 # Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
 # del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
 # consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
-_FIRMA_GENERAL_SIN_LLAVE = "bf06e004ac0192ae5b9677ccd44fbd9a6b675d0babe6db60ae06791ef7f0b1c3"
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
+_FIRMA_GENERAL_SIN_LLAVE = "7c2e67577b6387ecda5d4164cc8d1f1740162a6b6850c9ed3a6f73590db5f683"
 
 
 # ---------------------------------------------------------------------------

@@ -107,20 +107,22 @@ FILA_MXN = "Lo que debe aportar el avión (MXN)"
 COMO = "18.20 h voladas en el periodo × 2 motores × 55.00 USD/hr = 2,002.00 USD"
 COMO_PESOS = COMO + " · en pesos al T.C. oficial del 30-sep-2026 (18.0243)"
 PREFIJO_COMO = "Cómo se calcula: "
+# 26-oct-2026: desde el API 0.0.101 el reparto a socios tampoco la resta (se
+# informa por socio y solo se descuenta a quien lo pidió); la nota lo dice así.
 NOTA = (
     "Es la aportación del periodo para el overhaul de los motores de este avión: "
-    "horas voladas × tarifa por hora de cada motor. No se resta en la utilidad de "
-    "este balance; el reparto a socios sí la descuenta antes de repartir. No es "
-    "dinero guardado en una cuenta ni un acumulado."
+    "horas voladas × tarifa por hora de cada motor. No se resta en este balance; en "
+    "el reparto a socios se informa por socio y solo se descuenta a quien lo pidió. "
+    "No es dinero guardado en una cuenta ni un acumulado."
 )
 SIN_TARIFA = (
     "Sin tarifa de reserva de overhaul configurada para este avión (ficha del "
     "avión → reserva de overhaul): no se puede calcular lo que debe aportar."
 )
-NOTA_USD_POR_GASTO = (
-    "USD calculado gasto por gasto: cada gasto a dólares con su T.C. propio o el "
-    "oficial del día en que se pagó (criterio del reparto a socios); no es el "
-    "total en pesos ÷ T.C. promedio."
+NOTA_USD_POR_GASTO = (  # corta desde el 26-oct-2026 (nota de celda)
+    "USD calculado gasto por gasto (cada gasto con su T.C. propio o el oficial del "
+    "día en que se pagó, como en el reparto a socios), no el total en pesos ÷ T.C. "
+    "promedio."
 )
 
 # Huellas «sin la llave y sin la bandera»: calculadas con el código del HEAD
@@ -134,20 +136,27 @@ NOTA_USD_POR_GASTO = (
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
 _HUELLAS_HEAD = {
     ("individual", True): (
-        "63cb2b0705b92da37c170a30699fa868c4adea22474ee33ce9cf1ee66ca9d280",
-        "1ded22c0e26d3d564cd775ba7f77e61fceb0df84c1887b31c70145a1f9c4a8c6",
+        "820f2ba637480777d556d0a4aae6d2793a454491c84e0cfdcdba99b67386884a",
+        "140478abb22665ae035aea797c8553672eb841da134d3c8f228b9784aac3e0c5",
     ),
     ("individual", None): tp._HUELLAS_HEAD["individual"],
     ("general-mensual", True): (
-        "66265494e02c5ee3cbfd9af216fdcce84c8e9195edc984dbe36f638c3b897b8e",
-        "69e13b5cd9c4fa2174f7f86a9a12f99d1563692ee30230c32d8252473cc078d0",
+        "a6c6d17d9c1b4090e48485ac6da587b3708e92cfbafd9e6aab8f452d3ba652df",
+        "f7c1d13013f5450a7dde319dae79b160aabe2517f37c2091cd89f2f06b06fc48",
     ),
     ("general-mensual", None): tp._HUELLAS_HEAD["general-mensual"],
     ("general-general", True): (
-        "35be7ddd056ce8188a61b0e1f869c0b3556006cbff0e504ebb5cdc779e8c5549",
-        "15c7a42ba91be97d675ca5b40ee33e225631ae0ee0b46817d940dac9a11bc16e",
+        "5dca3ddba6a912602b20f3241368c77832505e402397c92ad2ebb0f0f6a6e66c",
+        "e5fb45ffbf173b0757dc37ef22788d7e291565f1df05e4eeabd97e2e183864a6",
     ),
     ("general-general", None): tp._HUELLAS_HEAD["general-general"],
 }

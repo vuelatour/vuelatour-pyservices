@@ -935,31 +935,40 @@ def test_fila_externos_cobro_neto_sin_llaves_de_comisiones(variante, registros) 
 # Etiqueta de la regla como la arma el API con una vigencia distinta del 1.º
 # (`etiquetaReglaComisiones`).
 REGLA_API = "regla desde 15-oct-2026"
+# Textos IMPRESOS (pies y leyendas) que nombran la regla y pasan por
+# `_con_regla`. Las notas de CELDA (encabezados, cascada) ya no la nombran
+# desde el 26-oct-2026 (`_NOTAS_DE_CELDA_SIN_REGLA`, abajo).
 _TEXTOS_CON_MES = (
-    _NOTA_ENCABEZADO_COMISIONES,
     _NOTA_COMISIONES,
     _RESUMEN_COMISIONES,
     _NOTA_COBRADO_REAL,
     _NOTA_COBRANZA_NETO,
     # API 0.0.74 (13-oct-2026, invariante 61): las versiones «gasto real»,
-    # reescritas por el ajuste de las dos categorías — TODAS las que pasan por
-    # `_con_regla` (la regla solo para la parte bancaria).
-    _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL,
+    # reescritas por el ajuste de las dos categorías — las impresas que pasan
+    # por `_con_regla` (la regla solo para la parte bancaria).
     _NOTA_COMISIONES_GASTO_REAL,
     _RESUMEN_COMISIONES_GASTO_REAL,
     _NOTA_COMISIONES_FLOTA_GASTO_REAL,
-    _NOTA_CASCADA_COMISIONES_GASTO_REAL,
-    _NOTA_ENCABEZADO_GANANCIA_FLOTA_GASTO_REAL,
-    _NOTA_ENCABEZADO_REMANENTE_GASTO_REAL,
 )
 # Las reescritas por el ajuste de las dos categorías (13-oct-2026) que pasan
 # por `_con_regla`: UNA sola «regla de septiembre 2026» y ningún otro
 # «septiembre» (la «(avión)» no tiene vigencia).
 _TEXTOS_DOS_CATEGORIAS_CON_REGLA = (
-    _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL,
     _NOTA_COMISIONES_GASTO_REAL,
     _RESUMEN_COMISIONES_GASTO_REAL,
     _NOTA_COMISIONES_FLOTA_GASTO_REAL,
+)
+# Notas de CELDA (26-oct-2026, pedido del cliente: «unas cosas nos causan
+# ruido»): una idea en 1–2 líneas, sin la fecha de la regla; `_con_regla` las
+# deja tal cual. Las «gasto real» siguen sin «provisión» y nombran la
+# categoría «(avión)».
+_NOTAS_DE_CELDA_SIN_REGLA = (
+    _NOTA_ENCABEZADO_COMISIONES,
+    _NOTA_ENCABEZADO_GANANCIA_FLOTA,
+    _NOTA_ENCABEZADO_REMANENTE,
+)
+_NOTAS_DE_CELDA_SIN_REGLA_GASTO_REAL = (
+    _NOTA_ENCABEZADO_COMISIONES_GASTO_REAL,
     _NOTA_CASCADA_COMISIONES_GASTO_REAL,
     _COMISIONES_FUERA_DE_LA_HOJA_GASTO_REAL,
     _NOTA_ENCABEZADO_GANANCIA_FLOTA_GASTO_REAL,
@@ -989,6 +998,20 @@ def test_textos_dos_categorias_una_sola_regla_y_ningun_otro_mes() -> None:
         assert con.count(REGLA_API) == 1 and "septiembre" not in con, texto[:60]
 
 
+def test_notas_de_celda_cortas_sin_la_fecha_de_la_regla() -> None:
+    """26-oct-2026: las notas de celda no nombran la regla ni su mes (eso lo
+    explica el pie de la hoja), son cortas y `_con_regla` no las toca."""
+    for texto in (*_NOTAS_DE_CELDA_SIN_REGLA, *_NOTAS_DE_CELDA_SIN_REGLA_GASTO_REAL):
+        assert "septiembre" not in texto and "regla" not in texto, texto[:60]
+        assert _con_regla(texto, REGLA_API) == texto, texto[:60]
+        assert len(texto) <= 240, texto[:60]
+    for texto in _NOTAS_DE_CELDA_SIN_REGLA_GASTO_REAL:
+        assert "provisi" not in texto.lower(), texto[:60]
+        assert "«Comisión del vendedor (avión)»" in texto, texto[:60]
+    for texto in _NOTAS_DE_CELDA_SIN_REGLA:
+        assert "provisión" in texto, texto[:60]
+
+
 def test_textos_con_la_regla_del_api() -> None:
     """La vigencia es configurable en el API: con `regla_comisiones` ningún
     texto nombra «septiembre»; sin ella, el texto de siempre tal cual."""
@@ -1003,9 +1026,10 @@ def test_textos_con_la_regla_del_api() -> None:
     assert f"(COBRO 1..4): con la {REGLA_API} cada COBRO va NETO" in _con_regla(
         _NOTA_COBRADO_REAL, REGLA_API
     )
-    assert _con_regla(_NOTA_ENCABEZADO_COMISIONES, REGLA_API).startswith(
-        f"COMISIONES ({REGLA_API}, por fecha del vuelo)"
-    )
+    # 26-oct-2026: la nota del encabezado ya no nombra la regla (la explica el
+    # pie de la hoja): `_con_regla` la deja tal cual.
+    assert _con_regla(_NOTA_ENCABEZADO_COMISIONES, REGLA_API) == _NOTA_ENCABEZADO_COMISIONES
+    assert "septiembre" not in _NOTA_ENCABEZADO_COMISIONES
 
 
 def test_libros_con_la_regla_del_api() -> None:
@@ -1030,11 +1054,11 @@ def test_libros_con_la_regla_del_api() -> None:
     resumen = _pie(g["RESUMEN flota"])
     assert any(x.startswith(_con_regla(_RESUMEN_COMISIONES, REGLA_API)) for x in resumen)
     gm = g[MAESTRA]
-    # Sin COMISIONES en la hoja (7-oct-2026): la nota de REMANENTE nombra la
-    # regla del API.
+    # Sin COMISIONES en la hoja (7-oct-2026): la nota de REMANENTE remite a la
+    # hoja 'balance'; desde el 26-oct-2026 no nombra la regla (eso es del pie).
     nota = gm.cell(row=2, column=_col(gm, REMANENTE_CPH)).comment.text
-    assert nota == _con_regla(_NOTA_ENCABEZADO_REMANENTE, REGLA_API)
-    assert REGLA_API in nota and "septiembre" not in nota
+    assert nota == _con_regla(_NOTA_ENCABEZADO_REMANENTE, REGLA_API) == _NOTA_ENCABEZADO_REMANENTE
+    assert "septiembre" not in nota
     assert _con_regla(_NOTA_COBRADO_REAL_FLOTA, REGLA_API) in _pie(gm)
     assert _con_regla(_NOTA_COBRANZA_NETO_FLOTA, REGLA_API) in _pie(g["cobranza"])
     assert _OM_REGLA_COMISIONES.format(regla=REGLA_API) in g["otros movimientos"]["A2"].value
@@ -1246,11 +1270,11 @@ def test_nota_participacion_con_la_excepcion_del_pago_avion() -> None:
     bandera, o sin pago absorbido, el texto de siempre."""
     base = BalanceAvionVuelo(multi_avion=True, participacion=0.5, participacion_fuente="tramos")
     hoy = _nota_participacion(base)
-    assert hoy.endswith("son de VuelaTour y no se reparten.")
+    assert hoy.endswith("los gastos son solo los de este avión.")
     con = base.model_copy(update={"comision_vendedor_real_pagos": 2})
     assert _nota_participacion(con, True) == hoy + _NOTA_PARTICIPACION_PAGO_VENDEDOR_AVION
     assert _nota_participacion(con, True).endswith(
-        " El pago «Comisión del vendedor (avión)» es la excepción: se reparte entre los "
+        "\nEl pago «Comisión del vendedor (avión)» es la excepción: se reparte entre los "
         "aviones como la venta (va en COMISIONES)."
     )
     assert _nota_participacion(con) == hoy  # sin la bandera

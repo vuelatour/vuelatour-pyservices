@@ -487,26 +487,33 @@ def test_dinero_flota_parcial() -> None:
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
 _HUELLAS_HEAD_29107E6 = {
     "individual": (
-        "a9892b42431aee189162325a070436e5ecce954ceccdf56320988ce37f11b850",
-        "bd1435c16627a9486bdf11e1538bb6cbe66e285565048e58d5ea8c95fdaf1b45",
+        "355671ab33f0d477445b9cc7c0ddcc0c7e842a94f00f16918b3a05fa5402e0b4",
+        "57a7b89678a8e41c763138a476ea86c290ae3bafbfcd27e2f2316d92e9b7cbaa",
     ),
     "individual-351": (
-        "b26b36aeb0fb7d241641eeab1f5bc2005af6741c47a3f216affd84a7f7fccccf",
-        "bf1b0a7834d390b855a9754d0de49b1e20cd57e7dda4ad17dd0ef8d5197ef923",
+        "3e53d929083e2795748fdb03ede3766c397573bd5c997af05130897026f470ac",
+        "3aaa185b0dccfafe84e7e25716d5acbe6df1f37ad85ee918337204f4dcdbe8cf",
     ),
     "general-mensual": (
-        "dfc1a62eb4d2ef17cef40965e5b805564eb0c4368f5a88eb20bb37b6044bf1d5",
-        "66d94704330389c72133798cf77ca258a864e991f97bcd81dc39072ada304bb7",
+        "7c9153281a6df9c87eea983918584ac94ac08223037b392a3d5a27b7cb901343",
+        "0526df429b08976a751f8539217b617cb64138e9e207a452545719abab119615",
     ),
     "general-general": (
-        "7bc5e874394e87fa13821d5e77b7ff87e3c7f5b1957a8fc6595a7c1b1e5658d6",
-        "c39451321f90a0a403a450f09e3ef3d87e51fff171a8aa4af04f3985f4c91eac",
+        "471de1b16e6fdef6edc19afbb0d89ab852f207fc8bac983aae5311eb8dd4211f",
+        "a899b25d1c194c7ba396d2e5d92e055dda12e17e914cf26b5ee89b96ac9c4bd9",
     ),
     "general-consolidado": (
-        "dfc1a62eb4d2ef17cef40965e5b805564eb0c4368f5a88eb20bb37b6044bf1d5",
-        "c7719582ddbdcf161a86608056c1b2c4eb3755211cf57fb4525aaddf1639f975",
+        "7c9153281a6df9c87eea983918584ac94ac08223037b392a3d5a27b7cb901343",
+        "a642cfed18d6f2f88da5abf060e3f85e59262555b51a75fc16a2293ae92915f2",
     ),
     "reparto": (
         "086d81ea77269367cce33dcdbc799450232d7967b63019fa381da1ff9e2959ac",

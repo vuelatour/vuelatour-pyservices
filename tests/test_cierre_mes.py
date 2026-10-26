@@ -78,18 +78,25 @@ AMBER = "FCD34D"  # ámbar del balance (`AMBER` de balance_avion_xlsx)
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
 _HUELLAS_HEAD = {
     "individual": (
-        "3a088800bfd81c515b73bc5b2b0cf3f8522fa7afebf5ed5013c5aa299d02714e",
-        "11cef9feb0e6a43564704490ea3a552aad8e546f8d2a5956733c50bdb4036096",
+        "b307e3e1af212b2b93e2297110f20eaf2eaa3144da81d731ae8ae05742757f40",
+        "0494337e18257854f0227a24acc519a097b6f21a01780fc756b7f006c2c33bfc",
     ),
     "general-mensual": (
-        "22d118a1a3df1b26d2bbca1827bd396ef1474c2c84db3af549035f8b2a1945bb",
-        "61247cf3aa3d6752721a24a5295a17bfbc72b2a2cd50deb716259942b669280a",
+        "a019eb712323ce4737d48df8271d3b4c45dbbdd7d08028b0887ef950106a8764",
+        "369640a97f3f90cccfcbcfda3e1a112c8cb685088a052ec77e58923943e3d000",
     ),
     "general-general": (
-        "34afb591acef40817ae27b1e0ee2aa753fafa401674d55701b1da7c56df3a20e",
-        "9817ca0aa214074160e32e5a1ed1f8e83732dbb70aa14ac9a985613fa4132e25",
+        "973a9b51f700932ae04c351bfb8cc7c09b6dfabe37f78917f4c851608567f5c4",
+        "28b901068af08341de0d97cf64f43984b1ae8ee9137058912d2edd52bdbc868f",
     ),
 }
 _HUELLA_REPARTO_PDF_HEAD = "9448b553c276bcd2bd8ddb878136bf888bf2d68f85d2fc5a1a3aaee2da91d5c0"

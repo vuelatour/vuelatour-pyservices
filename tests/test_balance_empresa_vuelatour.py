@@ -262,22 +262,29 @@ def _firma_libro(data: bytes) -> str:
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
 _FIRMAS_SIN_EMPRESA = {
     "socio empresa en dos aviones": (
         {},
-        "e5ebffa4302abf2c4f27e422bee9a87d85d208aff9af2eef1c4dbfd20a5623ad",
+        "8fc9fd38c4d3dbbc30a4ab63364de473b13d2fb9e06bb937a80a535a182c47a5",
     ),
     "sin socio empresa": (
         {"socios": _SOCIOS_SIN_EMPRESA},
-        "5e71483f7ec282dd04cf34162c93df375d68904d9b767cb1d175e4c8eca2b195",
+        "dfed4b50183d1d4b9e448f143dc379bd1374e858d7284ec7e11a3caf04a8c80d",
     ),
     "sin hoja otros gastos": (
         {"otros_gastos": False},
-        "7e347dc90c154a6d284ef7699870da20a3bc6a8e978dbe884794e23f61309829",
+        "400eaca7632ea49e9ccfd5bdbb4ffa10145759a953867ea8fffa89965cfb4f83",
     ),
     "sin inventario": (
         {"inventario": False},
-        "cdd4c27eb0395d393eecbf0f88aea604a918e87287504ca119abee914f734e10",
+        "4a8c5d13333d57f0bf2b27cbd263d0a613ece1e2a2cd0230876c6edb922182cc",
     ),
 }
 

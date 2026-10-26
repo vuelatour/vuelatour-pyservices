@@ -406,7 +406,7 @@ def test_balance_avion_json_con_tc_por_fila_en_permisos():
     permisos = next(h for h in libro["hojas"] if h["nombre"] == "permisos")
     celdas = {(c["r"], c["c"]): c for c in permisos["celdas"]}
     assert celdas[(7, 7)]["v"] == "T.C."
-    assert "ROUND(MONTO ORIGINAL × T.C., 2)" in celdas[(7, 7)]["n"]
+    assert celdas[(7, 7)]["n"].startswith("Tipo de cambio con el que cada gasto se pasó a pesos")
     assert celdas[(8, 4)]["f"] == "=ROUND(F8,2)"
     assert celdas[(8, 5)]["v"] == "MXN"
     assert celdas[(9, 4)]["f"] == "=ROUND(F9*G9,2)"

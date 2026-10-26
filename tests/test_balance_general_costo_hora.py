@@ -405,8 +405,8 @@ def test_encabezado_dice_balance_general_y_conserva_las_constantes() -> None:
     # A1:D1: las constantes de siempre (COSTO X HORA cita $D$1).
     assert (ws["A1"].value, ws["B1"].value) == ("Permiso AFAC USD/hr", None)
     assert (ws["C1"].value, ws["D1"].value) == ("Factor IVA costos", 1.16)
-    assert "ya no lleva la columna PERMISO AFAC" in ws["B1"].comment.text
-    assert "COSTO X HORA (DLLS S/IVA)" in ws["D1"].comment.text
+    assert "no lleva la columna PERMISO AFAC" in ws["B1"].comment.text
+    assert ws["D1"].comment.text.startswith("Factor del IVA de los costos (16 %)")
     assert ws.freeze_panes == "F3"
 
 
@@ -542,15 +542,12 @@ def test_desglose_del_costo_en_la_nota_de_total_para_proveedor() -> None:
     # el sistema» (nota en su encabezado; antes en COSTO TOTAL MXN).
     encabezado = ws.cell(row=2, column=_col(ws, "TOTAL PARA\nPROVEEDOR (PESOS)"))
     assert encabezado.comment.text.startswith(
-        "Calculado por el sistema: TOTAL PARA PROVEEDOR (PESOS) = COSTO TOTAL del vuelo = operación"
+        "Calculado por el sistema: TOTAL PARA PROVEEDOR (PESOS) = operación + piloto"
     )
     # La otra nota de encabezado (7-oct-2026): REMANENTE va antes de
     # comisiones, que no van en esta hoja (ya no hay columna COMISIONES).
     remanente = ws.cell(row=2, column=_col(ws, COSTO_POR_HORA[-1]))
-    assert remanente.comment.text.startswith(
-        "REMANENTE VENTA MENOS COMPRA = VENTA AVIÓN MXN − TOTAL PARA PROVEEDOR (PESOS), "
-        "antes de comisiones."
-    )
+    assert remanente.comment.text.startswith("Remanente de la fila antes de comisiones.")
     assert [c.coordinate for c in ws[2] if c.comment] == [
         encabezado.coordinate,
         remanente.coordinate,
@@ -1093,10 +1090,17 @@ def test_otro_juego_de_columnas_sigue_cuadrando(caso, monkeypatch, registros) ->
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
 _FIRMAS_HOY = {
-    "fórmulas": "66f95f3c39fe68a53e9b3475fc230e7a186d4876fdf34ed3d72575bb2a911b66",
-    "empresa": "1fa3adf7960cf6cab2307fab5f06e72e47619f36aed7b18a39d8a6ef3c61c9ef",
-    "pago real": "3137e2fe59f108e4beb029cf23dd78fe5f43d2b112b6e0ca03ad82b4638d8ee1",
+    "fórmulas": "878477f99d90020be0d84734733041eb139813cb7e97a3fcb758f790b219d12f",
+    "empresa": "ac5841c7f1c8127352b452557d2778553f4bd94b8027a5fd7135c6b4321a294a",
+    "pago real": "76f4ee6a76e8a50f5c08ca4d1b5f81efc38329d0b1c7c9d908dc01aef37a1c1a",
 }
 # Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
 # del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
@@ -1104,8 +1108,15 @@ _FIRMAS_HOY = {
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
 _FIRMA_HOY_PROVISION_SIN_OTROS_MOVIMIENTOS = (
-    "671d0e66f6e8a635790ba96bcbdb6319ef2ebcc5e095f9a41fc2d14200c8e176"
+    "cde4c6a36fb0d57ee171047f1110fc047b201017d800d1660559c8151f641166"
 )
 _CASOS_MENSUAL = {
     "fórmulas": tf._general,
@@ -1146,16 +1157,23 @@ _OPENPYXL_HUELLAS = "3.1.5"
 # (combustible / otros gastos / repartidos a aviones, sheet5/6/7); RESUMEN,
 # inventario y 'balance' siguen igual. Mismos números y mismas fórmulas (por
 # llave): solo el layout.
+# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
+# actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
+# idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
+# pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
+# nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
+# solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
 _MIEMBROS_HOY = {
     "fórmulas": {
         "[Content_Types].xml": "90c274d39d8df938",
         "_rels/.rels": "c545941ba36c15fc",
         "docProps/app.xml": "209fca6b00afe72a",
         "xl/_rels/workbook.xml.rels": "fee7f7835a21adf6",
-        "xl/comments/comment1.xml": "c55c9beb88740fe8",
-        "xl/comments/comment2.xml": "a623ddcb4e5ebb3c",
-        "xl/drawings/commentsDrawing1.vml": "cbb8e3fd25705c1a",
-        "xl/drawings/commentsDrawing2.vml": "a3fb237fe6d57d83",
+        "xl/comments/comment1.xml": "8d33160809b081af",
+        "xl/comments/comment2.xml": "079e9d6c94c33fd4",
+        "xl/drawings/commentsDrawing1.vml": "cdb0cca556a4f9aa",
+        "xl/drawings/commentsDrawing2.vml": "6601c1d546dca5ed",
         "xl/styles.xml": "d4005b41be4c7036",
         "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
         "xl/workbook.xml": "e9b5be0ab87733e4",
@@ -1170,17 +1188,17 @@ _MIEMBROS_HOY = {
         "xl/worksheets/sheet6.xml": "4a40f6867ca65b6d",
         "xl/worksheets/sheet7.xml": "d9c0fe134ec1d790",
         "xl/worksheets/sheet8.xml": "85aaef47b6b15de9",
-        "xl/worksheets/sheet9.xml": "6611d82d2f59871d",
+        "xl/worksheets/sheet9.xml": "8026d496e39519d2",
     },
     "empresa": {
         "[Content_Types].xml": "90c274d39d8df938",
         "_rels/.rels": "c545941ba36c15fc",
         "docProps/app.xml": "209fca6b00afe72a",
         "xl/_rels/workbook.xml.rels": "fee7f7835a21adf6",
-        "xl/comments/comment1.xml": "c55c9beb88740fe8",
-        "xl/comments/comment2.xml": "51429da7b4342562",
-        "xl/drawings/commentsDrawing1.vml": "cbb8e3fd25705c1a",
-        "xl/drawings/commentsDrawing2.vml": "14fe3cbfa808de3c",
+        "xl/comments/comment1.xml": "8d33160809b081af",
+        "xl/comments/comment2.xml": "2b214e1d69201bae",
+        "xl/drawings/commentsDrawing1.vml": "cdb0cca556a4f9aa",
+        "xl/drawings/commentsDrawing2.vml": "53f523a76b410d41",
         "xl/styles.xml": "30527d4a9b32515f",
         "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
         "xl/workbook.xml": "e9b5be0ab87733e4",
@@ -1195,16 +1213,16 @@ _MIEMBROS_HOY = {
         "xl/worksheets/sheet6.xml": "4a40f6867ca65b6d",
         "xl/worksheets/sheet7.xml": "d9c0fe134ec1d790",
         "xl/worksheets/sheet8.xml": "85aaef47b6b15de9",
-        "xl/worksheets/sheet9.xml": "1a2f5573d138c689",
+        "xl/worksheets/sheet9.xml": "cc74153ae1725b02",
     },
     "pago real": {
         "[Content_Types].xml": "aab5d091f752ef52",
         "_rels/.rels": "c545941ba36c15fc",
         "docProps/app.xml": "209fca6b00afe72a",
         "xl/_rels/workbook.xml.rels": "7676081832cc25e3",
-        "xl/comments/comment1.xml": "37a8399f2627d43e",
+        "xl/comments/comment1.xml": "b26892493ef5b810",
         "xl/comments/comment2.xml": "b73ee204dd2ca127",
-        "xl/drawings/commentsDrawing1.vml": "bf593e6f54aa7d2a",
+        "xl/drawings/commentsDrawing1.vml": "9bd8281d51954bbe",
         "xl/drawings/commentsDrawing2.vml": "8981508b7a5cafbb",
         "xl/styles.xml": "4205549284535169",
         "xl/theme/theme1.xml": "d15e8ebf78ef7b97",

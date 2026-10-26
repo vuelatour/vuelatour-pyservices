@@ -2439,6 +2439,50 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   N621TX: 787,851.13 − 2,591.00 − 40,588.14 − 42,575.49 = 702,096.50,
   combustible 147,277.58, saldo 541,473.25).
 
+- **Notas de celda: una idea, 1–2 líneas, sin versiones; auditadas
+  (26-oct-2026).** Pedido del cliente con la captura de la hoja «balance» del
+  Balance general (B6 y su nota): «esa nota que está en la celda B6 y B7 y
+  todas están actualizadas?, porque unas cosas nos causan ruido». Regla
+  PERMANENTE para toda nota de celda (`Comment`) de los libros —balances,
+  Libro Dinero, reparto; la vista en pantalla lleva el mismo texto en `n`—:
+  dice UNA idea en 1–2 líneas en español llano (qué es la cifra y de dónde
+  sale), ≤ 240 caracteres (por renglón en las de datos: cobros, desgloses,
+  AFAC), sin fechas, versiones del API, invariantes ni «regla de septiembre
+  2026» (la regla y su vigencia las explica el pie IMPRESO de la hoja con la
+  etiqueta del API; `_con_regla` ya no toca ninguna nota de celda), sin
+  repetir el rótulo de la fila, sin explicar una fórmula que ya se ve en la
+  celda y sin «(MXN)» más de una vez. Se reescribieron 27 textos (encabezados
+  COMISIONES / GANANCIA / REMANENTE / tarifa AFAC (B1 y columna) / factor IVA
+  (D1) / T.C. de 'permisos' / «calculado por el sistema» / USD por gasto; la
+  cascada de 'balance' en USD y en pesos; «sin cifra en pesos»; la
+  participación multi-avión, cuya excepción del pago «(avión)» va ahora en su
+  propio renglón) y se conservaron las que ya cumplían (reparto manual en
+  indirectos, bloque VUELATOUR, tacómetros, T.C. oficial, cierre de mes,
+  cobros, desgloses y todo lo que llega hecho del API). La nota de «(−)
+  COMISIONES» ya no promete ni niega cuadres con el reparto: solo dice qué es.
+  **Rótulos de la cascada de 'balance' (mismo pedido, mismo día)**: «UTILIDAD
+  ANTES DE COMISIONES» (antes «UTILIDAD ANTES DE GASTOS, ANTES DE
+  COMISIONES») y «UTILIDAD DESPUÉS DE COMISIONES» (antes «UTILIDAD ANTES DE
+  GASTOS»: es la llave `antes` del API y existe también en el individual,
+  cuya hoja de vuelos ya resta las comisiones en cada fila), en USD
+  (`_FILA_ANTES_COMISIONES`, `_FILA_ANTES`) y en pesos (`_FILA_*_PESOS`),
+  con nota nueva en la segunda (`_NOTA_CASCADA_ANTES`: «…ya con las
+  comisiones restadas; de aquí se restan combustible, gastos indirectos,
+  refacciones y permisos»); ningún número ni fórmula cambia (`_CASCADA_REFS`
+  y `_formulas_cascada` van por llave). La nota del encabezado «Utilidad
+  antes de gastos» del reparto cita la fila del Balance por su nombre nuevo
+  (la columna del reparto NO se renombra). También se corrigió el pie
+  impreso de la reserva de overhaul (`_NOTA_RESERVA_OVERHAUL`): decía que el
+  reparto a socios la descuenta antes de repartir —falso desde el API
+  0.0.101—; ahora «en el reparto a socios se informa por socio y solo se
+  descuenta a quien lo pidió». Tests: `tests/test_notas_celda.py` (recorre
+  todas las notas de 48 libros de prueba contra patrones superados y de
+  ruido; fija el texto EXACTO de rótulos y notas de la cascada en pesos y en
+  dólares, general e individual, y la paridad con `libro_json`); las huellas
+  congeladas de 12 módulos se regeneraron con comentario fechado (cambian
+  solo notas, VML y rótulos de la columna A). El panel y el API no citan
+  esos rótulos: nada que desplegar fuera de pyservices.
+
 ## Conciliación
 
 - Estado de cuenta de PAYWISE (9-sep-2026): `estado_cuenta._parse_paywise`

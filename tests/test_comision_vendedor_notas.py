@@ -1063,15 +1063,12 @@ def test_rutas_aceptan_el_payload_0073(monkeypatch) -> None:
 # categorías» del mismo día (contrato §G del ajuste; sección final): la
 # bandera es la misma y estas pruebas siguen cubriendo esquemas, individual,
 # independencia hoja/raíz, Libro Dinero y rutas.
+# Nota de CELDA del encabezado COMISIONES: corta desde el 26-oct-2026 (pedido
+# del cliente: las notas «causan ruido»; una idea, sin la fecha de la regla).
 ENCABEZADO_GASTO_REAL = (
-    "COMISIONES = lo que absorbe el avión: su parte de la comisión bancaria de los cobros "
-    "del vuelo (regla de septiembre 2026, por fecha del vuelo; en la misma proporción con "
-    "que el cobro se prorratea al avión) + el pago al vendedor capturado en Gastos como "
-    "«Comisión del vendedor (avión)» y ligado al vuelo (en cualquier fecha, en vuelos "
-    "completados o cancelados con cobros retenidos; en un vuelo de varios aviones, su "
-    "parte de la venta). La «Comisión del vendedor (VuelaTour)» no va aquí: la paga "
-    "VuelaTour en 'otros movimientos'. Sin pago capturado no se resta nada. La nota de "
-    "cada celda dice cuáles son."
+    "Comisiones a cargo del avión: su parte de la comisión bancaria de los cobros del "
+    "vuelo y el pago «Comisión del vendedor (avión)» ligado al vuelo (la «(VuelaTour)» la "
+    "paga VuelaTour). La nota de cada celda dice cuáles son."
 )
 MAESTRA_GASTO_REAL = (
     "COMISIONES MXN = lo que absorbe el avión: su parte de la comisión bancaria de los "
@@ -1372,12 +1369,11 @@ MAESTRA_FRAG_DOS = (
     "lo cobrado y el capturado como «Comisión del vendedor (avión)» sale con egreso $0.00 "
     "«a cargo del avión», porque ya resta en esta columna)."
 )
+# Notas de CELDA cortas desde el 26-oct-2026 (una idea, sin fecha de la regla).
 FUERA_DE_LA_HOJA_DOS = (
-    "Las comisiones que absorbe cada avión (su parte de la comisión bancaria de sus cobros "
-    "—regla de septiembre 2026, por fecha del vuelo— y el pago al vendedor capturado como "
-    "«Comisión del vendedor (avión)» ligado al vuelo; sin ese pago no se resta nada del "
-    "vendedor) no van en esta hoja: están en la columna COMISIONES del libro individual de "
-    "cada avión y ya van restadas en la cascada de cada avión de la hoja 'balance'."
+    "Las comisiones a cargo de cada avión (banco y pago «Comisión del vendedor (avión)») "
+    "no van en esta hoja: restan en la hoja 'balance', columna COMISIONES de su Balance "
+    "por avión."
 )
 FLOTA_DOS = (
     "COMISIONES (regla de septiembre 2026, por fecha del vuelo, para la parte bancaria): "
@@ -1431,17 +1427,13 @@ EMPRESA_BASE_DOS_CATEGORIAS = (
     "no es dinero en caja."
 )
 CASCADA_DOS = (
-    "Comisiones que absorbe el avión, en USD — las de la columna COMISIONES de su libro "
-    "individual: su parte de la comisión bancaria de sus cobros (regla de septiembre 2026, "
-    "por fecha del vuelo) y el pago al vendedor capturado como «Comisión del vendedor "
-    "(avión)» ligado al vuelo. Por vuelo es la misma cifra que descuenta el reparto a "
-    "socios, pero el total puede no coincidir con el del reparto: por ejemplo, si un vuelo "
-    "que aún no se completa ya tiene un anticipo con comisión bancaria, este balance "
-    "cuenta ese cobro y su comisión, y el reparto no (solo lee vuelos completados o "
-    "cancelados)."
+    "Comisiones a cargo del avión en dólares (su parte de la comisión bancaria de sus "
+    "cobros y el pago «Comisión del vendedor (avión)» ligado al vuelo): las de la columna "
+    "COMISIONES de su Balance por avión."
 )
+# La excepción va en su propio renglón de la nota (26-oct-2026).
 PARTICIPACION_DOS = (
-    " El pago «Comisión del vendedor (avión)» es la excepción: se reparte entre los "
+    "\nEl pago «Comisión del vendedor (avión)» es la excepción: se reparte entre los "
     "aviones como la venta (va en COMISIONES)."
 )
 DINERO_FILA6_DOS = (

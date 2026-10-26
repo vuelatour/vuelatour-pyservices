@@ -67,9 +67,11 @@ NOTA_COMBUSTIBLE_SEPARADO = (
     "gastos directos − provisión AFAC; Saldo disponible = utilidad antes de gastos − "
     "combustible − gastos indirectos − permisos − fijos + otros ingresos del avión."
 )
+# La fila del Balance por avión se llama «UTILIDAD DESPUÉS DE COMISIONES» desde
+# el 26-oct-2026; la columna del reparto conserva su nombre.
 NOTA_ENCABEZADO_UTILIDAD_ANTES_GASTOS = (
     "Venta del avión cobrada − comisiones − gastos directos (sin combustible) − provisión "
-    "AFAC: la línea «UTILIDAD ANTES DE GASTOS» del Balance."
+    "AFAC: la línea «UTILIDAD DESPUÉS DE COMISIONES» del Balance por avión."
 )
 
 
