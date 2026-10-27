@@ -2483,6 +2483,43 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   solo notas, VML y rótulos de la columna A). El panel y el API no citan
   esos rótulos: nada que desplegar fuera de pyservices.
 
+- **Vuelos con aviones externos en el bloque «VUELATOUR (empresa)» del
+  general (27-oct-2026, API 0.0.112, invariante 112 del API).** Pedido del
+  cliente con la captura del bloque de septiembre: «me falta en el balance
+  de VuelaTour los vuelos con aviones externos … que sea claro cuánto
+  dejaron de ingreso, cuánto de gastos y al final la utilidad, y un resumen
+  a un lado de cuántos fueron». Payload ADITIVO `BalanceEmpresaBloque.externos`
+  (`BalanceEmpresaExternos`: `vuelos`, `cancelados`, `operadores`,
+  `ingreso_/gastos_/utilidad_/por_cobrar_/hojas_ mxn|usd`, `detalle[]`
+  (`BalanceEmpresaExternoVuelo`), `sin_pesos`, `nota`; todo liberal, jamás
+  422). Lo calcula el API con su libro EXTERNOS (ingreso = VENTA, utilidad
+  = UTILIDAD DESPUÉS DE GASTOS, gastos = lo de en medio) y su `utilidad_*`
+  YA viene sumada en `resultado_*`: aquí no se calcula nada. Con la llave,
+  `_bloque_empresa` (USD) y `_bloque_empresa_pesos` pintan, entre TIENDA y
+  RESULTADO, «(+) UTILIDAD DE VUELOS CON AVIONES EXTERNOS USD|(MXN)» =
+  `ROUND(B{ing}-B{gas},2)` (en pesos también la USD informativa en C, por
+  `_formula`, verificada; `None` ⇒ «—» con `_NOTA_SIN_PESOS_EXTERNOS`) con
+  nota `_NOTA_EMPRESA_EXTERNOS`, y debajo dos filas gris/cursiva «Ingreso de
+  esos vuelos (venta) · 3 vuelos (1 cancelado)» y «(−) Gastos de esos vuelos
+  (pago al operador, combustible, otros)» como VALOR; el RESULTADO = la
+  fórmula de siempre `+B{ext}` (y `+C{ext}` en pesos). A un lado, desde la
+  columna F a la altura de la primera fila (`_tabla_vuelos_externos`,
+  anchos `_ANCHOS_TABLA_EXTERNOS` F..N): título «Vuelos con aviones externos
+  del periodo: N» (`_texto_vuelos_externos`), encabezados VUELO · FECHA ·
+  OPERADOR · CLIENTE · ESTADO · VENTA · GASTOS · UTILIDAD · COBRO (MXN o USD
+  según el bloque), un renglón por vuelo (fecha dd/mm/aaaa, «(cancelado)»,
+  COBRO = status · «por cobrar $X MXN»), el renglón «Combustible, permisos y
+  otros de estos vuelos (hojas del libro EXTERNOS)» solo si `hojas_*` ≠ 0, y
+  «TOTAL (MXN|USD)» con los totales del API (valores); utilidad negativa en
+  rojo. Si la tabla es más alta que las tres filas, el RESULTADO va después
+  de ella. La `externos.nota` del API se pinta en el pie (en pesos, después
+  de `nota_pesos`; en USD, al final). **Sin la llave (o `null`) el libro es
+  BYTE A BYTE** el de antes (miembro a miembro, pesos y USD). La vista en
+  pantalla (`libro_json`) hereda filas, tabla y notas: el panel no cambia.
+  Tests: `tests/test_balance_empresa_externos.py` (8). Orden de deploy:
+  cualquiera (un pyservices previo ignora la llave y el RESULTADO del API ya
+  la incluye; un API previo no la manda).
+
 ## Conciliación
 
 - Estado de cuenta de PAYWISE (9-sep-2026): `estado_cuenta._parse_paywise`

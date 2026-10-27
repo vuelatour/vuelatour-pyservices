@@ -2486,6 +2486,92 @@ class BalanceEmpresaParticipacion(BaseModel):
     monto_mxn: float | None = None
 
 
+class BalanceEmpresaExternoVuelo(BaseModel):
+    """Un vuelo del libro EXTERNOS en la tabla «a un lado» del bloque
+    VUELATOUR (27-oct-2026, API 0.0.112, invariante 112 del API): las celdas
+    de SU fila del libro, tal cual. Todo opcional y liberal (jamás un 422)."""
+
+    clave: str | None = None
+    folio: str | None = None
+    fecha: str | None = None
+    cliente: str | None = None
+    operador: str | None = None
+    estado: str | None = None
+    cancelado: bool = False
+    ruta: str | None = None
+    ingreso_mxn: float | None = None
+    gastos_mxn: float | None = None
+    utilidad_mxn: float | None = None
+    por_cobrar_mxn: float | None = None
+    status_cobro: str | None = None
+    ingreso_usd: float | None = None
+    gastos_usd: float | None = None
+    utilidad_usd: float | None = None
+
+    @field_validator(
+        "clave",
+        "folio",
+        "fecha",
+        "cliente",
+        "operador",
+        "estado",
+        "ruta",
+        "status_cobro",
+        mode="before",
+    )
+    @classmethod
+    def _textos_liberales(cls, v: Any) -> str | None:
+        return _texto_liberal(str(v) if isinstance(v, int) and not isinstance(v, bool) else v)
+
+    @field_validator("cancelado", mode="before")
+    @classmethod
+    def _cancelado_liberal(cls, v: Any) -> bool:
+        return v is True
+
+
+class BalanceEmpresaExternos(BaseModel):
+    """VUELOS CON AVIONES EXTERNOS en el bloque «VUELATOUR (empresa)»
+    (27-oct-2026, API 0.0.112, invariante 112 del API). Pedido del cliente:
+    «me falta en el balance de VuelaTour los vuelos con aviones externos …
+    cuánto dejaron de ingreso, cuánto de gastos y al final la utilidad, y un
+    resumen a un lado de cuántos fueron». Lo calcula el API con el libro
+    EXTERNOS del general (ingreso = su VENTA, utilidad = su UTILIDAD DESPUÉS
+    DE GASTOS, gastos = lo de en medio); la `utilidad_*` YA SUMA en el
+    `resultado_*` del bloque. Aquí solo se pinta. None = sin pesos."""
+
+    vuelos: int = 0
+    cancelados: int = 0
+    operadores: list[str] = Field(default_factory=list)
+    ingreso_mxn: float | None = None
+    gastos_mxn: float | None = None
+    utilidad_mxn: float | None = None
+    por_cobrar_mxn: float | None = None
+    hojas_mxn: float | None = None
+    ingreso_usd: float | None = None
+    gastos_usd: float | None = None
+    utilidad_usd: float | None = None
+    por_cobrar_usd: float | None = None
+    hojas_usd: float | None = None
+    detalle: list[BalanceEmpresaExternoVuelo] = Field(default_factory=list)
+    sin_pesos: list[str] = Field(default_factory=list)
+    nota: str | None = None
+
+    @field_validator("vuelos", "cancelados", mode="before")
+    @classmethod
+    def _conteos_liberales(cls, v: Any) -> int:
+        return _conteo_liberal(v)
+
+    @field_validator("operadores", "detalle", "sin_pesos", mode="before")
+    @classmethod
+    def _listas_liberales(cls, v: Any) -> Any:
+        return [] if v is None else v
+
+    @field_validator("nota", mode="before")
+    @classmethod
+    def _nota_liberal(cls, v: Any) -> str | None:
+        return _texto_liberal(v)
+
+
 class BalanceEmpresaBloque(BaseModel):
     """Bloque «VUELATOUR (empresa)» al final de la hoja 'balance' del Balance
     GENERAL (6-oct-2026, API 0.0.59). Todo en USD y YA calculado por el API
@@ -2525,6 +2611,10 @@ class BalanceEmpresaBloque(BaseModel):
     tienda_utilidad_mxn: float | None = None
     resultado_mxn: float | None = None
     nota_pesos: str | None = None
+    # VUELOS CON AVIONES EXTERNOS (27-oct-2026, API 0.0.112, invariante 112
+    # del API), ADITIVA: solo viaja con libro EXTERNOS en el periodo. None
+    # (API previo o mes sin externos) ⇒ el bloque de siempre, byte a byte.
+    externos: BalanceEmpresaExternos | None = None
 
     @field_validator("participaciones", mode="before")
     @classmethod

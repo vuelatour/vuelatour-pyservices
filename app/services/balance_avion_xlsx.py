@@ -137,6 +137,7 @@ from app.schemas.reportes import (
     BalanceCierre,
     BalanceCierreResumen,
     BalanceEmpresaBloque,
+    BalanceEmpresaExternos,
     BalanceGeneralRequest,
     BalanceGeneralResumenFila,
     BalanceHojaInventario,
@@ -5109,6 +5110,136 @@ _EMPRESA_PAGOS_AFAC = (
 _EMPRESA_OTROS = "(−) OTROS GASTOS DE LA EMPRESA USD"
 _EMPRESA_TIENDA = "(+) UTILIDAD TIENDA (INVENTARIO) USD"
 _EMPRESA_RESULTADO = "RESULTADO VUELATOUR USD"
+# VUELOS CON AVIONES EXTERNOS (27-oct-2026, API 0.0.112, invariante 112 del
+# API; pedido del cliente: «me falta en el balance de VuelaTour los vuelos
+# con aviones externos … que sea claro cuánto dejaron de ingreso, cuánto de
+# gastos y al final la utilidad, y un resumen a un lado de cuántos fueron»).
+# Con `empresa.externos`: tres filas entre TIENDA y RESULTADO (la utilidad
+# = ROUND(ingreso − gastos, 2) y SUMA en el RESULTADO: el API ya la trae
+# sumada) y, a un lado (desde la columna F, a la altura de la primera), la
+# tabla de los vuelos del libro EXTERNOS. Sin la llave, libro byte a byte.
+_EMPRESA_EXTERNOS = "(+) UTILIDAD DE VUELOS CON AVIONES EXTERNOS USD"
+_EMPRESA_EXTERNOS_INGRESO = "   Ingreso de esos vuelos (venta)"
+_EMPRESA_EXTERNOS_GASTOS = "   (−) Gastos de esos vuelos (pago al operador, combustible, otros)"
+_EMPRESA_EXTERNOS_TABLA = "Vuelos con aviones externos del periodo: {resumen}"
+_EMPRESA_EXTERNOS_ENCABEZADOS = [
+    "VUELO",
+    "FECHA",
+    "OPERADOR",
+    "CLIENTE",
+    "ESTADO",
+    "VENTA MXN",
+    "GASTOS MXN",
+    "UTILIDAD MXN",
+    "COBRO",
+]
+_EMPRESA_EXTERNOS_HOJAS = "Combustible, permisos y otros de estos vuelos (hojas del libro EXTERNOS)"
+_EMPRESA_EXTERNOS_TOTAL = "TOTAL"
+_NOTA_EMPRESA_EXTERNOS = (
+    "Utilidad después de gastos del libro EXTERNOS (vuelos de operador ajeno "
+    "sin avión de la flota): ingreso − gastos de las dos filas de abajo."
+)
+_NOTA_SIN_PESOS_EXTERNOS = (
+    "Sin cifra en pesos: a un vuelo externo le falta su monto en pesos (sin "
+    "T.C.) o a una hoja del libro EXTERNOS; revísalo en la hoja de vuelos."
+)
+_COL_TABLA_EXTERNOS = 6  # F
+_ANCHOS_TABLA_EXTERNOS = [9, 11, 18, 24, 13, 14, 14, 14, 26]
+
+
+def _texto_vuelos_externos(ext: BalanceEmpresaExternos) -> str:
+    """«3 vuelos (1 cancelado)» / «1 vuelo»."""
+    n = ext.vuelos
+    texto = f"{n} vuelo" if n == 1 else f"{n} vuelos"
+    if ext.cancelados:
+        c = ext.cancelados
+        texto += f" ({c} cancelado)" if c == 1 else f" ({c} cancelados)"
+    return texto
+
+
+def _tabla_vuelos_externos(
+    ws: Worksheet, ext: BalanceEmpresaExternos, row: int, *, pesos: bool
+) -> int:
+    """Tabla «a un lado» del bloque VUELATOUR (desde la columna F, a la
+    altura de la fila de vuelos externos): título con cuántos fueron, un
+    renglón por vuelo (las celdas de su fila del libro EXTERNOS), la parte
+    de las hojas del libro (combustible, permisos…) si la hay y el TOTAL del
+    API (valores: el libro ya los calculó). Devuelve la fila libre debajo."""
+    col = _COL_TABLA_EXTERNOS
+    for i, w in enumerate(_ANCHOS_TABLA_EXTERNOS):
+        ws.column_dimensions[get_column_letter(col + i)].width = w
+    titulo = ws.cell(
+        row=row,
+        column=col,
+        value=_EMPRESA_EXTERNOS_TABLA.format(resumen=_texto_vuelos_externos(ext)),
+    )
+    titulo.font = Font(bold=True, color=NAVY)
+    row += 1
+    encabezados = list(_EMPRESA_EXTERNOS_ENCABEZADOS)
+    if not pesos:
+        encabezados = [h.replace(" MXN", " USD") for h in encabezados]
+    _header_row(ws, row, encabezados, start=col)
+    row += 1
+    moneda = "MXN" if pesos else "USD"
+
+    def texto(r: int, c: int, v: str, *, bold: bool = False, italic: bool = False):
+        cell = ws.cell(row=r, column=c, value=v)
+        cell.font = Font(bold=bold, italic=italic, color=MUTED if italic else "000000")
+        cell.border = _border
+        return cell
+
+    def dinero(r: int, c: int, v: float | None, *, bold: bool = False):
+        if v is None:
+            cell = ws.cell(row=r, column=c, value=_SIN_PESOS if pesos else None)
+            cell.alignment = Alignment(horizontal="right")
+            cell.font = Font(color=MUTED)
+        else:
+            cell = _num(ws, r, c, v, MONEY, bold=bold)
+        cell.border = _border
+        return cell
+
+    for d in ext.detalle:
+        estado = d.estado or "—"
+        if d.cancelado and estado.upper() != "CANCELADO":
+            estado += " (cancelado)"
+        cobro = d.status_cobro or ""
+        if (d.por_cobrar_mxn or 0) > 0.004:
+            cobro = f"{cobro} · por cobrar ${d.por_cobrar_mxn:,.2f} MXN".strip(" ·")
+        texto(row, col, d.clave or (f"#{d.folio}" if d.folio else "—"))
+        texto(row, col + 1, _fecha(d.fecha) or "")
+        texto(row, col + 2, d.operador or "—")
+        texto(row, col + 3, d.cliente or "")
+        texto(row, col + 4, estado)
+        if pesos:
+            ingreso, gastos, utilidad = d.ingreso_mxn, d.gastos_mxn, d.utilidad_mxn
+        else:
+            ingreso, gastos, utilidad = d.ingreso_usd, d.gastos_usd, d.utilidad_usd
+        dinero(row, col + 5, ingreso)
+        dinero(row, col + 6, gastos)
+        dinero(row, col + 7, utilidad)
+        texto(row, col + 8, cobro)
+        row += 1
+    hojas = ext.hojas_mxn if pesos else ext.hojas_usd
+    if hojas is not None and abs(hojas) > 0.004:
+        texto(row, col, _EMPRESA_EXTERNOS_HOJAS, italic=True)
+        ws.merge_cells(start_row=row, start_column=col, end_row=row, end_column=col + 4)
+        dinero(row, col + 6, hojas)
+        dinero(row, col + 7, round(-hojas, 2))
+        row += 1
+    texto(row, col, f"{_EMPRESA_EXTERNOS_TOTAL} ({moneda})", bold=True)
+    ws.merge_cells(start_row=row, start_column=col, end_row=row, end_column=col + 4)
+    if pesos:
+        totales = (ext.ingreso_mxn, ext.gastos_mxn, ext.utilidad_mxn)
+    else:
+        totales = (ext.ingreso_usd, ext.gastos_usd, ext.utilidad_usd)
+    for i, v in enumerate(totales):
+        dinero(row, col + 5 + i, v, bold=True)
+    letra = get_column_letter(col + 7)
+    _rojo_si_negativo(ws, f"{letra}{row - len(ext.detalle) - 1}:{letra}{row}")
+    row += 1
+    return row
+
+
 _EMPRESA_SIN_PARTICIPACION = "   sin participación registrada"
 _NOTA_EMPRESA_OTROS_MOVIMIENTOS = (
     "MXN de la hoja 'otros movimientos' a USD con el TC de cada vuelo "
@@ -5407,11 +5538,35 @@ def _bloque_empresa(
     monto(row, None, emp.tienda_utilidad_usd, nota=nota_tienda)
     row += 1
 
+    # (+) VUELOS CON AVIONES EXTERNOS (API 0.0.112, invariante 112 del API):
+    # la utilidad = ROUND(ingreso − gastos, 2) de las dos filas de detalle y
+    # SUMA en el RESULTADO; la tabla de los vuelos, a un lado.
+    fila_ext: int | None = None
+    if emp.externos is not None:
+        ext = emp.externos
+        fila_ext = row
+        etiqueta(row, _EMPRESA_EXTERNOS)
+        monto(
+            row,
+            f"ROUND(B{row + 1}-B{row + 2},2)",
+            ext.utilidad_usd,
+            nota=_NOTA_EMPRESA_EXTERNOS,
+        )
+        row += 1
+        etiqueta(row, f"{_EMPRESA_EXTERNOS_INGRESO} · {_texto_vuelos_externos(ext)}", detalle=True)
+        monto(row, None, ext.ingreso_usd, detalle=True)
+        row += 1
+        etiqueta(row, _EMPRESA_EXTERNOS_GASTOS, detalle=True)
+        monto(row, None, ext.gastos_usd, detalle=True)
+        row += 1
+        row = max(row, _tabla_vuelos_externos(ws, ext, fila_ext, pesos=False))
+    termino_ext = f"+B{fila_ext}" if fila_ext is not None else ""
+
     etiqueta(row, _EMPRESA_RESULTADO, bold=True)
     res = emp.resultado_usd
     monto(
         row,
-        f"ROUND(B{fila_part}+B{fila_ing}-B{fila_pag}-B{fila_otros}+B{fila_tienda},2)",
+        f"ROUND(B{fila_part}+B{fila_ing}-B{fila_pag}-B{fila_otros}+B{fila_tienda}{termino_ext},2)",
         res,
         bold=True,
         color=None if res is None else (GREEN if res >= 0 else RED),
@@ -5430,12 +5585,13 @@ def _bloque_empresa(
         afac_por_vuelo=afac_por_vuelo,
     )
     if emp.nota:
-        for texto in (emp.nota, base):
-            _pinta_nota_envuelta(ws, row, texto, 3, _ANCHO_HOJA_BALANCE)
-            row += 1
+        textos = [emp.nota, base]
     else:
-        pie = _NOTA_BLOQUE_EMPRESA.replace(_NOTA_EMPRESA_BASE, base)
-        _pinta_nota_envuelta(ws, row, pie, 3, _ANCHO_HOJA_BALANCE)
+        textos = [_NOTA_BLOQUE_EMPRESA.replace(_NOTA_EMPRESA_BASE, base)]
+    if emp.externos is not None and emp.externos.nota:
+        textos.append(emp.externos.nota)
+    for texto in textos:
+        _pinta_nota_envuelta(ws, row, texto, 3, _ANCHO_HOJA_BALANCE)
         row += 1
     return row
 
@@ -6073,13 +6229,62 @@ def _bloque_empresa_pesos(
     )
     row += 1
 
+    # (+) VUELOS CON AVIONES EXTERNOS (API 0.0.112, invariante 112 del API):
+    # la utilidad = ROUND(ingreso − gastos, 2) de las dos filas de detalle
+    # (pesos y, al lado, USD informativo) y SUMA en el RESULTADO; la tabla
+    # de los vuelos, a un lado (columna F).
+    fila_ext: int | None = None
+    if emp.externos is not None:
+        ext = emp.externos
+        fila_ext = row
+        _etiqueta_fila_pesos(ws, row, _etiqueta_pesos(_EMPRESA_EXTERNOS))
+        montos(
+            row,
+            f"ROUND(B{row + 1}-B{row + 2},2)",
+            ext.utilidad_mxn,
+            f"ROUND(C{row + 1}-C{row + 2},2)",
+            ext.utilidad_usd,
+            nota=_NOTA_EMPRESA_EXTERNOS,
+            nota_sin=_NOTA_SIN_PESOS_EXTERNOS,
+        )
+        row += 1
+        _etiqueta_fila_pesos(
+            ws,
+            row,
+            f"{_EMPRESA_EXTERNOS_INGRESO} · {_texto_vuelos_externos(ext)}",
+            detalle=True,
+        )
+        montos(
+            row,
+            None,
+            ext.ingreso_mxn,
+            None,
+            ext.ingreso_usd,
+            detalle=True,
+            nota_sin=_NOTA_SIN_PESOS_EXTERNOS,
+        )
+        row += 1
+        _etiqueta_fila_pesos(ws, row, _EMPRESA_EXTERNOS_GASTOS, detalle=True)
+        montos(
+            row,
+            None,
+            ext.gastos_mxn,
+            None,
+            ext.gastos_usd,
+            detalle=True,
+            nota_sin=_NOTA_SIN_PESOS_EXTERNOS,
+        )
+        row += 1
+        row = max(row, _tabla_vuelos_externos(ws, ext, fila_ext, pesos=True))
+
     _etiqueta_fila_pesos(ws, row, _etiqueta_pesos(_EMPRESA_RESULTADO), bold=True)
     res = emp.resultado_mxn
 
     def resultado(letra: str) -> str:
+        termino_ext = f"+{letra}{fila_ext}" if fila_ext is not None else ""
         return (
             f"ROUND({letra}{fila_part}+{letra}{fila_ing}-{letra}{fila_pag}"
-            f"-{letra}{fila_otros}+{letra}{fila_tienda},2)"
+            f"-{letra}{fila_otros}+{letra}{fila_tienda}{termino_ext},2)"
         )
 
     montos(
@@ -6107,6 +6312,8 @@ def _bloque_empresa_pesos(
     textos: list[str] = []
     if emp.nota_pesos:
         textos.append(emp.nota_pesos)
+    if emp.externos is not None and emp.externos.nota:
+        textos.append(emp.externos.nota)
     if emp.nota:
         textos += [_PREFIJO_NOTA_EMPRESA_USD + emp.nota, base]
     else:
