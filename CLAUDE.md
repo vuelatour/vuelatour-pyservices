@@ -2516,6 +2516,46 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `_advertencias_saldos` valida la cadena `saldo[i] = saldo[i−1] − cargo +
   abono` y avisa dónde faltan movimientos. Tests:
   `tests/test_estado_cuenta_banco.py`.
+- **Portal NUEVO de Scotiabank: XLSX de UNA columna separada por «|»**
+  (27-oct-2026; caso real «eje scotia.xlsx» de EJE SCOTIA, 82 filas en la
+  columna A: resumen de la cuenta, encabezados con los acentos rotos
+  «Transacci�n» y 80 movimientos del más reciente al más antiguo; el panel
+  decía «No se reconocieron columnas de monto»). `_leer_tabla` →
+  `_desempaquetar_columna_unica`: si cada fila con texto trae UNA sola celda
+  y ese texto se parte de forma consistente (≥ 4 columnas en la mayoría de
+  las filas) con el separador de `_delimitador`, se parte con `csv` (la
+  última celda viene entrecomillada «"1"») y `notas` lo dice («se
+  desempaquetó en 15 columnas»); el CSV con «|» ya entraba por el camino de
+  siempre y da el MISMO resultado. `_parse_tabular`: (1) columna de SENTIDO
+  con texto (`_columna_signo`: encabezado tipo/naturaleza/cargoabono/… y
+  TODOS sus valores palabras de sentido —cargo/retiro/débito…,
+  abono/depósito/crédito…; nunca una letra sola—) que manda sobre el signo
+  del importe; la columna «Tipo» con «CHQ» no califica; (2)
+  `_find_col_numerica`: cargo/abono/importe/saldo deben traer algún NÚMERO
+  (antes «Tipo(Cargo/Abono)» se llevaba las columnas de cargo y de abono por
+  el nombre y todo salía como abono); (3) fecha «yyyy/mm/dd» (`_fecha_de`,
+  año primero ⇒ `dayfirst=False`); (4) descripción = TODAS las columnas de
+  texto (concepto/descrip/detalle/movimiento/beneficiario/transacci/leyenda/
+  observación/glosa, en el orden del archivo, sin repetir una leyenda
+  idéntica a la anterior) + la CONTRAPARTE del SPEI (`_contraparte_spei`:
+  solo el nombre del ordenante «<clave 18 dígitos> NOMBRE <CLABE>» o del
+  beneficiario «Fecha Operación: dd/MMM NOMBRE /cuenta»; jamás CLABE, clave
+  de rastreo ni hora), y la leyenda que es solo el banco de un abono
+  («/BANAMEX», `_RE_LEYENDA_BANCO`) DESPUÉS del concepto como lo imprime el
+  PDF — así «SEL TRANSF. INTERBANCARIA SPEI BANORTE fact vip 7357» y
+  «TRANSF INTERBANCARIA SPEI TRASLADO AEREO /BANAMEX» (las filas ya
+  importadas desde el PDF) son PREFIJO exacto de las nuevas y el dedupe del
+  API (invariante 69: prefijo, y la referencia no veta) las reconoce y
+  completa el concepto de las leyendas desnudas; (5) la referencia de
+  RELLENO «00000000000000000001» se omite (`_referencia_util`: sus últimos
+  dígitos no son una terminación de tarjeta); (6) `_advertencias_saldos`
+  valida la cadena también AL REVÉS (gana el orden con menos cortes: el
+  archivo va del más reciente al más antiguo y el orden del archivo se
+  conserva por la invariante 55 del API); (7) `_advertencia_moneda`: filas
+  en otra moneda que `cuenta_moneda`. Verificado con el archivo real: 80
+  movimientos, 18 abonos / 62 cargos, saldos íntegros, 0 sin fecha. Tests:
+  `tests/test_estado_cuenta_scotiabank_columna_unica.py` (datos sintéticos
+  con la estructura exacta).
 - **Estado de cuenta PDF por BLOQUES de páginas** (29-sep-2026). El
   Scotiabank mensual (1.18 MB, impreso del portal) daba 422 «demasiados
   movimientos»: el PDF completo iba en UNA llamada y la respuesta se

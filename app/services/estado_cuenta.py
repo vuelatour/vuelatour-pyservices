@@ -140,6 +140,46 @@ def _filas_crudas(req: ConciliacionParseRequest, formato: str) -> list[list[str]
     return [[("" if c is None else str(c).strip()) for c in fila] for fila in df.values.tolist()]
 
 
+# --- Una sola columna con texto delimitado (27-oct-2026) --------------------
+# El portal nuevo de Scotiabank exporta el XLSX con TODO en la columna A: cada
+# fila es una cadena «Tipo|Moneda|Uso futuro|Cuenta|Fecha|Referencia|Importe|
+# Tipo(Cargo/Abono)|Saldo|Transacción|Leyenda 1|Leyenda 2|Leyenda 3|Información
+# adicional SPEI/SPID|Consecutivo» — una fila de resumen de la cuenta, luego
+# los encabezados (con acentos rotos) y los movimientos del más reciente al
+# más antiguo. Sin desempaquetarla el lector veía UNA columna sin fecha ni
+# monto y respondía «No se reconocieron columnas de monto».
+_MIN_COLUMNAS_DESEMPAQUE = 4
+_NOTA_COLUMNA_UNICA = (
+    "El archivo traía todos los datos en una sola columna separada por «{d}»: "
+    "se desempaquetó en {n} columnas."
+)
+
+
+def _desempaquetar_columna_unica(filas: list[list[str]]) -> tuple[list[list[str]], str | None]:
+    """Si cada fila con texto trae UNA sola celda (la primera) y ese texto se
+    parte de forma consistente con un separador, devuelve las filas ya
+    partidas y el separador; si no, las mismas filas y None."""
+    con_texto = [f for f in filas if any(c for c in f)]
+    if len(con_texto) < 2:
+        return filas, None
+    for f in con_texto:
+        if not f[0] or any(c for c in f[1:]):
+            return filas, None
+    texto = "\n".join(f[0] for f in con_texto)
+    delim = _delimitador(texto)
+    try:
+        partidas = list(csv.reader(io.StringIO(texto), delimiter=delim))
+    except csv.Error:
+        return filas, None
+    anchos = Counter(len(p) for p in partidas if any(c.strip() for c in p))
+    if not anchos:
+        return filas, None
+    ancho, veces = anchos.most_common(1)[0]
+    if ancho < _MIN_COLUMNAS_DESEMPAQUE or veces < max(2, len(partidas) // 2):
+        return filas, None
+    return [[("" if c is None else str(c).strip()) for c in p] for p in partidas], delim
+
+
 def _fila_encabezado(filas: list[list[str]]) -> int:
     """Índice de la fila que trae los ENCABEZADOS (0 si no hay preámbulo)."""
     for i, fila in enumerate(filas[:25]):
@@ -173,12 +213,14 @@ def _nombres_columnas(fila: list[str]) -> list[str]:
 
 def _leer_tabla(req: ConciliacionParseRequest, formato: str):
     """DataFrame de texto del CSV/XLSX (celdas vacías = ""), saltando el
-    preámbulo del banco si lo hay."""
+    preámbulo del banco si lo hay. Devuelve también la nota del
+    desempaquetado (None si el archivo venía en columnas)."""
     import pandas as pd  # lazy
 
     filas = _filas_crudas(req, formato)
     if not filas:
-        return pd.DataFrame()
+        return pd.DataFrame(), None
+    filas, delim = _desempaquetar_columna_unica(filas)
     h = _fila_encabezado(filas)
     columnas = _nombres_columnas(filas[h])
     ancho = len(columnas)
@@ -187,7 +229,8 @@ def _leer_tabla(req: ConciliacionParseRequest, formato: str):
         for fila in filas[h + 1 :]
         if any(str(c).strip() for c in fila)
     ]
-    return pd.DataFrame(datos, columns=columnas, dtype=str).fillna("")
+    nota = _NOTA_COLUMNA_UNICA.format(d=delim, n=ancho) if delim else None
+    return pd.DataFrame(datos, columns=columnas, dtype=str).fillna(""), nota
 
 
 def _fecha_de(v) -> str | None:
@@ -199,8 +242,9 @@ def _fecha_de(v) -> str | None:
     try:
         # Paywise exporta "dd/mm/yyyy HH:MM" (dayfirst, formato mexicano) o
         # ISO "yyyy-mm-dd" (pandas 3 con dayfirst=True invierte mes/día en
-        # ISO: se parsea aparte).
-        es_iso = re.match(r"^\d{4}-\d{2}-\d{2}", txt) is not None
+        # ISO: se parsea aparte). Scotiabank (portal nuevo) manda "yyyy/mm/dd":
+        # también año primero.
+        es_iso = re.match(r"^\d{4}[-/]\d{2}[-/]\d{2}", txt) is not None
         ts = pd.to_datetime(txt, dayfirst=not es_iso, errors="coerce")
     except (ValueError, TypeError):
         return None
@@ -436,10 +480,164 @@ def _parse_paywise(df, cols_map: dict[str, str | None]) -> ConciliacionParseResp
     )
 
 
-def _parse_tabular(req: ConciliacionParseRequest, formato: str) -> ConciliacionParseResponse:
-    import pandas as pd  # lazy
+# --- Columnas del banco genérico (27-oct-2026, portal nuevo de Scotiabank) ---
+# Columna que dice el SENTIDO del importe con TEXTO («Tipo(Cargo/Abono)»:
+# Cargo | Abono) para archivos con UNA columna de importe en positivo. Solo
+# palabras completas: una letra sola («C») es ambigua (cargo o crédito).
+_SIGNO_CARGO = frozenset(
+    {"cargo", "retiro", "debito", "debit", "egreso", "salida", "debe", "withdrawal"}
+)
+_SIGNO_ABONO = frozenset(
+    {"abono", "deposito", "credito", "credit", "ingreso", "entrada", "haber", "deposit"}
+)
+_AGUJAS_SIGNO = (
+    "tipo", "naturaleza", "cargoabono", "debitocredito", "signo", "sentido", "movimiento",
+)
+# Columnas que, juntas y en el orden del archivo, forman la DESCRIPCIÓN (la
+# transacción de Scotiabank más sus leyendas: «SEL TRANSF. INTERBANCARIA SPEI
+# BANORTE fact vip 7387», que es la MISMA forma que la IA transcribe del PDF y
+# con la que el API deduplica y completa el concepto del SPEI). «transacci»
+# sin terminar a propósito: el encabezado llega con el acento roto
+# («Transacci�n» ⇒ «transaccin»).
+_AGUJAS_DESC = (
+    "concepto", "descrip", "detalle", "movimiento", "beneficiario", "transacci",
+    "leyenda", "observacion", "glosa",
+)
+# «Información adicional SPEI/SPID»: de ahí sale QUIÉN pagó o cobró (el
+# ordenante de un abono, el beneficiario de un cargo), que el PDF también
+# imprime y la oficina necesita para saber de qué cliente o proveedor es el
+# movimiento. Se extrae SOLO el nombre: nunca la CLABE, la clave de rastreo ni
+# la hora (regla del prompt del PDF; el dedupe del API compara descripciones).
+_AGUJAS_INFO_SPEI = ("informacionadicional", "informacinadicional", "adicionalspei")
+# Abono recibido: «<concepto>/<BANCO> DIA-HORA ABONO 26/OCT 02:18:49
+# <clave 18 dígitos> <ORDENANTE> <CLABE 18 dígitos> 40002» (la CLABE puede
+# venir pegada al nombre y recortada: basta una tira de ≥ 12 dígitos).
+_RE_ORDENANTE_SPEI = re.compile(r"\b\d{18}\s+(.*?)\s*\d{12,18}\b")
+# Cargo enviado: «<BANCO> <concepto> <folio> HH:MM:SS <clave> Fecha
+# Operación: 20/OCT <BENEFICIARIO>      /0726900».
+_RE_BENEFICIARIO_SPEI = re.compile(
+    r"fecha\s+operaci.n:\s*\d{1,2}/[A-Za-z]{3}\s+(.+?)\s*/\d+\s*$", re.IGNORECASE
+)
+# Referencia de RELLENO de Scotiabank en los SPEI enviados
+# («00000000000000000001»): no identifica nada y sus últimos dígitos NO son
+# una terminación de tarjeta. Se omite (el API ya tolera su ausencia).
+_RE_REFERENCIA_RELLENO = re.compile(r"0*1?")
+_MUESTRA_FILAS = 200
 
-    df = _leer_tabla(req, formato)
+
+def _texto(v) -> str:
+    t = "" if v is None else str(v).strip()
+    return "" if t.lower() in ("nan", "none", "nat") else t
+
+
+def _valores_muestra(df, col: str) -> list[str]:
+    return [t for t in (_texto(v) for v in df[col].head(_MUESTRA_FILAS).tolist()) if t]
+
+
+def _columna_signo(df, cols: list[str]) -> str | None:
+    """La columna de SENTIDO (Cargo/Abono…): por encabezado y porque TODOS sus
+    valores son palabras de sentido. «Tipo» con «CHQ» no lo es."""
+    for c in cols:
+        n = _norm(c)
+        if not any(a in n for a in _AGUJAS_SIGNO):
+            continue
+        valores = _valores_muestra(df, c)
+        if valores and all(_norm(v) in _SIGNO_CARGO or _norm(v) in _SIGNO_ABONO for v in valores):
+            return c
+    return None
+
+
+def _tipo_por_signo(v) -> str | None:
+    n = _norm(_texto(v))
+    if n in _SIGNO_CARGO:
+        return "CARGO"
+    if n in _SIGNO_ABONO:
+        return "ABONO"
+    return None
+
+
+def _find_col_numerica(df, cols: list[str], *needles: str) -> str | None:
+    """Como `_find_col`, pero la columna debe traer al menos un NÚMERO: un
+    encabezado «Tipo(Cargo/Abono)» con texto Cargo/Abono no es la columna de
+    cargos, y antes se la llevaba por el nombre."""
+    for c in cols:
+        n = _norm(c)
+        if not any(needle in n for needle in needles):
+            continue
+        if any(_to_float(v) is not None for v in _valores_muestra(df, c)):
+            return c
+    return None
+
+
+def _contraparte_spei(info: str) -> str | None:
+    """Ordenante o beneficiario del SPEI a partir de «Información adicional».
+    Solo el NOMBRE; sin coincidencia clara, nada (mejor corto que inventado)."""
+    t = " ".join(info.split())
+    if not t:
+        return None
+    m = _RE_BENEFICIARIO_SPEI.search(t) or _RE_ORDENANTE_SPEI.search(t)
+    if not m:
+        return None
+    nombre = " ".join(m.group(1).split()).strip(" -/.,")
+    return nombre if len(nombre) >= 3 and not nombre.isdigit() else None
+
+
+# Leyenda que es SOLO el banco de origen de un abono SPEI («/BANAMEX»,
+# «EA/BANAMEX»): el PDF la imprime DESPUÉS del concepto («TRASLADO AEREO
+# /BANAMEX») y así quedaron las filas ya importadas; el archivo la trae antes.
+_RE_LEYENDA_BANCO = re.compile(r"^[A-Z]{0,3}/\S")
+
+
+def _descripcion_tabular(row, cols_desc: list[str], col_info: str | None) -> str | None:
+    """Transacción + leyendas (sin repetir una leyenda idéntica a la anterior:
+    en los traspasos la leyenda 1 repite la transacción) + la contraparte del
+    SPEI si se reconoce; en UNA línea y con el tope de siempre. La leyenda que
+    es solo el banco («/BANAMEX») va DESPUÉS del concepto, como en el PDF: así
+    la fila previa («TRANSF INTERBANCARIA SPEI TRASLADO AEREO /BANAMEX») es
+    prefijo exacto de la nueva y el dedupe del API la reconoce."""
+    partes: list[str] = []
+    for c in cols_desc:
+        t = _texto(row[c])
+        if t and (not partes or t != partes[-1]):
+            partes.append(t)
+    if len(partes) >= 3 and _RE_LEYENDA_BANCO.match(partes[1]):
+        partes[1], partes[2] = partes[2], partes[1]
+    if col_info:
+        nombre = _contraparte_spei(_texto(row[col_info]))
+        if nombre and nombre not in partes:
+            partes.append(nombre)
+    return _descripcion_limpia(" ".join(partes))
+
+
+def _referencia_util(v) -> str | None:
+    t = _texto(v)
+    if not t or _RE_REFERENCIA_RELLENO.fullmatch(t):
+        return None
+    return t[:120]
+
+
+def _advertencia_moneda(df, cols: list[str], cuenta_moneda: str | None) -> list[str]:
+    """Movimientos en OTRA moneda que la cuenta (columna «Moneda» del archivo)."""
+    if not cuenta_moneda:
+        return []
+    col = next((c for c in cols if _norm(c) == "moneda"), None)
+    if not col:
+        return []
+    esperada = _norm(cuenta_moneda)
+    otras = Counter(
+        t.upper() for t in (_texto(v) for v in df[col].tolist()) if t and _norm(t) != esperada
+    )
+    if not otras:
+        return []
+    detalle = ", ".join(f"{n} en {m}" for m, n in otras.most_common())
+    return [
+        f"{sum(otras.values())} movimiento(s) en otra moneda que la cuenta "
+        f"({cuenta_moneda}): {detalle}. Revísalos antes de importar."
+    ]
+
+
+def _parse_tabular(req: ConciliacionParseRequest, formato: str) -> ConciliacionParseResponse:
+    df, nota_columna = _leer_tabla(req, formato)
     cols = [str(c) for c in df.columns]
 
     # PAYWISE: mapeo manual del panel manda; si no, detección por encabezados.
@@ -450,41 +648,41 @@ def _parse_tabular(req: ConciliacionParseRequest, formato: str) -> ConciliacionP
         return _parse_paywise(df, detectadas)
 
     col_fecha = _find_col(cols, "fecha", "date")
+    # El SENTIDO con texto (Scotiabank: «Tipo(Cargo/Abono)») se resuelve
+    # PRIMERO y queda fuera de las demás búsquedas: por encabezado parecía
+    # una columna de cargos y de abonos a la vez.
+    col_signo = _columna_signo(df, cols)
+    sin_signo = [c for c in cols if c != col_signo]
     # La REFERENCIA tiene columna propia (15-sep-2026): ahí viaja la
     # terminación de la tarjeta ('0025830577' ⇒ 0577), que es lo que desempata
     # dos cargos del mismo monto el mismo día. Antes se tiraba (ref = None).
     col_ref = _find_col(
-        cols,
+        sin_signo,
         "referencia", "autorizacion", "clavederastreo", "folio",
         "numerodeoperacion", "idoperacion", "numerodemovimiento",
     )
-    otros = [c for c in cols if c != col_ref]
+    col_info = next(
+        (c for c in sin_signo if any(a in _norm(c) for a in _AGUJAS_INFO_SPEI)), None
+    )
+    otros = [c for c in sin_signo if c not in (col_ref, col_info, col_fecha)]
     # La descripción NO compite con la referencia; si el archivo solo trae
     # "Referencia" como texto, esa misma columna hace de descripción (como
-    # antes de separarlas).
-    col_desc = (
-        _find_col(otros, "concepto", "descrip", "detalle", "movimiento", "beneficiario")
-        or col_ref
-    )
-    col_cargo = _find_col(cols, "cargo", "retiro", "debito", "debit")
-    col_abono = _find_col(cols, "abono", "deposito", "credito", "credit")
-    col_monto = _find_col(cols, "monto", "importe", "amount")
-    col_saldo = _find_col(cols, "saldo", "balance")
+    # antes de separarlas). Varias columnas de texto (transacción + leyendas)
+    # se JUNTAN en el orden del archivo.
+    cols_desc = [c for c in otros if any(a in _norm(c) for a in _AGUJAS_DESC)]
+    col_cargo = _find_col_numerica(df, sin_signo, "cargo", "retiro", "debito", "debit")
+    col_abono = _find_col_numerica(df, sin_signo, "abono", "deposito", "credito", "credit")
+    col_monto = _find_col_numerica(df, sin_signo, "monto", "importe", "amount")
+    col_saldo = _find_col_numerica(df, sin_signo, "saldo", "balance")
 
     movimientos: list[MovimientoParseado] = []
     for _, row in df.iterrows():
-        fecha = None
-        if col_fecha:
-            try:
-                ts = pd.to_datetime(str(row[col_fecha]), dayfirst=True, errors="coerce")
-                if ts is not None and not pd.isna(ts):
-                    fecha = ts.strftime("%Y-%m-%d")
-            except (ValueError, TypeError):
-                fecha = None
-
-        desc = str(row[col_desc]).strip() if col_desc else None
-        ref_txt = str(row[col_ref]).strip() if col_ref else ""
-        ref = ref_txt[:120] if ref_txt and ref_txt.lower() not in ("nan", "none") else None
+        fecha = _fecha_de(row[col_fecha]) if col_fecha else None
+        if cols_desc:
+            desc = _descripcion_tabular(row, cols_desc, col_info)
+        else:
+            desc = (_texto(row[col_ref]) or None) if col_ref else None
+        ref = _referencia_util(row[col_ref]) if col_ref else None
         saldo = _to_float(row[col_saldo]) if col_saldo else None
 
         cargo = _to_float(row[col_cargo]) if col_cargo else None
@@ -506,12 +704,17 @@ def _parse_tabular(req: ConciliacionParseRequest, formato: str) -> ConciliacionP
         elif col_monto:
             m = _to_float(row[col_monto])
             if m is not None and m != 0:
+                # Con columna de sentido manda su texto; sin ella (o sin
+                # texto reconocible en la fila), el signo del importe.
+                tipo = _tipo_por_signo(row[col_signo]) if col_signo else None
+                if tipo is None:
+                    tipo = "ABONO" if m > 0 else "CARGO"
                 movimientos.append(
                     MovimientoParseado(
                         fecha=fecha,
                         descripcion=desc,
                         monto=abs(m),
-                        tipo="ABONO" if m > 0 else "CARGO",
+                        tipo=tipo,
                         referencia=ref,
                         saldo_posterior=saldo,
                     )
@@ -528,23 +731,20 @@ def _parse_tabular(req: ConciliacionParseRequest, formato: str) -> ConciliacionP
             "(bruto/comisión/neto): se importó como banco genérico. Usa el mapeo "
             "manual de columnas para leerlo como Paywise."
         )
+    if nota_columna:
+        notas = f"{nota_columna} {notas}".strip()
     return ConciliacionParseResponse(
         movimientos=movimientos, total=len(movimientos), formato=formato, notas=notas,
         columnas=cols,
-        advertencias=_advertencias_saldos(movimientos),
+        advertencias=[
+            *_advertencias_saldos(movimientos),
+            *_advertencia_moneda(df, cols, req.cuenta_moneda),
+        ],
     )
 
 
-def _advertencias_saldos(movimientos: list[MovimientoParseado]) -> list[str]:
-    """Cadena de saldos: saldo[i] = saldo[i−1] − cargo + abono (±0.01).
-
-    Si no cuadra, entre esas dos líneas FALTA un movimiento (extracción
-    incompleta) o sobra uno. Es el detector más barato que existe de un
-    estado de cuenta importado a medias; solo corre si el archivo trae saldo.
-    """
-    con_saldo = [m for m in movimientos if m.saldo_posterior is not None]
-    if len(con_saldo) < 2:
-        return []
+def _saldos_rotos(con_saldo: list[MovimientoParseado]) -> list[str]:
+    """Puntos donde saldo[i] ≠ saldo[i−1] − cargo + abono (±0.01), en ese orden."""
     rotos: list[str] = []
     previo = con_saldo[0]
     for m in con_saldo[1:]:
@@ -556,6 +756,26 @@ def _advertencias_saldos(movimientos: list[MovimientoParseado]) -> list[str]:
                 f"({(m.descripcion or '')[:40]})"
             )
         previo = m
+    return rotos
+
+
+def _advertencias_saldos(movimientos: list[MovimientoParseado]) -> list[str]:
+    """Cadena de saldos: saldo[i] = saldo[i−1] − cargo + abono (±0.01).
+
+    Si no cuadra, entre esas dos líneas FALTA un movimiento (extracción
+    incompleta) o sobra uno. Es el detector más barato que existe de un
+    estado de cuenta importado a medias; solo corre si el archivo trae saldo.
+    Un archivo del más reciente al más antiguo (el portal nuevo de
+    Scotiabank) se valida al revés: gana el orden con menos cortes.
+    """
+    con_saldo = [m for m in movimientos if m.saldo_posterior is not None]
+    if len(con_saldo) < 2:
+        return []
+    rotos = _saldos_rotos(con_saldo)
+    if rotos:
+        al_reves = _saldos_rotos(list(reversed(con_saldo)))
+        if len(al_reves) < len(rotos):
+            rotos = al_reves
     if not rotos:
         return []
     detalle = "; ".join(rotos[:3]) + (f"; y {len(rotos) - 3} más" if len(rotos) > 3 else "")
