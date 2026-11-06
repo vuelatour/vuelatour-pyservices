@@ -984,6 +984,15 @@ class BalanceAvionVuelo(BaseModel):
     op_vinculos: list[BalanceVinculoGasto] = Field(default_factory=list)
     piloto_vinculos: list[BalanceVinculoGasto] = Field(default_factory=list)
     otros_vinculos: list[BalanceVinculoGasto] = Field(default_factory=list)
+    # ADITIVO (5-nov-2026, API 0.0.121, invariante 117 del API; pedido de la
+    # oficina: «cuando aún no se le paga al operador externo ponerlo en
+    # amarillo y que la nota diga que es el precio estimado»): OPERACIONES
+    # carga el costo COTIZADO del operador externo porque el pago aún no
+    # está en Gastos (ni marcado como pago al operador ni coincidente). La
+    # celda va en ámbar; la nota ya lo dice («— ESTIMADO: …» en
+    # `op_detalle`). Ausente (API previo) o False ⇒ byte a byte el de
+    # siempre.
+    costo_operador_estimado: bool = False
     permiso_afac_mxn: float | None = None
     # ADITIVO (12-oct-2026, API 0.0.69): la «Aportación AFAC USD/hr» del
     # AVIÓN de la fila. En el Balance general (hoja de vuelos de la flota)

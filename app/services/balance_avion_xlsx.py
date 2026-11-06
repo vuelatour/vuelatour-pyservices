@@ -2034,6 +2034,34 @@ _NOTA_TACOS_AMBAR = (
     "TIEMPO VUELO en ámbar = salto entre tramos DEL MISMO vuelo (el "
     "tramo culpable está en la nota) — mismo amarillo que el panel."
 )
+# Costo del operador externo ESTIMADO (5-nov-2026, API 0.0.121, invariante
+# 117 del API; pedido de la oficina: «cuando aún no se le paga al operador
+# externo ponerlo en amarillo y que la nota diga que es el precio
+# estimado; ya después se pone el que sí se pagó cuando se suba el gasto»).
+# El API manda `costo_operador_estimado: true` en la fila cuyo OPERACIONES
+# carga el precio COTIZADO (ningún gasto lo cubre); la nota de la celda ya
+# lo dice. Aquí: la celda que lo carga va en ámbar —OPERACIONES en el
+# Balance mensual (individual y flota), TOTAL PARA PROVEEDOR (PESOS) en el
+# general— y la leyenda va al pie SOLO cuando alguna fila trae la bandera
+# (sin ella, byte a byte). El libro JSON de la vista en pantalla hereda el
+# relleno.
+_COLS_COSTO_OPERADOR_ESTIMADO = ("op_mxn", "cph_proveedor_mxn")
+_NOTA_COSTO_OPERADOR_ESTIMADO = (
+    "OPERACIONES en ámbar = vuelo con operador externo cuyo pago aún no está "
+    "en Gastos: la celda carga el precio COTIZADO (estimado; su nota lo "
+    "dice). Al registrar el gasto marcado «Es el pago al operador externo», "
+    "el balance toma lo pagado y el ámbar desaparece."
+)
+_CPH_NOTA_COSTO_OPERADOR_ESTIMADO = (
+    "TOTAL PARA PROVEEDOR (PESOS) en ámbar = vuelo con operador externo cuyo "
+    "pago aún no está en Gastos: el costo carga el precio COTIZADO (estimado; "
+    "la nota del desglose lo dice). Al registrar el gasto marcado «Es el pago "
+    "al operador externo», el balance toma lo pagado y el ámbar desaparece."
+)
+
+
+def _hay_costo_operador_estimado(vuelos: list[BalanceAvionVuelo]) -> bool:
+    return any(v.costo_operador_estimado for v in vuelos)
 
 
 # Notas al pie de la hoja maestra sobre los TRASLADOS al pasajero (pie **).
@@ -2896,6 +2924,11 @@ def _hoja_maestra(
                     cell = _formula(ws, row, i, formula, val, fmt)
                 if attr == "horas_cobradas" and horas_menores:
                     fill = AMBER
+                # Costo del operador externo ESTIMADO (5-nov-2026, API
+                # 0.0.121): la celda que lo carga va en ámbar; su nota (el
+                # desglose de siempre) dice que es el precio cotizado.
+                if v.costo_operador_estimado and attr in _COLS_COSTO_OPERADOR_ESTIMADO:
+                    fill = AMBER
                 # Vuelo MULTI-AVIÓN (regla B, 28-ago-2026): la VENTA de la
                 # fila es la parte proporcional de esta matrícula — la nota
                 # de la celda dice cuánto y con qué base se repartió.
@@ -3224,6 +3257,14 @@ def _hoja_maestra(
     )
     if disp.costo_por_hora:
         notas_pie = _notas_pie_costo_por_hora(req, hay_extension)
+    if _hay_costo_operador_estimado(req.vuelos):
+        # Qué significa el ámbar del costo del operador (solo si hay).
+        notas_pie = (
+            *notas_pie,
+            _CPH_NOTA_COSTO_OPERADOR_ESTIMADO
+            if disp.costo_por_hora
+            else _NOTA_COSTO_OPERADOR_ESTIMADO,
+        )
     if hay_marcas_cierre:
         # Qué significan las filas marcadas (solo cuando hay alguna).
         notas_pie = (*notas_pie, _NOTA_CIERRE_FILAS)

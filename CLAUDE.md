@@ -2519,6 +2519,24 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   Tests: `tests/test_balance_empresa_externos.py` (8). Orden de deploy:
   cualquiera (un pyservices previo ignora la llave y el RESULTADO del API ya
   la incluye; un API previo no la manda).
+- **Costo del operador externo ESTIMADO en ámbar (5-nov-2026, API 0.0.121,
+  invariante 117 del API).** Pedido de la oficina: «cuando aún no se le paga
+  al operador externo ponerlo en amarillo y que la nota diga que es el
+  precio estimado; ya después se pone el que sí se pagó cuando se suba el
+  gasto». El API manda `costo_operador_estimado: true` en la fila cuyo
+  OPERACIONES carga el precio COTIZADO (ningún gasto lo cubre: ni marcado
+  como pago al operador ni coincidente) y su `op_detalle` ya termina en «—
+  ESTIMADO: es el precio cotizado al operador; el pago aún no está en
+  Gastos (…)». Aquí (`_COLS_COSTO_OPERADOR_ESTIMADO`): la celda que lo carga
+  va con `AMBER` —OPERACIONES en el Balance mensual (individual y hoja de
+  la flota), TOTAL PARA PROVEEDOR (PESOS) en la variante general (su nota
+  de desglose trae la línea)— y al pie, SOLO si alguna fila lo trae
+  (`_hay_costo_operador_estimado`), la leyenda `_NOTA_COSTO_OPERADOR_ESTIMADO`
+  / `_CPH_NOTA_COSTO_OPERADOR_ESTIMADO` después de la del ámbar de los tacos
+  (antes de la del cierre). Los números no cambian; `libro_json` hereda el
+  relleno (el panel lo ve). **Sin la bandera, byte a byte.** Tests:
+  `tests/test_balance_costo_operador_estimado.py`. Orden de deploy:
+  cualquiera.
 
 ## Conciliación
 
