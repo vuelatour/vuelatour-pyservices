@@ -273,18 +273,21 @@ def _firma_libro(data: bytes) -> str:
 # TIEMPO / TACÓMETRO en rojo suave, pedido de la oficina; ver test_balance_cancelado_rojo):
 # cambian solo la fuente y el relleno de la fila cancelada (y styles.xml renumera los
 # estilos de todas las hojas); la vista JSON hereda el color. Ningún número se movió.
+# Huellas regeneradas el 6-nov-2026 («VENDIDOS CANT» en lugar de «SALIDAS CANT» en la hoja
+# «inventario» del general, pedido del dueño; ver test_balance_inventario_xlsx): cambia solo
+# ese texto de encabezado (y la hoja/valores que lo contienen). Ningún número se movió.
 _FIRMAS_SIN_EMPRESA = {
     "socio empresa en dos aviones": (
         {},
-        "7713bd993270bd70681671b75b7597a352e016e2d6df2ee8f6774910ede76c49",
+        "b85c3356b1128b497ae8e2bb50cb2226ba98936a02731e682e4b9e17b9c48417",
     ),
     "sin socio empresa": (
         {"socios": _SOCIOS_SIN_EMPRESA},
-        "45b86713a1403be2730674a488ec08f44a65e1c3aebcef35f2f19ba8d023af57",
+        "71b18706b90679682daf008d1ecf92d06d7908d45beb6d46665dddd5bb73793f",
     ),
     "sin hoja otros gastos": (
         {"otros_gastos": False},
-        "9956da2a3eeca70624487979c267d6d145ee935cec60fef8c718f2b28d6cf6d8",
+        "37a3ae304d386b1c916da4cf595d671edd5013e67b53240765885dd88d4e6602",
     ),
     "sin inventario": (
         {"inventario": False},

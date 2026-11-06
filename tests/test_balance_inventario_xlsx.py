@@ -133,7 +133,7 @@ _INVENTARIO_USD = {
 
 _ENCABEZADOS_HOY = [
     "ÍTEM", "EXISTENCIA\nACTUAL", "VALOR A\nCOSTO MXN", "COMPRADAS\nCANT",
-    "COMPRAS\nMXN", "SALIDAS\nCANT", "VENDIDO\nMXN", "UTILIDAD\nMXN",
+    "COMPRAS\nMXN", "VENDIDOS\nCANT", "VENDIDO\nMXN", "UTILIDAD\nMXN",
     "MATRÍCULAS",
 ]
 
@@ -322,6 +322,7 @@ def test_individual_conserva_su_hoja_refacciones():
 # UTILIDAD USD, APARTE de las columnas en pesos — jamás sumadas.
 # ---------------------------------------------------------------------------
 
+MONEY = "#,##0.00"
 MONEY_USD = '"$"#,##0.00'
 
 # Septiembre 2026 tras el re-precio de las 10 salidas del 01-sep (tabla §0
@@ -375,7 +376,7 @@ _TIENDA_SEP26 = {
 _ENCABEZADOS_TIENDA_USD = [
     "ÍTEM", "EXISTENCIA\nACTUAL", "VALOR A\nCOSTO MXN",
     "VALOR A COSTO\nUSD (sin T.C.)", "COMPRADAS\nCANT", "COMPRAS\nMXN",
-    "SALIDAS\nCANT", "VENDIDO\nMXN", "UTILIDAD\nMXN", "VENDIDO\nUSD",
+    "VENDIDOS\nCANT", "VENDIDO\nMXN", "UTILIDAD\nMXN", "VENDIDO\nUSD",
     "UTILIDAD\nUSD", "MATRÍCULAS",
 ]
 
@@ -412,8 +413,10 @@ def _firma_hoja(data: bytes, nombre: str = "inventario") -> str:
 # 6e89e37, 24-sep-2026). Además se verificó que los .xlsx completos salen
 # byte-idénticos (todos los miembros del zip salvo docProps/core.xml, que
 # lleva la hora). Si una cambia, la hoja de un API viejo YA NO es la de antes.
-_FIRMA_PAYLOAD_VIEJO = "c0ab510e45b06cca6dc13f2cdd01b4365d5b855b60db48665930ae4044c36925"
-_FIRMA_USD_SIN_TC_22SEP = "dcbc50c7f6e43939ff5c8441ced991d35b7505e861aec9e98d5b7f4df410b52b"
+# Huellas regeneradas el 6-nov-2026 («VENDIDOS CANT» en lugar de «SALIDAS CANT», pedido
+# del dueño; solo cambia el texto de ese encabezado en todos los libros).
+_FIRMA_PAYLOAD_VIEJO = "d972a7898e46e299fe47c376bda61dcf94dc400646f851be1f7b39008bc6de37"
+_FIRMA_USD_SIN_TC_22SEP = "68dcde0ab5f93af1265b5fd2a86bdce5f927b24d3ec8a7b764804a7af89a077d"
 
 
 def _nota_pie(ws) -> str:
@@ -1191,7 +1194,7 @@ _TIENDA_SEP26_0074_TRES = _con_costo(_TIENDA_SEP26, {
 
 _ENCABEZADOS_COSTO_UNITARIO = [
     "ÍTEM", "EXISTENCIA\nACTUAL", "COSTO UNITARIO\nMXN", "VALOR A\nCOSTO MXN",
-    "COMPRADAS\nCANT", "COMPRAS\nMXN", "SALIDAS\nCANT", "VENDIDO\nMXN",
+    "COMPRADAS\nCANT", "COMPRAS\nMXN", "VENDIDOS\nCANT", "VENDIDO\nMXN",
     "UTILIDAD\nMXN", "MATRÍCULAS",
 ]
 
@@ -1199,7 +1202,7 @@ _ENCABEZADOS_COSTO_UNITARIO_USD = [
     "ÍTEM", "EXISTENCIA\nACTUAL", "COSTO UNITARIO\nMXN",
     "COSTO UNITARIO\nUSD (sin T.C.)", "VALOR A\nCOSTO MXN",
     "VALOR A COSTO\nUSD (sin T.C.)", "COMPRADAS\nCANT", "COMPRAS\nMXN",
-    "SALIDAS\nCANT", "VENDIDO\nMXN", "UTILIDAD\nMXN",
+    "VENDIDOS\nCANT", "VENDIDO\nMXN", "UTILIDAD\nMXN",
 ]
 
 
@@ -1349,3 +1352,107 @@ def test_costo_unitario_con_las_tres_columnas_en_dolares_catorce_columnas():
         "VENTA AL AVIÓN\nMXN", "GANANCIA\nMXN", None,
     ]
     assert ws.cell(row=fila_det + 2, column=6).value == 600.0
+
+# ---------------------------------------------------------------------------
+# PRECIO VENTA (6-nov-2026, API 0.0.123, invariante 119 del API; pedido del
+# dueño: «falta poner el precio unitario de venta y en lugar de SALIDAS CANT
+# que diga VENDIDOS CANT»). Entra entre COSTO UNITARIO y VALOR A COSTO (una
+# columna en pesos y, solo si algún producto lo tiene en USD sin T.C., otra en
+# dólares); TOTALES lo deja en blanco; sin el campo (API previo) la hoja no
+# gana columna. «VENDIDOS CANT» sustituye a «SALIDAS CANT» en todos los casos
+# (las huellas de layout se regeneraron a propósito).
+# ---------------------------------------------------------------------------
+
+_TIENDA_SEP26_PRECIO = _con_costo(_TIENDA_SEP26_0074, {
+    "Aceite multigrado semisintético 15W-50": {
+        "costo_unitario_mxn": 375.55,
+        "precio_venta_mxn": 469.44,
+    },
+    "Filtro CH48108": {"costo_unitario_mxn": 1017.80, "precio_venta_mxn": 1272.25},
+})
+
+_ENCABEZADOS_PRECIO_VENTA = [
+    "ÍTEM", "EXISTENCIA\nACTUAL", "COSTO UNITARIO\nMXN", "PRECIO VENTA\nMXN",
+    "VALOR A\nCOSTO MXN", "COMPRADAS\nCANT", "COMPRAS\nMXN", "VENDIDOS\nCANT",
+    "VENDIDO\nMXN", "UTILIDAD\nMXN", "MATRÍCULAS",
+]
+
+
+def test_precio_venta_entre_costo_unitario_y_valor_sin_total():
+    wf, ws = _hoja_con_y_sin_formulas(
+        render_balance_general_xlsx(_general(inventario=_TIENDA_SEP26_PRECIO))
+    )
+    assert [ws.cell(row=4, column=c).value for c in range(1, 12)] == _ENCABEZADOS_PRECIO_VENTA
+    fila_aceite = next(
+        r for r in range(5, 30) if str(ws.cell(row=r, column=1).value).startswith("Aceite")
+    )
+    assert ws.cell(row=fila_aceite, column=3).value == 375.55
+    assert ws.cell(row=fila_aceite, column=4).value == 469.44
+    assert ws.cell(row=fila_aceite, column=4).number_format == MONEY
+    # Un producto sin precio (sale a costo) deja la celda vacía, no un 0.
+    sin_precio = next(
+        r for r in range(5, 30)
+        if ws.cell(row=r, column=1).value not in (None, "TOTALES")
+        and not str(ws.cell(row=r, column=1).value).startswith(("Aceite", "Filtro CH48108"))
+    )
+    assert ws.cell(row=sin_precio, column=4).value is None
+    # TOTALES: COSTO UNITARIO y PRECIO VENTA en blanco; VALOR A COSTO corre a E con su Σ.
+    tot = _fila_de(ws, "TOTALES")
+    assert ws.cell(row=tot, column=3).value is None
+    assert ws.cell(row=tot, column=4).value is None
+    assert wf.cell(row=tot, column=5).value.startswith("=ROUND(SUM(E5:E")
+    assert ws.cell(row=tot, column=5).value == _TIENDA_SEP26_0074["total_valor_mxn"]
+    textos = "\n".join(_textos(ws))
+    assert "PRECIO VENTA MXN = a cuánto se cobra hoy al avión UNA unidad" in textos
+    assert "PRECIO VENTA USD" not in textos
+
+
+def test_precio_venta_sin_costo_unitario_va_justo_despues_de_existencia():
+    """Un producto con precio fijo pero sin compra con costo: la hoja lleva
+    PRECIO VENTA y no COSTO UNITARIO."""
+    inv = _con_costo(_INVENTARIO, {"Filtro 108-1 · 108-1": {"precio_venta_mxn": 2500.0}})
+    ws = _sheet(render_balance_general_xlsx(_general(inventario=inv)), "inventario")
+    assert [ws.cell(row=4, column=c).value for c in range(1, 5)] == [
+        "ÍTEM", "EXISTENCIA\nACTUAL", "PRECIO VENTA\nMXN", "VALOR A\nCOSTO MXN",
+    ]
+    fila_filtro = next(
+        r for r in range(5, 30) if str(ws.cell(row=r, column=1).value).startswith("Filtro 108-1")
+    )
+    assert ws.cell(row=fila_filtro, column=3).value == 2500.0
+    assert ws.cell(row=4, column=11).value is None
+
+
+def test_precio_venta_en_dolares_sin_tc_en_su_propia_columna():
+    inv = {
+        **_con_costo(_INVENTARIO_USD_0074, {
+            "Aceite 15w 50": {"precio_venta_usd": 137.5},
+            "Filtro 108-1 · 108-1": {"precio_venta_mxn": 625.0},
+        }),
+    }
+    ws = _sheet(render_balance_general_xlsx(_general(inventario=inv)), "inventario")
+    assert [ws.cell(row=4, column=c).value for c in range(1, 8)] == [
+        "ÍTEM", "EXISTENCIA\nACTUAL", "COSTO UNITARIO\nMXN",
+        "COSTO UNITARIO\nUSD (sin T.C.)", "PRECIO VENTA\nMXN",
+        "PRECIO VENTA\nUSD (sin T.C.)", "VALOR A\nCOSTO MXN",
+    ]
+    fila_aceite = next(r for r in range(5, 30) if ws.cell(row=r, column=1).value == "Aceite 15w 50")
+    assert ws.cell(row=fila_aceite, column=5).value is None
+    assert ws.cell(row=fila_aceite, column=6).value == 137.5
+    assert ws.cell(row=fila_aceite, column=6).number_format == MONEY_USD
+    fila_filtro = next(
+        r for r in range(5, 30) if str(ws.cell(row=r, column=1).value).startswith("Filtro 108-1")
+    )
+    assert ws.cell(row=fila_filtro, column=5).value == 625.0
+    assert ws.cell(row=fila_filtro, column=6).value is None
+    textos = "\n".join(_textos(ws))
+    assert "PRECIO VENTA USD (sin T.C.)" in textos
+
+
+def test_precio_venta_en_null_no_gana_columna():
+    sin = {"precio_venta_mxn": None, "precio_venta_usd": None}
+    inv = _con_costo(_TIENDA_SEP26_0074, {f["nombre"]: sin for f in _TIENDA_SEP26_0074["filas"]})
+    con_null = render_balance_general_xlsx(_general(inventario=inv))
+    sin_campo = render_balance_general_xlsx(_general(inventario=_TIENDA_SEP26_0074))
+    assert _firma_hoja(con_null) == _firma_hoja(sin_campo)
+    ws = _sheet(con_null, "inventario")
+    assert "PRECIO VENTA\nMXN" not in [ws.cell(row=4, column=c).value for c in range(1, 15)]

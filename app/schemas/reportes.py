@@ -2345,6 +2345,15 @@ class BalanceInventarioItemFila(BaseModel):
     # las filas (API viejo) ⇒ la hoja no gana columna.
     costo_unitario_mxn: float | None = None
     costo_unitario_usd: float | None = None
+    # ADITIVOS (6-nov-2026, API 0.0.123, invariante 119 del API; pedido del
+    # dueño: «falta poner el precio unitario de venta»): PRECIO VENTA = a
+    # cuánto se cobra HOY al avión una unidad (precio fijo del producto o
+    # último precio de compra + margen). `precio_venta_mxn` en pesos;
+    # `precio_venta_usd` SOLO cuando es USD sin T.C. Nunca los dos. Es un
+    # precio, no un importe. None/ausente en todas las filas (API previo) ⇒
+    # la hoja no gana columna.
+    precio_venta_mxn: float | None = None
+    precio_venta_usd: float | None = None
     # ENTRADAs del periodo (compras reales; DEVOLUCION/AJUSTE no son compra).
     compradas_cant: float | None = None
     compradas_costo_mxn: float | None = None

@@ -120,14 +120,17 @@ OM = "otros movimientos"
 # TIEMPO / TACÓMETRO en rojo suave, pedido de la oficina; ver test_balance_cancelado_rojo):
 # cambian solo la fuente y el relleno de la fila cancelada (y styles.xml renumera los
 # estilos de todas las hojas); la vista JSON hereda el color. Ningún número se movió.
+# Huellas regeneradas el 6-nov-2026 («VENDIDOS CANT» en lugar de «SALIDAS CANT» en la hoja
+# «inventario» del general, pedido del dueño; ver test_balance_inventario_xlsx): cambia solo
+# ese texto de encabezado (y la hoja/valores que lo contienen). Ningún número se movió.
 _HUELLAS_0088 = {
     "general-mensual": (
-        "3118efbeac6e59d0ad0904559fdd17a285039d7aa003a27cc03183893ac53090",
-        "cb2f0b8b981cef95e30c187e4d453dd60eae6b43de93e121b48a767dbce85931",
+        "9af3072bc8c2cd5ae55c02a216dcd57ad6fbcebd798d00179acedb519e72bf79",
+        "eafb49732e7c9ff103a853bac74e10bcf8ec123ce0de6851063b9e4f444fde02",
     ),
     "general-general": (
-        "76f657fa9cb88a5f91da74254d4b0a3b5b42fa2926f5451bb57ab1287aaed118",
-        "ac4f39109ad6794a5ed6642d584bd084d34287d4caa834a685910a8f5b975476",
+        "dfd837a90eb3987f5c46c68f0ffdacad7827aa03ed203cbae33ed84096922a24",
+        "c5c906ae1796df59ef0f64f86f877819b3de59b0ab1281cac8be3425335f765d",
     ),
     "individual": (
         "2275703116e02a75862ca53130077db6eabee53eb122ea27170c21a37755f18e",

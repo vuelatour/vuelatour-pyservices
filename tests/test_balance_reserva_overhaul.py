@@ -147,6 +147,9 @@ NOTA_USD_POR_GASTO = (  # corta desde el 26-oct-2026 (nota de celda)
 # TIEMPO / TACÓMETRO en rojo suave, pedido de la oficina; ver test_balance_cancelado_rojo):
 # cambian solo la fuente y el relleno de la fila cancelada (y styles.xml renumera los
 # estilos de todas las hojas); la vista JSON hereda el color. Ningún número se movió.
+# Huellas regeneradas el 6-nov-2026 («VENDIDOS CANT» en lugar de «SALIDAS CANT» en la hoja
+# «inventario» del general, pedido del dueño; ver test_balance_inventario_xlsx): cambia solo
+# ese texto de encabezado (y la hoja/valores que lo contienen). Ningún número se movió.
 _HUELLAS_HEAD = {
     ("individual", True): (
         "89e8352a65fc3635fcb7f60b5c4abe95740053786d7cc2de7cad7bff8e843554",
@@ -154,13 +157,13 @@ _HUELLAS_HEAD = {
     ),
     ("individual", None): tp._HUELLAS_HEAD["individual"],
     ("general-mensual", True): (
-        "b57f0ac17b84ce2d6e265b9cca43323f1bd892b0f2ffe142c607c09e15f35599",
-        "41e836f53450948ac4103c56281f95b54baa3de9a15f724c6d473cac4655274a",
+        "f27a659197ec41b9daf8d7bda38aa29c145d659aedadcbddaf11b26c8de67de4",
+        "f52f22369b296a86c06af408297131ea75ba5f2c6352c833bed61161720a47ff",
     ),
     ("general-mensual", None): tp._HUELLAS_HEAD["general-mensual"],
     ("general-general", True): (
-        "2a85313499c1b30bb91ffdb884998da01cf2e2a615fba8ab4de219e1d3122781",
-        "4dd419306a8ef64ec6de0adc6c83ef10a5b9fcbdee82db0c2567de1818679c28",
+        "717e7c03a623189c78211bb1376158c01e995c1aab0f7c958bc0549237b67744",
+        "1c5394294dcc30cf6e3eba3bdf37f4329ca4218529c420e410e31a683084d404",
     ),
     ("general-general", None): tp._HUELLAS_HEAD["general-general"],
 }

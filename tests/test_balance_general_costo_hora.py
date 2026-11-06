@@ -1110,9 +1110,12 @@ def test_otro_juego_de_columnas_sigue_cuadrando(caso, monkeypatch, registros) ->
 # FINAL (en el general, TIEMPO CALZOS/HOBS (HR)) con relleno rojo suave `FILL_CANCELADO`.
 # Cambian la fuente y el relleno de esa fila (#404) en «fórmulas» y «empresa»; «pago
 # real» no tiene cancelados y queda idéntica. Ningún número ni fórmula se movió.
+# Huellas regeneradas el 6-nov-2026 («VENDIDOS CANT» en lugar de «SALIDAS CANT» en la hoja
+# «inventario» del general, pedido del dueño; ver test_balance_inventario_xlsx): cambia solo
+# ese texto de encabezado (y la hoja/valores que lo contienen). Ningún número se movió.
 _FIRMAS_HOY = {
-    "fórmulas": "fe41ac30c93f36d61ded94cad0f4c4b89841099e2d511b83ad5adb0c70331dfe",
-    "empresa": "d271d4454c2218af28f7f3ae540c452f3fa5020774b1f6e1c040aef22fc8c19a",
+    "fórmulas": "9a131c3ed6932ca18e0f6056b187341706591ae7c0c8bd94a61932fdbad60bd8",
+    "empresa": "e73540ab391e4062638bfc4fb6b3968ebeb83a8687787736686239100a093a34",
     "pago real": "76f4ee6a76e8a50f5c08ca4d1b5f81efc38329d0b1c7c9d908dc01aef37a1c1a",
 }
 # Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
@@ -1203,7 +1206,7 @@ _MIEMBROS_HOY = {
         "xl/worksheets/sheet5.xml": "fdb4dac564e3737e",
         "xl/worksheets/sheet6.xml": "7d6ac26bcf2c1f3c",
         "xl/worksheets/sheet7.xml": "adf6cadd71c786c2",
-        "xl/worksheets/sheet8.xml": "70b522adf02f0bc3",
+        "xl/worksheets/sheet8.xml": "d8607e702080f54c",
         "xl/worksheets/sheet9.xml": "b62956b53ecc85e7",
     },
     "empresa": {
@@ -1228,7 +1231,7 @@ _MIEMBROS_HOY = {
         "xl/worksheets/sheet5.xml": "fdb4dac564e3737e",
         "xl/worksheets/sheet6.xml": "7d6ac26bcf2c1f3c",
         "xl/worksheets/sheet7.xml": "adf6cadd71c786c2",
-        "xl/worksheets/sheet8.xml": "70b522adf02f0bc3",
+        "xl/worksheets/sheet8.xml": "d8607e702080f54c",
         "xl/worksheets/sheet9.xml": "3f48a537bbbbcbf2",
     },
     "pago real": {

@@ -993,18 +993,21 @@ def _huella_json(libro: dict) -> str:
 # TIEMPO / TACÓMETRO en rojo suave, pedido de la oficina; ver test_balance_cancelado_rojo):
 # cambian solo la fuente y el relleno de la fila cancelada (y styles.xml renumera los
 # estilos de todas las hojas); la vista JSON hereda el color. Ningún número se movió.
+# Huellas regeneradas el 6-nov-2026 («VENDIDOS CANT» en lugar de «SALIDAS CANT» en la hoja
+# «inventario» del general, pedido del dueño; ver test_balance_inventario_xlsx): cambia solo
+# ese texto de encabezado (y la hoja/valores que lo contienen). Ningún número se movió.
 _HUELLAS_FORMA_REAL_0076 = {
     "individual": (
         "63b77c586998540a44c5b59b9f28ae5c067717445e8d138014a57b66039c9651",
         "504605b2cc2b80ce5a2de348c2ab6d6073f03f10d648d75c14be735373983cc2",
     ),
     "general-mensual": (
-        "99985eb88d9ac09bd6c4b5b02fc74652a91ba966463eb94b8ecdcc2125476d63",
-        "610b6c627bc238898c1609780add72c9d12adb9189c78823457c08296cce4a4c",
+        "e2c42be37036efd9d8ac7a1f01a6aef08e8452d9934658e3b903dcc40c1c2daa",
+        "dfd4a58d71f454cd46be8bdceeda2595ab95d083891727045388c5a75be12899",
     ),
     "general-general": (
-        "159173014937bdc4df7ffc516eef0c663474ddc94efcf125b2ecbe0b5f26389f",
-        "d5db82ff71f4df5bca4fcd94a2509995069f36fc9d1dfef58bf1866b8484d0be",
+        "353740cbe1dadb56a6aa355e0f7fd4f9b35f48c3c7a6df6a2cfecd46873d2702",
+        "05143ec9b47296c4b7ade67ccf84b99bf1c29b74b15cbdaa43c0f4fe6f65da44",
     ),
 }
 
@@ -1445,4 +1448,4 @@ _HUELLA_INDIVIDUAL_HEAD = "207492c2ad8013c64a3929ebdc36284787718a999e3b6577956aa
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
-_HUELLA_GENERAL_HEAD = "e95adfc9511cfaefed563830a3fa270217981b30c066d88cb7a314a62928c3cb"
+_HUELLA_GENERAL_HEAD = "88cc605d962068a724b7e6653ff6e4fd35fccdc0a78a1d6b532ba942db99a8ba"

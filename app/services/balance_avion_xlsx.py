@@ -6618,6 +6618,24 @@ _NOTA_INVENTARIO_COSTO_UNITARIO_USD = (
     "en dólares y no se pudo pasar a pesos por falta de tipo de cambio; se "
     "muestra EN DÓLARES y nunca se mezcla con la columna en pesos."
 )
+# PRECIO VENTA (6-nov-2026, API 0.0.123, invariante 119 del API; pedido del
+# dueño: «falta poner el precio unitario de venta»): a cuánto se cobra HOY al
+# avión UNA unidad. Lo calcula el API con la misma regla de la ficha y de la
+# salida (precio fijo del producto → último precio de compra + margen → a
+# costo); aquí solo se pinta. Entra entre COSTO UNITARIO y VALOR A COSTO;
+# TOTALES lo deja en blanco (es un precio, no un importe).
+_NOTA_INVENTARIO_PRECIO_VENTA = (
+    " PRECIO VENTA MXN = a cuánto se cobra hoy al avión UNA unidad de cada "
+    "producto: su precio de venta fijo o, sin él, el último precio de compra "
+    "más el margen de la tienda; en pesos (el precio en dólares al T.C. "
+    "oficial de hoy). Vacío = el producto sale a costo. Es un precio, no un "
+    "importe: la fila TOTALES no lo suma."
+)
+_NOTA_INVENTARIO_PRECIO_VENTA_USD = (
+    " PRECIO VENTA USD (sin T.C.): productos cuyo precio de venta es en dólares "
+    "y no se pudo pasar a pesos por falta de tipo de cambio; se muestra EN "
+    "DÓLARES y nunca se mezcla con la columna en pesos."
+)
 # Nota bajo el BLOQUE 2 (solo con la regla nueva y si hay salidas): el
 # detalle de salidas sale de los GASTOS del balance (T.C. de cada gasto o el
 # promedio del libro, igual que la hoja 'balance') y la utilidad por ítem
@@ -6741,6 +6759,19 @@ def _hay_usd_sin_tc(inv: BalanceHojaInventario) -> bool:
     if inv.total_valor_usd:  # None o 0 → no hay nada que mostrar
         return True
     return any(f.valor_costo_usd or f.sin_tc for f in inv.filas)
+
+
+def _hay_precio_venta(inv: BalanceHojaInventario) -> bool:
+    """¿La hoja lleva PRECIO VENTA? (6-nov-2026, API 0.0.123) Solo si
+    alguna fila trae el precio: un API viejo no manda los campos y la hoja
+    sigue siendo la de siempre."""
+    return any(f.precio_venta_mxn is not None or f.precio_venta_usd is not None for f in inv.filas)
+
+
+def _hay_precio_venta_usd(inv: BalanceHojaInventario) -> bool:
+    """¿Y la de PRECIO VENTA en DÓLARES? Solo si algún producto lo tiene en
+    USD sin T.C. de hoy."""
+    return any(f.precio_venta_usd is not None for f in inv.filas)
 
 
 def _hay_costo_unitario(inv: BalanceHojaInventario) -> bool:
@@ -6895,7 +6926,14 @@ def _hoja_inventario(
     # independiente de `off` (VALOR A COSTO USD) y de `off_venta`.
     cu = _hay_costo_unitario(inv)
     cu_usd = cu and _hay_costo_unitario_usd(inv)
-    oc = (2 if cu_usd else 1) if cu else 0
+    ncu = (2 if cu_usd else 1) if cu else 0
+    # PRECIO VENTA (6-nov-2026, API 0.0.123): una o dos columnas más, justo
+    # después de COSTO UNITARIO y antes de VALOR A COSTO; entran al mismo
+    # desplazamiento `oc` (TOTALES también las deja en blanco).
+    pv = _hay_precio_venta(inv)
+    pv_usd = pv and _hay_precio_venta_usd(inv)
+    npv = (2 if pv_usd else 1) if pv else 0
+    oc = ncu + npv
     # Desplazamiento de las columnas del periodo: el costo unitario y, cuando
     # entra, la columna en dólares del valorizado.
     off = oc + (1 if usd else 0)
@@ -6921,6 +6959,8 @@ def _hoja_inventario(
         ancho_detalle,
         *([14] if cu else []),
         *([16] if cu_usd else []),
+        *([14] if pv else []),
+        *([16] if pv_usd else []),
         16,
         *([18] if usd else []),
         12,
@@ -6944,11 +6984,15 @@ def _hoja_inventario(
             "EXISTENCIA\nACTUAL",
             *(["COSTO UNITARIO\nMXN"] if cu else []),
             *(["COSTO UNITARIO\nUSD (sin T.C.)"] if cu_usd else []),
+            *(["PRECIO VENTA\nMXN"] if pv else []),
+            *(["PRECIO VENTA\nUSD (sin T.C.)"] if pv_usd else []),
             "VALOR A\nCOSTO MXN",
             *(["VALOR A COSTO\nUSD (sin T.C.)"] if usd else []),
             "COMPRADAS\nCANT",
             "COMPRAS\nMXN",
-            "SALIDAS\nCANT",
+            # «VENDIDOS CANT» (6-nov-2026, pedido del dueño): la misma cifra de
+            # siempre (salidas del periodo), con el nombre que lee la oficina.
+            "VENDIDOS\nCANT",
             "VENDIDO\nMXN",
             "UTILIDAD\nMXN",
             *(["VENDIDO\nUSD", "UTILIDAD\nUSD"] if venta_usd else []),
@@ -6968,6 +7012,12 @@ def _hoja_inventario(
                 _num(ws, row, 3, f.costo_unitario_mxn).border = _border
             if cu_usd:
                 _num(ws, row, 4, f.costo_unitario_usd, MONEY_USD).border = _border
+            if pv:
+                # PRECIO VENTA en pesos; None = sale a costo, o en dólares
+                # sin T.C. (va en la de al lado).
+                _num(ws, row, 3 + ncu, f.precio_venta_mxn).border = _border
+            if pv_usd:
+                _num(ws, row, 4 + ncu, f.precio_venta_usd, MONEY_USD).border = _border
             _num(ws, row, 3 + oc, f.valor_costo_mxn).border = _border
             if usd:
                 _num(ws, row, 4 + oc, f.valor_costo_usd, MONEY_USD).border = _border
@@ -7003,9 +7053,9 @@ def _hoja_inventario(
             return f"ROUND(SUM({letra}5:{letra}{row - 1}),{dec})"
 
         _formula(ws, row, 2, _suma_col(2, 3), inv.total_piezas, "General", bold=True)
-        # COSTO UNITARIO (cols 3 y 4 cuando `oc` > 0) es un precio, no un
-        # importe: TOTALES lo deja EN BLANCO (sin valor ni fórmula; relleno y
-        # borde los pone el bucle de abajo).
+        # COSTO UNITARIO y PRECIO VENTA (las `oc` columnas tras EXISTENCIA)
+        # son precios, no importes: TOTALES los deja EN BLANCO (sin valor ni
+        # fórmula; relleno y borde los pone el bucle de abajo).
         _formula(ws, row, 3 + oc, _suma_col(3 + oc), inv.total_valor_mxn, MONEY, bold=True)
         if usd:
             # Total en dólares APARTE. Lo manda el API; si faltara (solo
@@ -7173,6 +7223,8 @@ def _hoja_inventario(
             + (_NOTA_INVENTARIO_VENTA_USD_ULTIMO_PRECIO if venta_usd else "")
             + (_NOTA_INVENTARIO_COSTO_UNITARIO if cu else "")
             + (_NOTA_INVENTARIO_COSTO_UNITARIO_USD if cu_usd else "")
+            + (_NOTA_INVENTARIO_PRECIO_VENTA if pv else "")
+            + (_NOTA_INVENTARIO_PRECIO_VENTA_USD if pv_usd else "")
             + (
                 _nota_margen(inv.margen_venta_pct, ultimo_precio=True)
                 if inv.margen_venta_pct is not None

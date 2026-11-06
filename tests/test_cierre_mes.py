@@ -91,18 +91,21 @@ AMBER = "FCD34D"  # ámbar del balance (`AMBER` de balance_avion_xlsx)
 # HR / TACO INICIO / TACO FINAL (en el general, TIEMPO CALZOS/HOBS (HR)) con relleno rojo
 # suave. Cambian el .xlsx (fuente y relleno nuevos en styles.xml, que renumera los
 # estilos) y la vista JSON (hereda color de fuente y relleno). Ningún número se movió.
+# Huellas regeneradas el 6-nov-2026 («VENDIDOS CANT» en lugar de «SALIDAS CANT» en la hoja
+# «inventario» del general, pedido del dueño; ver test_balance_inventario_xlsx): cambia solo
+# ese texto de encabezado (y la hoja/valores que lo contienen). Ningún número se movió.
 _HUELLAS_HEAD = {
     "individual": (
         "2275703116e02a75862ca53130077db6eabee53eb122ea27170c21a37755f18e",
         "b72a4620f305671417beb14cc53d99c1e558d89432d73f032035206d18912d87",
     ),
     "general-mensual": (
-        "97a4a024535da1587837b10c5190c21612bfe16a57f8050a4f3b45d64ca9f2e0",
-        "5cf84f1e2950787c4464ec59ac0c66944bede7ffec71f323ef28c52f08546fdf",
+        "19e0aff205360a5b70cfbd9359aa564d4a2939fa28de36098e65b2263046553e",
+        "92825330c73f5e52d04d657d21f83a5d208fe7836973b491a6ef0d7182f71cd1",
     ),
     "general-general": (
-        "a7ebbe5c8575e80d228c5e61c22c1addb6297a36faec1dfb728b04b8c6e4e735",
-        "bafb42b737c6ba0577f9a5fe1d1c061e201d99d5124cd62da2ff7e1ca14cfaec",
+        "f7166b84e480a4f6b48676fa3ff8df4a781a4b3ec6b1c41d56b283c8966ed766",
+        "d15b92d00af1da6b46078a6d69f92c1bee562b203122600b493608098411db44",
     ),
 }
 _HUELLA_REPARTO_PDF_HEAD = "9448b553c276bcd2bd8ddb878136bf888bf2d68f85d2fc5a1a3aaee2da91d5c0"

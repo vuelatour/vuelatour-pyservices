@@ -1326,10 +1326,13 @@ def _firma_valores(data: bytes) -> str:
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
+# Huellas regeneradas el 6-nov-2026 («VENDIDOS CANT» en lugar de «SALIDAS CANT» en la hoja
+# «inventario» del general, pedido del dueño; ver test_balance_inventario_xlsx): cambia solo
+# ese texto de encabezado (y la hoja/valores que lo contienen). Ningún número se movió.
 _FIRMAS_ANTES = {
     "tst": "a077675fbf65e822e8f61b7b38e96202ba5dcd0942ed5a4846366531d2458667",
     "dos": "a2c08e5da69688c8ef36a8cef4cada7a34c82790a387eb45b866d67193222755",
-    "general": "24b784748e634a95a44989606e8cda8c29b2eda8b6d1b5cd01e78e596ae43666",
+    "general": "953a04481bf452ad607866c0fd13c22800100b5a323054e646ad76628f55405c",
     # Con la caché en `repr` (17 cifras) esta daba 5472c557…: % COBRADO
     # difería del generador anterior en el último bit.
     "pct17": "beebddb158246063265e46ce8a18f17f4348ef74c625daa3547cd79394b2f1ed",

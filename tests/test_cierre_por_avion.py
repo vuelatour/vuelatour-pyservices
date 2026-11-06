@@ -498,6 +498,9 @@ def test_dinero_flota_parcial() -> None:
 # TIEMPO / TACÓMETRO en rojo suave, pedido de la oficina; ver test_balance_cancelado_rojo):
 # cambian solo la fuente y el relleno de la fila cancelada (y styles.xml renumera los
 # estilos de todas las hojas); la vista JSON hereda el color. Ningún número se movió.
+# Huellas regeneradas el 6-nov-2026 («VENDIDOS CANT» en lugar de «SALIDAS CANT» en la hoja
+# «inventario» del general, pedido del dueño; ver test_balance_inventario_xlsx): cambia solo
+# ese texto de encabezado (y la hoja/valores que lo contienen). Ningún número se movió.
 _HUELLAS_HEAD_29107E6 = {
     "individual": (
         "3219bd59f3e88d802efc25bc7b5d6e4bc89f6a4ed3610db4d8bd44803d54c089",
@@ -508,16 +511,16 @@ _HUELLAS_HEAD_29107E6 = {
         "0555af5f1199b4ecfb01e690eb264420f7f5401407e3a5278201e858393b7cc9",
     ),
     "general-mensual": (
-        "3357cc4cf0c827e89a0cef9160e1694b34f0cf722091c0a10bb4634dc0bf6b1b",
-        "630e4b20dfea3ff0b9fbd0ca69f1d1a8081e91532a5e518b7ff54ae66fb0789f",
+        "243738c142b1e75f08822b3f6a9a2e40da59376e9378771f244a22d8601cd01d",
+        "48e33ad1d0fb860c2429e200bf8d3c1a6319525372f2522eadde1d2fdc783e52",
     ),
     "general-general": (
-        "c8042a475bef7f4a7b8ad158688fc141dd6a3f9b3c92e9a62037f1270dd0ffbc",
-        "80e437e44d14c8d82ca33b59eba682cb0da3c07ae9db817bb5967e31352395f7",
+        "2065186fb392afd0aca5f75b55798f62ef8fb4c34eaef798f0ab25dfb93c39d4",
+        "3bfaf69b6b855207a65bb441874696077cf90566e5d1cc5d952fc38a0f4b0fc6",
     ),
     "general-consolidado": (
-        "3357cc4cf0c827e89a0cef9160e1694b34f0cf722091c0a10bb4634dc0bf6b1b",
-        "15cb23bd259d0453ca9ef6fe8bfcca7709a714cd2f246e2f19753d8e7faf74f3",
+        "243738c142b1e75f08822b3f6a9a2e40da59376e9378771f244a22d8601cd01d",
+        "bf5e3a5a5d5567590f1e4507f875cde2433095fe9e381b3bc3c12a5deef50129",
     ),
     "reparto": (
         "086d81ea77269367cce33dcdbc799450232d7967b63019fa381da1ff9e2959ac",

@@ -2552,6 +2552,22 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   #404 cancelado) se regeneraron a propósito; la fuente y el relleno nuevos
   renumeran los estilos de todas las hojas en styles.xml. Tests:
   `tests/test_balance_cancelado_rojo.py`. Sin cambio en el API.
+- **PRECIO VENTA y «VENDIDOS CANT» en la hoja «inventario» del general
+  (6-nov-2026, API 0.0.123, invariante 119 del API).** Pedido del dueño:
+  «falta poner el precio unitario de venta y en lugar de SALIDAS CANT que
+  diga VENDIDOS CANT». `BalanceInventarioItemFila.precio_venta_mxn` /
+  `precio_venta_usd` (aditivos; a cuánto se cobra hoy al avión una unidad,
+  lo calcula el API). En `_hoja_inventario`: `_hay_precio_venta` /
+  `_hay_precio_venta_usd` ⇒ una o dos columnas «PRECIO VENTA MXN» / «PRECIO
+  VENTA USD (sin T.C.)» justo después de COSTO UNITARIO y antes de VALOR A
+  COSTO, dentro del mismo desplazamiento `oc` (= `ncu` + `npv`); TOTALES las
+  deja en blanco (precio, no importe) y las notas
+  `_NOTA_INVENTARIO_PRECIO_VENTA[_USD]` van al pie con la regla nueva. Sin los
+  campos (o en null) la hoja no gana columna. «SALIDAS CANT» pasó a
+  «VENDIDOS CANT» en TODOS los libros (misma cifra): las firmas de layout de
+  `test_balance_inventario_xlsx` y las huellas de bytes de los libros con
+  hoja «inventario» se regeneraron a propósito. Tests:
+  `tests/test_balance_inventario_xlsx.py` (bloque PRECIO VENTA).
 
 ## Conciliación
 
