@@ -325,6 +325,58 @@ NOTA_REPARTO_SOCIO_BALANCE = (
     "reserva de overhaul (informativa, no se resta del saldo); ¿Se descuenta? = Sí cuando "
     "VuelaTour se la retiene: su monto a recibir ya la descuenta."
 )
+# RESERVA PARA TODOS LOS SOCIOS (6-nov-2026, API 0.0.125, invariante 121 del
+# API). Los textos se eligen por los DATOS (`descuenta_reserva` de cada
+# socio): un snapshot cerrado antes, con socios que no descontaban, sigue con
+# los rótulos de arriba; un reparto donde todos descuentan lleva estos.
+ENCABEZADO_RESERVA_DESCONTADA = "Reserva overhaul (se descuenta a los socios)"
+ENCABEZADO_RESERVA_DESCONTADA_PESOS = "Reserva overhaul (MXN, se descuenta a los socios)"
+NOTA_OTROS_INGRESOS_AVION_BALANCE_TODOS = (
+    "Otros ingresos del avión = reembolsos, ventas e intereses registrados en "
+    "Ingresos con ese avión, netos de comisión bancaria; SUMAN al saldo (Saldo "
+    "disponible = venta cobrada − comisiones − gastos − fijos − provisión AFAC + otros "
+    "ingresos del avión; la reserva de overhaul se descuenta a cada socio de su utilidad "
+    "y VuelaTour la retiene)."
+)
+NOTA_CASCADA_BALANCE_TODOS = (
+    "Saldo disponible = venta cobrada − comisiones − gastos − fijos − provisión AFAC "
+    "(tarifa de la ficha del avión × horas cobradas); la reserva de overhaul (lo que el "
+    "avión debe guardar) se descuenta a cada socio de su utilidad: VuelaTour la retiene."
+)
+NOTA_REPARTO_SOCIO_BALANCE_TODOS = (
+    "Utilidad = parte del socio del saldo disponible; Reserva a guardar = su parte de la "
+    "reserva de overhaul (no resta del saldo del avión); ¿Se descuenta? = Sí para todos "
+    "los socios (desde el 6-nov-2026): su monto a recibir ya la descuenta."
+)
+
+
+def todos_descuentan_reserva_req(req: RepartoPdfRequest) -> bool:
+    """¿A TODOS los socios del documento se les descuenta la reserva? (cada
+    avión con socios los descuenta a todos; sin ningún socio ⇒ False)."""
+    con_socios = [a for a in req.aviones if a.reparto]
+    return bool(con_socios) and all(
+        all(bool(linea.descuenta_reserva) for linea in a.reparto) for a in con_socios
+    )
+
+
+def _nota_otros_ingresos(como_balance: bool, todos: bool) -> str:
+    """Nota de «Otros ingresos del avión» según la cascada y los datos."""
+    if not como_balance:
+        return NOTA_OTROS_INGRESOS_AVION
+    return NOTA_OTROS_INGRESOS_AVION_BALANCE_TODOS if todos else NOTA_OTROS_INGRESOS_AVION_BALANCE
+
+
+def _nota_cascada(todos: bool) -> str:
+    return NOTA_CASCADA_BALANCE_TODOS if todos else NOTA_CASCADA_BALANCE
+
+
+def _encabezado_reserva(como_balance: bool, todos: bool, *, pesos: bool) -> str:
+    """Rótulo de la columna de la reserva según la cascada y los datos."""
+    if not como_balance:
+        return "Reserva overhaul (MXN)" if pesos else "Reserva overhaul"
+    if todos:
+        return ENCABEZADO_RESERVA_DESCONTADA_PESOS if pesos else ENCABEZADO_RESERVA_DESCONTADA
+    return ENCABEZADO_RESERVA_INFORMATIVA_PESOS if pesos else ENCABEZADO_RESERVA_INFORMATIVA
 
 
 # ===== COMBUSTIBLE SEPARADO DE LOS GASTOS DIRECTOS (23-oct-2026, API 0.0.103,
@@ -483,6 +535,8 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
     # intactas); el saldo del API ya los incluye.
     con_oi = any(a.otros_ingresos_avion_usd for a in req.aviones)
     como_balance = req.reparto_como_balance
+    # Reserva descontada a TODOS (invariante 121): rótulos y notas por los datos.
+    todos_descuentan = como_balance and todos_descuentan_reserva_req(req)
     # Combustible separado (23-oct-2026, API 0.0.103): bloque tras los
     # directos y corrimiento `oc` de todo lo que sigue; sin la llave, 0.
     con_comb, afac_en_bloque, oc = _corrimiento_combustible(req)
@@ -510,7 +564,7 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         *_bloque_combustible_encabezados(con_comb, afac_en_bloque),
         "Gastos indirectos", "Permisos",
         "Fijos (prorrateo + reparto)",
-        ENCABEZADO_RESERVA_INFORMATIVA if como_balance else "Reserva overhaul",
+        _encabezado_reserva(como_balance, todos_descuentan, pesos=False),
         "Saldo disponible",
         # Informativas (regla 28-ago), FUERA de las columnas que suman el saldo:
         # TUAs/extras/pernocta cobrados = ingreso de VuelaTour; y la deuda
@@ -651,13 +705,13 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
         no = ws.cell(
             row=r,
             column=1,
-            value=NOTA_OTROS_INGRESOS_AVION_BALANCE if como_balance else NOTA_OTROS_INGRESOS_AVION,
+            value=_nota_otros_ingresos(como_balance, todos_descuentan),
         )
         no.font = Font(italic=True, size=9, color="5B6470")
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
     elif como_balance:
         r += 1
-        nb = ws.cell(row=r, column=1, value=NOTA_CASCADA_BALANCE)
+        nb = ws.cell(row=r, column=1, value=_nota_cascada(todos_descuentan))
         nb.font = Font(italic=True, size=9, color="5B6470")
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
     # Combustible separado (23-oct-2026): los directos van sin combustible y
@@ -774,7 +828,12 @@ def render_reparto_xlsx(req: RepartoPdfRequest) -> bytes:
             nc.font = Font(italic=True, size=9, color="5B6470")
             r += 1
     if como_balance:
-        _nota(ws, r, NOTA_REPARTO_SOCIO_BALANCE, n_cols)
+        _nota(
+            ws,
+            r,
+            NOTA_REPARTO_SOCIO_BALANCE_TODOS if todos_descuentan else NOTA_REPARTO_SOCIO_BALANCE,
+            n_cols,
+        )
         r += 1
 
     # Detalle de vuelos (solo si el API lo manda): el folio lleva ' · 50 %'
@@ -849,7 +908,11 @@ SIN_PESOS = "—"
 
 
 def encabezados_pesos(
-    con_oi: bool, como_balance: bool = False, con_comb: bool = False
+    con_oi: bool,
+    como_balance: bool = False,
+    con_comb: bool = False,
+    *,
+    todos_descuentan: bool = False,
 ) -> list[str]:
     """Encabezados de la tabla principal en pesos (mismas 14/15 columnas y
     mismo orden que la de dólares). Con la cascada del balance
@@ -868,7 +931,7 @@ def encabezados_pesos(
         "Gastos indirectos (MXN)",
         "Permisos (MXN)",
         "Fijos (prorrateo + reparto) (MXN)",
-        ENCABEZADO_RESERVA_INFORMATIVA_PESOS if como_balance else "Reserva overhaul (MXN)",
+        _encabezado_reserva(como_balance, todos_descuentan, pesos=True),
         "Saldo disponible (MXN)",
         "Otros ingr. VuelaTour (USD, informativo)",
         "Deuda total del cliente (USD, informativo)",
@@ -938,6 +1001,8 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
 
     con_oi = any(a.otros_ingresos_avion_usd or a.otros_ingresos_avion_mxn for a in req.aviones)
     como_balance = req.reparto_como_balance
+    # Reserva descontada a TODOS (invariante 121): rótulos y notas por los datos.
+    todos_descuentan = como_balance and todos_descuentan_reserva_req(req)
     # Combustible separado (23-oct-2026): el mismo bloque y corrimiento `oc`
     # que la hoja en dólares.
     con_comb, afac_en_bloque, oc = _corrimiento_combustible(req)
@@ -960,7 +1025,7 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=n_cols)
 
     hrow = 4
-    enc = encabezados_pesos(con_oi, como_balance, con_comb)
+    enc = encabezados_pesos(con_oi, como_balance, con_comb, todos_descuentan=todos_descuentan)
     _header_row(ws, hrow, enc)
     _header_info(ws, hrow, [enc[12 + oc], enc[13 + oc]], 13 + oc)
     if como_balance:
@@ -1053,11 +1118,10 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
     _nota(ws, r, _nota_tabla(req), n_cols)
     if con_oi:
         r += 1
-        nota_oi = NOTA_OTROS_INGRESOS_AVION_BALANCE if como_balance else NOTA_OTROS_INGRESOS_AVION
-        _nota(ws, r, nota_oi, n_cols)
+        _nota(ws, r, _nota_otros_ingresos(como_balance, todos_descuentan), n_cols)
     elif como_balance:
         r += 1
-        _nota(ws, r, NOTA_CASCADA_BALANCE, n_cols)
+        _nota(ws, r, _nota_cascada(todos_descuentan), n_cols)
     if con_comb:
         r += 1
         _nota(ws, r, NOTA_COMBUSTIBLE_SEPARADO, n_cols)
@@ -1095,7 +1159,7 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
         *_bloque_combustible_encabezados(con_comb, afac_en_bloque),
         "Gastos indirectos", "Permisos",
         "Fijos (prorrateo + reparto)",
-        ENCABEZADO_RESERVA_INFORMATIVA if como_balance else "Reserva overhaul",
+        _encabezado_reserva(como_balance, todos_descuentan, pesos=False),
         "Saldo disponible",
         "Otros ingr. VuelaTour (informativo)",
         "Deuda total del cliente (informativo)",
@@ -1207,7 +1271,12 @@ def _render_reparto_xlsx_pesos(req: RepartoPdfRequest) -> bytes:
             nc.font = Font(italic=True, size=9, color="5B6470")
             r += 1
     if como_balance:
-        _nota(ws, r, NOTA_REPARTO_SOCIO_BALANCE, n_cols)
+        _nota(
+            ws,
+            r,
+            NOTA_REPARTO_SOCIO_BALANCE_TODOS if todos_descuentan else NOTA_REPARTO_SOCIO_BALANCE,
+            n_cols,
+        )
         r += 1
 
     if any(a.vuelos for a in req.aviones):

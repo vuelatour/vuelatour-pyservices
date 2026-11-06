@@ -212,6 +212,42 @@ _PIE_CASCADA_BALANCE = (
     "reserva de overhaul se informa por socio (lo que debe guardar) y solo se descuenta a "
     "quien lo pidió: VuelaTour la retiene."
 )
+# RESERVA PARA TODOS LOS SOCIOS (6-nov-2026, API 0.0.125, invariante 121 del
+# API): decisión del cliente de descontar la reserva a TODOS. Los textos se
+# eligen por los DATOS (`descuenta_reserva` de cada socio), no por la fecha:
+# un snapshot cerrado antes, con socios que no descontaban, sigue imprimiendo
+# los textos de arriba; un reparto donde todos descuentan imprime estos.
+FILA_RESERVA_DESCONTADA = (
+    "Reserva de overhaul · se descuenta a los socios: lo que el avión debe guardar"
+)
+LINEA_RESERVA_RETENIDA_TODOS = "   VuelaTour la retiene para el overhaul"
+ENCABEZADOS_SOCIOS_BALANCE_TODOS = ["Socio", "%", "Utilidad", "Reserva (se descuenta)", "A recibir"]
+ENCABEZADOS_SOCIOS_BALANCE_PESOS_TODOS = [
+    "Socio", "%", "Utilidad (MXN)", "Reserva (se descuenta, MXN)", "A recibir (MXN)",
+]  # fmt: skip
+ENCABEZADOS_RESUMEN_SOCIOS_BALANCE_TODOS = ["Socio", "Reserva (se descuenta)", "Total a recibir"]
+ENCABEZADOS_RESUMEN_SOCIOS_BALANCE_PESOS_TODOS = [
+    "Socio", "Reserva (se descuenta, MXN)", "Total a recibir (MXN)",
+]  # fmt: skip
+_PIE_CASCADA_BALANCE_TODOS = (
+    " Saldo disponible = venta del avión cobrada - comisiones - gastos - fijos - provisión "
+    "AFAC (tarifa de la ficha del avión × horas cobradas) + otros ingresos del avión; la "
+    "reserva de overhaul (lo que el avión debe guardar) se descuenta a cada socio de su "
+    "utilidad: VuelaTour la retiene."
+)
+
+
+def todos_descuentan_reserva(avion: RepartoAvion) -> bool:
+    """¿A TODOS los socios de este avión se les descuenta la reserva? (invariante
+    121 del API). Sin socios ⇒ False (no hay a quién)."""
+    return bool(avion.reparto) and all(bool(linea.descuenta_reserva) for linea in avion.reparto)
+
+
+def todos_descuentan_reserva_req(req: RepartoPdfRequest) -> bool:
+    """Lo mismo para TODO el documento: cada avión con socios los descuenta a
+    todos (los aviones sin socios no opinan); sin ningún socio ⇒ False."""
+    con_socios = [a for a in req.aviones if a.reparto]
+    return bool(con_socios) and all(todos_descuentan_reserva(a) for a in con_socios)
 # Celdas de las tablas de socios con la cascada nueva: un Paragraph envuelve
 # (un nombre largo o «$21,300.00 (se descuenta)» no se enciman con la celda
 # vecina); en pesos, el MXN arriba y el USD informativo debajo, gris y chico.
@@ -263,13 +299,17 @@ def _retiene_reserva(avion: RepartoAvion) -> bool:
 
 def _filas_reserva_informativa(avion: RepartoAvion, *, pesos: bool) -> list[list[str]]:
     """Filas GRISES bajo el saldo: la reserva de overhaul del avión (lo que
-    debe guardar; NO se resta), en pesos su T.C. oficial del cierre (la
-    etiqueta con el T.C. no cabe en la columna de 112 mm) y, solo si > 0, lo
-    que VuelaTour retiene a los socios que la descuentan."""
+    debe guardar; NO se resta del saldo), en pesos su T.C. oficial del cierre
+    (la etiqueta con el T.C. no cabe en la columna de 112 mm) y, solo si > 0,
+    lo que VuelaTour retiene. Con TODOS los socios descontando (invariante 121)
+    la fila dice que se descuenta; si alguno no, los textos de antes."""
+    todos = todos_descuentan_reserva(avion)
+    fila_reserva = FILA_RESERVA_DESCONTADA if todos else FILA_RESERVA_INFORMATIVA
+    linea_retenida = LINEA_RESERVA_RETENIDA_TODOS if todos else LINEA_RESERVA_RETENIDA
     if pesos:
         filas = [
             [
-                FILA_RESERVA_INFORMATIVA,
+                fila_reserva,
                 _dinero(avion.reserva_overhaul_mxn),
                 _usd(avion.reserva_overhaul_usd),
             ]
@@ -283,15 +323,15 @@ def _filas_reserva_informativa(avion: RepartoAvion, *, pesos: bool) -> list[list
         if _retiene_reserva(avion):
             filas.append(
                 [
-                    LINEA_RESERVA_RETENIDA,
+                    linea_retenida,
                     _dinero(avion.reserva_retenida_mxn),
                     _dinero(avion.reserva_retenida_usd),
                 ]
             )
         return filas
-    filas = [[FILA_RESERVA_INFORMATIVA, _usd(avion.reserva_overhaul_usd)]]
+    filas = [[fila_reserva, _usd(avion.reserva_overhaul_usd)]]
     if _retiene_reserva(avion):
-        filas.append([LINEA_RESERVA_RETENIDA, _dinero(avion.reserva_retenida_usd)])
+        filas.append([linea_retenida, _dinero(avion.reserva_retenida_usd)])
     return filas
 
 
@@ -325,11 +365,16 @@ def _tabla_socios_balance(avion: RepartoAvion, *, pesos: bool) -> Table:
     (su parte del saldo) · Reserva a guardar (su parte de la reserva de
     overhaul; « (se descuenta)» si VuelaTour se la retiene) · A recibir
     (`monto_*` del API: utilidad − reserva solo a quien la descuenta)."""
-    filas: list[list] = [
-        list(ENCABEZADOS_SOCIOS_BALANCE_PESOS if pesos else ENCABEZADOS_SOCIOS_BALANCE)
-    ]
+    # Con TODOS descontando (invariante 121) el encabezado ya lo dice y el
+    # sufijo « (se descuenta)» sobra; si alguno no, la tabla de antes.
+    todos = todos_descuentan_reserva(avion)
+    if todos:
+        enc = ENCABEZADOS_SOCIOS_BALANCE_PESOS_TODOS if pesos else ENCABEZADOS_SOCIOS_BALANCE_TODOS
+    else:
+        enc = ENCABEZADOS_SOCIOS_BALANCE_PESOS if pesos else ENCABEZADOS_SOCIOS_BALANCE
+    filas: list[list] = [list(enc)]
     for linea in avion.reparto:
-        sufijo = SUFIJO_SE_DESCUENTA if linea.descuenta_reserva else ""
+        sufijo = SUFIJO_SE_DESCUENTA if linea.descuenta_reserva and not todos else ""
         filas.append(
             [
                 Paragraph(escape(linea.socio_nombre), _S_CELDA_BALANCE),
@@ -394,9 +439,18 @@ def _resumen_socios_balance(
         )
     else:
         orden = sorted(total_usd, key=lambda n: total_usd[n], reverse=True)
-    encabezados = (
-        ENCABEZADOS_RESUMEN_SOCIOS_BALANCE_PESOS if pesos else ENCABEZADOS_RESUMEN_SOCIOS_BALANCE
-    )
+    if todos_descuentan_reserva_req(req):
+        encabezados = (
+            ENCABEZADOS_RESUMEN_SOCIOS_BALANCE_PESOS_TODOS
+            if pesos
+            else ENCABEZADOS_RESUMEN_SOCIOS_BALANCE_TODOS
+        )
+    else:
+        encabezados = (
+            ENCABEZADOS_RESUMEN_SOCIOS_BALANCE_PESOS
+            if pesos
+            else ENCABEZADOS_RESUMEN_SOCIOS_BALANCE
+        )
     filas: list[list] = [list(encabezados)]
     for n in orden:
         filas.append(
@@ -453,7 +507,8 @@ def _pie(req: RepartoPdfRequest) -> str:
     if hay_combustible_separado(req):
         fin = pie_combustible(req) + fin
     if req.reparto_como_balance:
-        fin = _PIE_CASCADA_BALANCE + fin
+        todos = todos_descuentan_reserva_req(req)
+        fin = (_PIE_CASCADA_BALANCE_TODOS if todos else _PIE_CASCADA_BALANCE) + fin
     if not comisiones_al_avion(req):
         return _PIE_INICIO + _PIE_COMISION_VENDEDOR + fin
     return (

@@ -631,3 +631,99 @@ def test_rutas_aceptan_el_payload_0101(monkeypatch, request) -> None:
         assert res.status_code == 200, res.text
         ws = load_workbook(BytesIO(res.content)).active
         assert ws["O4"].value in (rx.ENCABEZADO_PROVISION_AFAC, rx.ENCABEZADO_PROVISION_AFAC_PESOS)
+
+
+# ---------------------------------------------------------------------------
+# RESERVA PARA TODOS LOS SOCIOS (6-nov-2026, API 0.0.125, invariante 121 del
+# API). Decisión del cliente: a todos se les descuenta. Los textos se eligen
+# por los DATOS: con todos los socios en `descuenta_reserva: true` el PDF y el
+# Excel dicen que se descuenta (sin el sufijo por socio); el payload de arriba
+# (Socio B no descuenta) sigue imprimiendo los textos de antes, como un
+# snapshot cerrado en octubre.
+# ---------------------------------------------------------------------------
+
+
+def _payload_todos(*, pesos: bool | None = True) -> dict:
+    p = pp.reparto(bandera=pesos)
+    tst, dos = p["aviones"]
+    _cascada_balance(
+        tst,
+        afac_usd=350.0,
+        tarifa=100.0,
+        horas=3.5,
+        reserva_usd=140.0,
+        socios=[("Socio A", 60, True), ("Socio B", 40, True)],
+    )
+    _cascada_balance(
+        dos, afac_usd=0.0, tarifa=None, horas=0.0, reserva_usd=0.0, socios=[("Socio A", 100, True)]
+    )
+    p["reparto_como_balance"] = True
+    return p
+
+
+def test_todos_descuentan_se_decide_por_los_datos() -> None:
+    req = RepartoPdfRequest.model_validate(_payload_todos())
+    assert rp.todos_descuentan_reserva_req(req)
+    assert rx.todos_descuentan_reserva_req(req)
+    assert rp.todos_descuentan_reserva(req.aviones[0])
+    # El payload de siempre (Socio B no descuenta): textos de antes.
+    assert not rp.todos_descuentan_reserva_req(_req())
+    # Sin socios no hay a quién descontar.
+    vacio = RepartoPdfRequest.model_validate({**_payload_todos(), "aviones": []})
+    assert not rp.todos_descuentan_reserva_req(vacio)
+
+
+def test_pdf_todos_descuentan_dice_que_se_descuenta_y_sin_sufijo_por_socio() -> None:
+    p = _payload_todos(pesos=None)
+    texto = _texto_pdf(render_reparto_pdf(RepartoPdfRequest.model_validate(p)))
+    # Reserva 140 = 84 (A) + 56 (B), retenida completa.
+    assert (
+        f"Saldo disponible {_d(SALDO_TST)} {rp.FILA_RESERVA_DESCONTADA} {_d(140)} "
+        f"{rp.LINEA_RESERVA_RETENIDA_TODOS.strip()} {_d(140)}"
+    ) in texto
+    assert rp.FILA_RESERVA_INFORMATIVA not in texto
+    assert rp.LINEA_RESERVA_RETENIDA.strip() not in texto
+    assert " ".join(rp.ENCABEZADOS_SOCIOS_BALANCE_TODOS) in texto
+    assert " ".join(rp.ENCABEZADOS_RESUMEN_SOCIOS_BALANCE_TODOS) in texto
+    assert rp.SUFIJO_SE_DESCUENTA.strip() not in texto.replace("Reserva (se descuenta)", "")
+    # A recibir = utilidad − reserva para los dos.
+    assert f"Socio A 60% {_d(UTIL_A)} {_d(RESERVA_A)} {_d(MONTO_A)}" in texto
+    assert f"Socio B 40% {_d(UTIL_B)} {_d(RESERVA_B)} {_d(r2(UTIL_B - RESERVA_B))}" in texto
+    assert rp._PIE_CASCADA_BALANCE_TODOS.strip() in texto
+    assert "solo se descuenta a quien lo pidió" not in texto
+
+
+def test_pdf_en_pesos_todos_descuentan() -> None:
+    p = _payload_todos(pesos=True)
+    req = RepartoPdfRequest.model_validate(p)
+    texto = _texto_pdf(render_reparto_pdf(req))
+    tst = req.aviones[0]
+    assert (
+        f"Saldo disponible {_d(tst.saldo_mxn)} {_d(SALDO_TST)} {rp.FILA_RESERVA_DESCONTADA} "
+    ) in texto
+    retenida = f"{rp.LINEA_RESERVA_RETENIDA_TODOS.strip()} {_d(tst.reserva_retenida_mxn)} {_d(140)}"
+    assert retenida in texto
+    assert " ".join(rp.ENCABEZADOS_SOCIOS_BALANCE_PESOS_TODOS) in texto
+    assert " ".join(rp.ENCABEZADOS_RESUMEN_SOCIOS_BALANCE_PESOS_TODOS) in texto
+
+
+def test_xlsx_todos_descuentan_rotulos_y_notas() -> None:
+    ws = _hoja(_payload_todos(pesos=None))
+    assert ws["K4"].value == rx.ENCABEZADO_RESERVA_DESCONTADA
+    textos = _textos_col_a(ws)
+    assert rx.NOTA_CASCADA_BALANCE_TODOS in textos
+    assert rx.NOTA_CASCADA_BALANCE not in textos
+    assert rx.NOTA_REPARTO_SOCIO_BALANCE_TODOS in textos
+    assert rx.NOTA_REPARTO_SOCIO_BALANCE not in textos
+    # «¿Se descuenta?» = Sí en todos los renglones de socios.
+    t = _fila(ws, "Reparto por socio")
+    sis = [ws.cell(row=r, column=7).value for r in range(t + 2, t + 5)]
+    assert sis == ["Sí", "Sí", "Sí"]
+
+
+def test_xlsx_en_pesos_todos_descuentan_rotulos() -> None:
+    ws = _hoja(_payload_todos(pesos=True))
+    assert ws["K4"].value == rx.ENCABEZADO_RESERVA_DESCONTADA_PESOS
+    textos = _textos_col_a(ws)
+    assert rx.NOTA_CASCADA_BALANCE_TODOS in textos
+    assert rx.NOTA_REPARTO_SOCIO_BALANCE_TODOS in textos

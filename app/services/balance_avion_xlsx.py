@@ -6618,24 +6618,29 @@ _NOTA_INVENTARIO_COSTO_UNITARIO_USD = (
     "en dólares y no se pudo pasar a pesos por falta de tipo de cambio; se "
     "muestra EN DÓLARES y nunca se mezcla con la columna en pesos."
 )
-# PRECIO VENTA (6-nov-2026, API 0.0.123, invariante 119 del API; pedido del
-# dueño: «falta poner el precio unitario de venta»): a cuánto se cobra HOY al
-# avión UNA unidad. Lo calcula el API con la misma regla de la ficha y de la
-# salida (precio fijo del producto → último precio de compra + margen → a
-# costo); aquí solo se pinta. Entra entre COSTO UNITARIO y VALOR A COSTO;
-# TOTALES lo deja en blanco (es un precio, no un importe).
+# PRECIO VENTA UNITARIO (6-nov-2026, invariante 119 del API; rev. 2 en el API
+# 0.0.125 con la captura del dueño: «falta la columna del precio en el que se
+# vendió por unitario… o al menos el último precio de venta que tenemos por
+# unidad»): el precio POR UNIDAD al que se VENDIÓ en el periodo (Σ venta ÷
+# unidades: PRECIO × VENDIDOS CANT = VENDIDO MXN) o, sin ventas en el periodo,
+# el de la última venta registrada (`precio_venta_fuente == "ULTIMA_VENTA"`:
+# gris cursiva). Lo calcula el API; aquí solo se pinta. Entra entre COSTO
+# UNITARIO y VALOR A COSTO; TOTALES lo deja en blanco (precio, no importe).
 _NOTA_INVENTARIO_PRECIO_VENTA = (
-    " PRECIO VENTA MXN = a cuánto se cobra hoy al avión UNA unidad de cada "
-    "producto: su precio de venta fijo o, sin él, el último precio de compra "
-    "más el margen de la tienda; en pesos (el precio en dólares al T.C. "
-    "oficial de hoy). Vacío = el producto sale a costo. Es un precio, no un "
-    "importe: la fila TOTALES no lo suma."
+    " PRECIO VENTA UNITARIO MXN = el precio por unidad al que se vendió cada "
+    "producto en el periodo (VENDIDO MXN ÷ unidades vendidas con precio); en gris "
+    "y cursiva, el último precio de venta registrado cuando el producto no se "
+    "vendió en el periodo. Vacío = nunca se ha vendido con precio. Es un precio, "
+    "no un importe: la fila TOTALES no lo suma."
 )
 _NOTA_INVENTARIO_PRECIO_VENTA_USD = (
-    " PRECIO VENTA USD (sin T.C.): productos cuyo precio de venta es en dólares "
-    "y no se pudo pasar a pesos por falta de tipo de cambio; se muestra EN "
-    "DÓLARES y nunca se mezcla con la columna en pesos."
+    " PRECIO VENTA UNITARIO USD (sin T.C.): ventas hechas en dólares que no se "
+    "pudieron pasar a pesos por falta de tipo de cambio del día de la venta; se "
+    "muestra EN DÓLARES y nunca se mezcla con la columna en pesos."
 )
+# Letra de la celda cuando el precio es el de la ÚLTIMA venta (no del periodo).
+_FONT_ULTIMA_VENTA = Font(italic=True, color="6B7280")
+FUENTE_ULTIMA_VENTA = "ULTIMA_VENTA"
 # Nota bajo el BLOQUE 2 (solo con la regla nueva y si hay salidas): el
 # detalle de salidas sale de los GASTOS del balance (T.C. de cada gasto o el
 # promedio del libro, igual que la hoja 'balance') y la utilidad por ítem
@@ -6984,8 +6989,8 @@ def _hoja_inventario(
             "EXISTENCIA\nACTUAL",
             *(["COSTO UNITARIO\nMXN"] if cu else []),
             *(["COSTO UNITARIO\nUSD (sin T.C.)"] if cu_usd else []),
-            *(["PRECIO VENTA\nMXN"] if pv else []),
-            *(["PRECIO VENTA\nUSD (sin T.C.)"] if pv_usd else []),
+            *(["PRECIO VENTA\nUNITARIO MXN"] if pv else []),
+            *(["PRECIO VENTA\nUNITARIO USD (sin T.C.)"] if pv_usd else []),
             "VALOR A\nCOSTO MXN",
             *(["VALOR A COSTO\nUSD (sin T.C.)"] if usd else []),
             "COMPRADAS\nCANT",
@@ -7013,11 +7018,18 @@ def _hoja_inventario(
             if cu_usd:
                 _num(ws, row, 4, f.costo_unitario_usd, MONEY_USD).border = _border
             if pv:
-                # PRECIO VENTA en pesos; None = sale a costo, o en dólares
-                # sin T.C. (va en la de al lado).
-                _num(ws, row, 3 + ncu, f.precio_venta_mxn).border = _border
+                # PRECIO VENTA UNITARIO en pesos; None = nunca vendido con
+                # precio, o venta en dólares sin T.C. (va en la de al lado).
+                # La última venta (no del periodo) va en gris cursiva.
+                cpv = _num(ws, row, 3 + ncu, f.precio_venta_mxn)
+                cpv.border = _border
+                if f.precio_venta_fuente == FUENTE_ULTIMA_VENTA:
+                    cpv.font = _FONT_ULTIMA_VENTA
             if pv_usd:
-                _num(ws, row, 4 + ncu, f.precio_venta_usd, MONEY_USD).border = _border
+                cpvu = _num(ws, row, 4 + ncu, f.precio_venta_usd, MONEY_USD)
+                cpvu.border = _border
+                if f.precio_venta_fuente == FUENTE_ULTIMA_VENTA:
+                    cpvu.font = _FONT_ULTIMA_VENTA
             _num(ws, row, 3 + oc, f.valor_costo_mxn).border = _border
             if usd:
                 _num(ws, row, 4 + oc, f.valor_costo_usd, MONEY_USD).border = _border

@@ -2584,6 +2584,25 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   se cambia aquí y en `quote-sheet*.ts` a la vez. Un formateador nuevo con
   nombre de mes es un bug: `f"{d:02d}/{m:02d}/{a}"`.
 
+- **La reserva de overhaul se descuenta a TODOS los socios (6-nov-2026, API
+  0.0.125, invariante 121 del API).** Decisión del cliente. En `reparto_pdf` /
+  `reparto_xlsx` los textos se eligen por los DATOS (`todos_descuentan_reserva`
+  / `todos_descuentan_reserva_req`: todos los socios con `descuenta_reserva`):
+  con todos, «Reserva de overhaul · se descuenta a los socios», «VuelaTour la
+  retiene para el overhaul», encabezados «Reserva (se descuenta)», pie
+  `_PIE_CASCADA_BALANCE_TODOS` / `NOTA_CASCADA_BALANCE_TODOS`, sin el sufijo
+  « (se descuenta)» por socio; con alguno que no descuenta (snapshots cerrados
+  antes), los textos de la invariante 99 tal cual. Nunca decidir por la fecha.
+  Tests: `tests/test_reparto_como_balance.py` (bloque «RESERVA PARA TODOS»).
+- **PRECIO VENTA UNITARIO en la hoja «inventario» (rev. 2, API 0.0.125).** La
+  columna es el precio por unidad al que se VENDIÓ en el periodo (lo calcula
+  el API: VENDIDO ÷ unidades); con `precio_venta_fuente == "ULTIMA_VENTA"` la
+  celda va en gris cursiva (`_FONT_ULTIMA_VENTA`) porque es la última venta
+  registrada, no del periodo; encabezados «PRECIO VENTA
+UNITARIO MXN» /
+  «…UNITARIO USD (sin T.C.)»; la nota al pie lo explica. Ya no es el precio de
+  lista de hoy.
+
 ## Conciliación
 
 - Estado de cuenta de PAYWISE (9-sep-2026): `estado_cuenta._parse_paywise`

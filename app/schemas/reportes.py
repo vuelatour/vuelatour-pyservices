@@ -2354,6 +2354,11 @@ class BalanceInventarioItemFila(BaseModel):
     # la hoja no gana columna.
     precio_venta_mxn: float | None = None
     precio_venta_usd: float | None = None
+    # Rev. 2 (API 0.0.125): de dónde sale el precio unitario de venta:
+    # 'PERIODO' (se vendió en el periodo) o 'ULTIMA_VENTA' (la última venta
+    # registrada, fuera del periodo: se pinta en gris cursiva). None = sin
+    # precio (nunca vendido con precio) o payload anterior.
+    precio_venta_fuente: str | None = None
     # ENTRADAs del periodo (compras reales; DEVOLUCION/AJUSTE no son compra).
     compradas_cant: float | None = None
     compradas_costo_mxn: float | None = None
