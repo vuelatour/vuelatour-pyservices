@@ -85,18 +85,24 @@ AMBER = "FCD34D"  # ámbar del balance (`AMBER` de balance_avion_xlsx)
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
+# Huellas regeneradas el 5-nov-2026 (vuelo CANCELADO en la hoja de vuelos; pedido de la
+# oficina: «en la ruta cuando el vuelo sea cancelado aparezca en rojito… al igual que en
+# los tacómetros se ponga en ese colorcito»): la RUTA del cancelado en rojo y TIEMPO VUELO
+# HR / TACO INICIO / TACO FINAL (en el general, TIEMPO CALZOS/HOBS (HR)) con relleno rojo
+# suave. Cambian el .xlsx (fuente y relleno nuevos en styles.xml, que renumera los
+# estilos) y la vista JSON (hereda color de fuente y relleno). Ningún número se movió.
 _HUELLAS_HEAD = {
     "individual": (
-        "b307e3e1af212b2b93e2297110f20eaf2eaa3144da81d731ae8ae05742757f40",
-        "0494337e18257854f0227a24acc519a097b6f21a01780fc756b7f006c2c33bfc",
+        "2275703116e02a75862ca53130077db6eabee53eb122ea27170c21a37755f18e",
+        "b72a4620f305671417beb14cc53d99c1e558d89432d73f032035206d18912d87",
     ),
     "general-mensual": (
-        "a019eb712323ce4737d48df8271d3b4c45dbbdd7d08028b0887ef950106a8764",
-        "369640a97f3f90cccfcbcfda3e1a112c8cb685088a052ec77e58923943e3d000",
+        "97a4a024535da1587837b10c5190c21612bfe16a57f8050a4f3b45d64ca9f2e0",
+        "5cf84f1e2950787c4464ec59ac0c66944bede7ffec71f323ef28c52f08546fdf",
     ),
     "general-general": (
-        "973a9b51f700932ae04c351bfb8cc7c09b6dfabe37f78917f4c851608567f5c4",
-        "28b901068af08341de0d97cf64f43984b1ae8ee9137058912d2edd52bdbc868f",
+        "a7ebbe5c8575e80d228c5e61c22c1addb6297a36faec1dfb728b04b8c6e4e735",
+        "bafb42b737c6ba0577f9a5fe1d1c061e201d99d5124cd62da2ff7e1ca14cfaec",
     ),
 }
 _HUELLA_REPARTO_PDF_HEAD = "9448b553c276bcd2bd8ddb878136bf888bf2d68f85d2fc5a1a3aaee2da91d5c0"

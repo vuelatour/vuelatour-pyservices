@@ -494,26 +494,30 @@ def test_dinero_flota_parcial() -> None:
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
+# Huellas regeneradas el 5-nov-2026 (vuelo CANCELADO en la hoja de vuelos: RUTA en rojo y
+# TIEMPO / TACÓMETRO en rojo suave, pedido de la oficina; ver test_balance_cancelado_rojo):
+# cambian solo la fuente y el relleno de la fila cancelada (y styles.xml renumera los
+# estilos de todas las hojas); la vista JSON hereda el color. Ningún número se movió.
 _HUELLAS_HEAD_29107E6 = {
     "individual": (
-        "355671ab33f0d477445b9cc7c0ddcc0c7e842a94f00f16918b3a05fa5402e0b4",
-        "57a7b89678a8e41c763138a476ea86c290ae3bafbfcd27e2f2316d92e9b7cbaa",
+        "3219bd59f3e88d802efc25bc7b5d6e4bc89f6a4ed3610db4d8bd44803d54c089",
+        "03a198abd25261b2064a6ff8000f111ff902283ec65930b50507d3e61b9d8a74",
     ),
     "individual-351": (
-        "3e53d929083e2795748fdb03ede3766c397573bd5c997af05130897026f470ac",
-        "3aaa185b0dccfafe84e7e25716d5acbe6df1f37ad85ee918337204f4dcdbe8cf",
+        "ae669e4d0fa20c10512a85201821b187974ff28ed77d322133bc17e9a1fe15f2",
+        "0555af5f1199b4ecfb01e690eb264420f7f5401407e3a5278201e858393b7cc9",
     ),
     "general-mensual": (
-        "7c9153281a6df9c87eea983918584ac94ac08223037b392a3d5a27b7cb901343",
-        "0526df429b08976a751f8539217b617cb64138e9e207a452545719abab119615",
+        "3357cc4cf0c827e89a0cef9160e1694b34f0cf722091c0a10bb4634dc0bf6b1b",
+        "630e4b20dfea3ff0b9fbd0ca69f1d1a8081e91532a5e518b7ff54ae66fb0789f",
     ),
     "general-general": (
-        "471de1b16e6fdef6edc19afbb0d89ab852f207fc8bac983aae5311eb8dd4211f",
-        "a899b25d1c194c7ba396d2e5d92e055dda12e17e914cf26b5ee89b96ac9c4bd9",
+        "c8042a475bef7f4a7b8ad158688fc141dd6a3f9b3c92e9a62037f1270dd0ffbc",
+        "80e437e44d14c8d82ca33b59eba682cb0da3c07ae9db817bb5967e31352395f7",
     ),
     "general-consolidado": (
-        "7c9153281a6df9c87eea983918584ac94ac08223037b392a3d5a27b7cb901343",
-        "a642cfed18d6f2f88da5abf060e3f85e59262555b51a75fc16a2293ae92915f2",
+        "3357cc4cf0c827e89a0cef9160e1694b34f0cf722091c0a10bb4634dc0bf6b1b",
+        "15cb23bd259d0453ca9ef6fe8bfcca7709a714cd2f246e2f19753d8e7faf74f3",
     ),
     "reparto": (
         "086d81ea77269367cce33dcdbc799450232d7967b63019fa381da1ff9e2959ac",

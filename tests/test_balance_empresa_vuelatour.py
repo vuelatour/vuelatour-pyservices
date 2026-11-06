@@ -269,22 +269,26 @@ def _firma_libro(data: bytes) -> str:
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
+# Huellas regeneradas el 5-nov-2026 (vuelo CANCELADO en la hoja de vuelos: RUTA en rojo y
+# TIEMPO / TACÓMETRO en rojo suave, pedido de la oficina; ver test_balance_cancelado_rojo):
+# cambian solo la fuente y el relleno de la fila cancelada (y styles.xml renumera los
+# estilos de todas las hojas); la vista JSON hereda el color. Ningún número se movió.
 _FIRMAS_SIN_EMPRESA = {
     "socio empresa en dos aviones": (
         {},
-        "8fc9fd38c4d3dbbc30a4ab63364de473b13d2fb9e06bb937a80a535a182c47a5",
+        "7713bd993270bd70681671b75b7597a352e016e2d6df2ee8f6774910ede76c49",
     ),
     "sin socio empresa": (
         {"socios": _SOCIOS_SIN_EMPRESA},
-        "dfed4b50183d1d4b9e448f143dc379bd1374e858d7284ec7e11a3caf04a8c80d",
+        "45b86713a1403be2730674a488ec08f44a65e1c3aebcef35f2f19ba8d023af57",
     ),
     "sin hoja otros gastos": (
         {"otros_gastos": False},
-        "400eaca7632ea49e9ccfd5bdbb4ffa10145759a953867ea8fffa89965cfb4f83",
+        "9956da2a3eeca70624487979c267d6d145ee935cec60fef8c718f2b28d6cf6d8",
     ),
     "sin inventario": (
         {"inventario": False},
-        "4a8c5d13333d57f0bf2b27cbd263d0a613ece1e2a2cd0230876c6edb922182cc",
+        "95c84c717c267ae340492b251743239bcf826bb7bc8a4fd3b3aeb1d42b200722",
     ),
 }
 

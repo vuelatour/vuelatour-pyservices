@@ -2537,6 +2537,21 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   relleno (el panel lo ve). **Sin la bandera, byte a byte.** Tests:
   `tests/test_balance_costo_operador_estimado.py`. Orden de deploy:
   cualquiera.
+- **Vuelo CANCELADO en la hoja de vuelos (5-nov-2026).** Pedido de la oficina
+  con su captura del Balance de octubre: «en la ruta cuando el vuelo sea
+  cancelado aparezca en rojito… al igual que en los tacómetros se ponga en
+  ese colorcito». En `_hoja_maestra` (las dos variantes): la RUTA del
+  cancelado va con `Font(color=RED)` (como el ESTADO) y las celdas cuyo
+  origen es `tiempo_vuelo` / `taco_inicio` / `taco_fin`
+  (`_COLS_TACO_CANCELADO`; en el general, TIEMPO CALZOS/HOBS (HR) por
+  `_ORIGEN_GENERAL`) llevan `FILL_CANCELADO` (FADBD8). Se asigna ANTES de las
+  señales de siempre: el ámbar del salto de taco gana. Sin leyenda al pie
+  (la fila ya dice CANCELADO en rojo; una nota nueva movería los bytes de
+  todos los libros). Las huellas de `test_balance_general_costo_hora`
+  (`_FIRMAS_HOY` y `_MIEMBROS_HOY` de «fórmulas» y «empresa», que traen el
+  #404 cancelado) se regeneraron a propósito; la fuente y el relleno nuevos
+  renumeran los estilos de todas las hojas en styles.xml. Tests:
+  `tests/test_balance_cancelado_rojo.py`. Sin cambio en el API.
 
 ## Conciliación
 

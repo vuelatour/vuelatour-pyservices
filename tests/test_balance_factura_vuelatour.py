@@ -578,7 +578,11 @@ def _firma_hoja(data: bytes, nombre: str) -> str:
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
-_FIRMA_INDIVIDUAL_SIN_BANDERA = "1f74b6a7ff1f9c65aa561156abf50dd2195fdf5037cedda0662c001516f2b5bf"
+# Huellas regeneradas el 5-nov-2026 (vuelo CANCELADO en la hoja de vuelos: RUTA en rojo y
+# TIEMPO / TACÓMETRO en rojo suave, pedido de la oficina; ver test_balance_cancelado_rojo):
+# cambian solo la fuente y el relleno de la fila cancelada (y styles.xml renumera los
+# estilos de todas las hojas); la vista JSON hereda el color. Ningún número se movió.
+_FIRMA_INDIVIDUAL_SIN_BANDERA = "b825b73344ea02c007b36ddd40b1586f51c42b0ec122b4fd2e023f69436bc1ed"
 # Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
 # del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
 # consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
@@ -592,7 +596,7 @@ _FIRMA_INDIVIDUAL_SIN_BANDERA = "1f74b6a7ff1f9c65aa561156abf50dd2195fdf5037cedda
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
-_FIRMA_GENERAL_SIN_BANDERA = "4c4f0828fe39750a625dd7cf18108db6dbcc3205664633acee69f659ac07efba"
+_FIRMA_GENERAL_SIN_BANDERA = "b1d0a3a4dea872d78bb7dec33d291dd3947a8c60d175bff8c1ef0ec3f336c2b7"
 
 
 @pytest.mark.parametrize("bandera", [_AUSENTE, None, False], ids=["sin-bandera", "None", "False"])

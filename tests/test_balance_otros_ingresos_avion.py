@@ -989,18 +989,22 @@ def _huella_json(libro: dict) -> str:
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
+# Huellas regeneradas el 5-nov-2026 (vuelo CANCELADO en la hoja de vuelos: RUTA en rojo y
+# TIEMPO / TACÓMETRO en rojo suave, pedido de la oficina; ver test_balance_cancelado_rojo):
+# cambian solo la fuente y el relleno de la fila cancelada (y styles.xml renumera los
+# estilos de todas las hojas); la vista JSON hereda el color. Ningún número se movió.
 _HUELLAS_FORMA_REAL_0076 = {
     "individual": (
-        "a5ffd145f01ecb468f5e029e529619548b4a00ad7f1801f48ed7189c4b0e65b7",
-        "ba100ced1bc76dd7a09f7084c2ab348a0618a1c0b3d743a629ecabb4c36bf8af",
+        "63b77c586998540a44c5b59b9f28ae5c067717445e8d138014a57b66039c9651",
+        "504605b2cc2b80ce5a2de348c2ab6d6073f03f10d648d75c14be735373983cc2",
     ),
     "general-mensual": (
-        "2dac2da477bf5d06fec3331a24bd12999e5b8a63a8a55ae0791fb1f8d430d9eb",
-        "5eec315e45c89401e4b05530540894ff5eb5b80135def15d1c8775d47c03cf21",
+        "99985eb88d9ac09bd6c4b5b02fc74652a91ba966463eb94b8ecdcc2125476d63",
+        "610b6c627bc238898c1609780add72c9d12adb9189c78823457c08296cce4a4c",
     ),
     "general-general": (
-        "e6a9d59d220f8eba3c354b40af482395c3c772a0beca6b58c849cc5f35880184",
-        "bc91c8e31df1e4a10ad831770890ac771c024af1fca7d49d2dc2d0b9d7735a52",
+        "159173014937bdc4df7ffc516eef0c663474ddc94efcf125b2ecbe0b5f26389f",
+        "d5db82ff71f4df5bca4fcd94a2509995069f36fc9d1dfef58bf1866b8484d0be",
     ),
 }
 
@@ -1427,7 +1431,7 @@ def test_rutas_aceptan_el_payload_0077(monkeypatch, request) -> None:
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
-_HUELLA_INDIVIDUAL_HEAD = "46b6a00f097c426983d65fe2c818ccb5f9a090c7ff4995cb8976b2102c908eb6"
+_HUELLA_INDIVIDUAL_HEAD = "207492c2ad8013c64a3929ebdc36284787718a999e3b6577956aa7287c814a7f"
 # Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
 # del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
 # consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
@@ -1441,4 +1445,4 @@ _HUELLA_INDIVIDUAL_HEAD = "46b6a00f097c426983d65fe2c818ccb5f9a090c7ff4995cb8976b
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
-_HUELLA_GENERAL_HEAD = "90370114c7bb1a02d2043e0f8c5c9315abc9a66c07f283db36f0828582a49c0a"
+_HUELLA_GENERAL_HEAD = "e95adfc9511cfaefed563830a3fa270217981b30c066d88cb7a314a62928c3cb"

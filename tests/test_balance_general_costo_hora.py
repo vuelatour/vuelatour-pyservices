@@ -68,6 +68,7 @@ from app.services.balance_avion_xlsx import (
     _TOTAL_MAP,
     _TOTAL_MAP_GENERAL,
     AMBER,
+    FILL_CANCELADO,
     HORAS,
     MONEY,
     TC,
@@ -520,7 +521,12 @@ def test_columnas_que_repiten_un_dato_heredan_sus_senales() -> None:
     for fila, v in enumerate(vuelos[1:], start=4):
         assert not (v.tc_venta_oficial or v.salto_taco_interno), v.clave
         for encabezado in COSTO_POR_HORA[:2]:
-            assert _relleno(_celda(ws, fila, encabezado)) is None, (fila, encabezado)
+            # 5-nov-2026: un CANCELADO lleva TIEMPO CALZOS/HOBS (HR) en rojo
+            # suave (hereda el de TIEMPO VUELO HR); lo demás, sin relleno.
+            rojo_suave = v.estado == "CANCELADO" and encabezado == COSTO_POR_HORA[1]
+            assert _relleno(_celda(ws, fila, encabezado)) == (
+                "00" + FILL_CANCELADO if rojo_suave else None
+            ), (fila, encabezado)
             assert _celda(ws, fila, encabezado).comment is None, (fila, encabezado)
 
 
@@ -1097,9 +1103,16 @@ def test_otro_juego_de_columnas_sigue_cuadrando(caso, monkeypatch, registros) ->
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
+# Huellas regeneradas el 5-nov-2026 (vuelo CANCELADO en la hoja de vuelos; pedido de la
+# oficina con su captura del Balance de octubre: «en la ruta cuando el vuelo sea
+# cancelado aparezca en rojito… al igual que en los tacómetros se ponga en ese
+# colorcito»): la RUTA del cancelado va en rojo y TIEMPO VUELO HR / TACO INICIO / TACO
+# FINAL (en el general, TIEMPO CALZOS/HOBS (HR)) con relleno rojo suave `FILL_CANCELADO`.
+# Cambian la fuente y el relleno de esa fila (#404) en «fórmulas» y «empresa»; «pago
+# real» no tiene cancelados y queda idéntica. Ningún número ni fórmula se movió.
 _FIRMAS_HOY = {
-    "fórmulas": "878477f99d90020be0d84734733041eb139813cb7e97a3fcb758f790b219d12f",
-    "empresa": "ac5841c7f1c8127352b452557d2778553f4bd94b8027a5fd7135c6b4321a294a",
+    "fórmulas": "fe41ac30c93f36d61ded94cad0f4c4b89841099e2d511b83ad5adb0c70331dfe",
+    "empresa": "d271d4454c2218af28f7f3ae540c452f3fa5020774b1f6e1c040aef22fc8c19a",
     "pago real": "76f4ee6a76e8a50f5c08ca4d1b5f81efc38329d0b1c7c9d908dc01aef37a1c1a",
 }
 # Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
@@ -1164,6 +1177,9 @@ _OPENPYXL_HUELLAS = "3.1.5"
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
+# REGENERADAS A PROPÓSITO el 5-nov-2026 (CANCELADO en rojo, ver `_FIRMAS_HOY`): la
+# fuente y el relleno nuevos entran en `xl/styles.xml` y renumeran los índices de
+# estilo de TODAS las hojas (sheet2..sheet10); «pago real», sin cancelados, idéntica.
 _MIEMBROS_HOY = {
     "fórmulas": {
         "[Content_Types].xml": "90c274d39d8df938",
@@ -1174,21 +1190,21 @@ _MIEMBROS_HOY = {
         "xl/comments/comment2.xml": "079e9d6c94c33fd4",
         "xl/drawings/commentsDrawing1.vml": "cdb0cca556a4f9aa",
         "xl/drawings/commentsDrawing2.vml": "6601c1d546dca5ed",
-        "xl/styles.xml": "d4005b41be4c7036",
+        "xl/styles.xml": "687c4d8bac4e1c23",
         "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
         "xl/workbook.xml": "e9b5be0ab87733e4",
         "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
         "xl/worksheets/_rels/sheet9.xml.rels": "06a3b87cfefe7f5f",
         "xl/worksheets/sheet1.xml": "603a679e7306df23",
-        "xl/worksheets/sheet10.xml": "b134206c4fd136b1",
-        "xl/worksheets/sheet2.xml": "5bd09182bcf02c97",
-        "xl/worksheets/sheet3.xml": "6cc0ff42fb906720",
-        "xl/worksheets/sheet4.xml": "4df566bf93fa2465",
-        "xl/worksheets/sheet5.xml": "8e4aa721b703e928",
-        "xl/worksheets/sheet6.xml": "4a40f6867ca65b6d",
-        "xl/worksheets/sheet7.xml": "d9c0fe134ec1d790",
-        "xl/worksheets/sheet8.xml": "85aaef47b6b15de9",
-        "xl/worksheets/sheet9.xml": "8026d496e39519d2",
+        "xl/worksheets/sheet10.xml": "68999771aaf11861",
+        "xl/worksheets/sheet2.xml": "fa632f642d2230eb",
+        "xl/worksheets/sheet3.xml": "6e75078fdbd062a0",
+        "xl/worksheets/sheet4.xml": "38808ba37d4919f2",
+        "xl/worksheets/sheet5.xml": "fdb4dac564e3737e",
+        "xl/worksheets/sheet6.xml": "7d6ac26bcf2c1f3c",
+        "xl/worksheets/sheet7.xml": "adf6cadd71c786c2",
+        "xl/worksheets/sheet8.xml": "70b522adf02f0bc3",
+        "xl/worksheets/sheet9.xml": "b62956b53ecc85e7",
     },
     "empresa": {
         "[Content_Types].xml": "90c274d39d8df938",
@@ -1199,21 +1215,21 @@ _MIEMBROS_HOY = {
         "xl/comments/comment2.xml": "2b214e1d69201bae",
         "xl/drawings/commentsDrawing1.vml": "cdb0cca556a4f9aa",
         "xl/drawings/commentsDrawing2.vml": "53f523a76b410d41",
-        "xl/styles.xml": "30527d4a9b32515f",
+        "xl/styles.xml": "ddc698bade638e5a",
         "xl/theme/theme1.xml": "d15e8ebf78ef7b97",
         "xl/workbook.xml": "e9b5be0ab87733e4",
         "xl/worksheets/_rels/sheet2.xml.rels": "e2d28d8e38b35f17",
         "xl/worksheets/_rels/sheet9.xml.rels": "06a3b87cfefe7f5f",
         "xl/worksheets/sheet1.xml": "63d0cefedf987cba",
-        "xl/worksheets/sheet10.xml": "245576c8b1d18f98",
-        "xl/worksheets/sheet2.xml": "5bd09182bcf02c97",
-        "xl/worksheets/sheet3.xml": "6cc0ff42fb906720",
-        "xl/worksheets/sheet4.xml": "4df566bf93fa2465",
-        "xl/worksheets/sheet5.xml": "8e4aa721b703e928",
-        "xl/worksheets/sheet6.xml": "4a40f6867ca65b6d",
-        "xl/worksheets/sheet7.xml": "d9c0fe134ec1d790",
-        "xl/worksheets/sheet8.xml": "85aaef47b6b15de9",
-        "xl/worksheets/sheet9.xml": "cc74153ae1725b02",
+        "xl/worksheets/sheet10.xml": "7549de8026b226e0",
+        "xl/worksheets/sheet2.xml": "fa632f642d2230eb",
+        "xl/worksheets/sheet3.xml": "6e75078fdbd062a0",
+        "xl/worksheets/sheet4.xml": "38808ba37d4919f2",
+        "xl/worksheets/sheet5.xml": "fdb4dac564e3737e",
+        "xl/worksheets/sheet6.xml": "7d6ac26bcf2c1f3c",
+        "xl/worksheets/sheet7.xml": "adf6cadd71c786c2",
+        "xl/worksheets/sheet8.xml": "70b522adf02f0bc3",
+        "xl/worksheets/sheet9.xml": "3f48a537bbbbcbf2",
     },
     "pago real": {
         "[Content_Types].xml": "aab5d091f752ef52",

@@ -143,20 +143,24 @@ NOTA_USD_POR_GASTO = (  # corta desde el 26-oct-2026 (nota de celda)
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
+# Huellas regeneradas el 5-nov-2026 (vuelo CANCELADO en la hoja de vuelos: RUTA en rojo y
+# TIEMPO / TACÓMETRO en rojo suave, pedido de la oficina; ver test_balance_cancelado_rojo):
+# cambian solo la fuente y el relleno de la fila cancelada (y styles.xml renumera los
+# estilos de todas las hojas); la vista JSON hereda el color. Ningún número se movió.
 _HUELLAS_HEAD = {
     ("individual", True): (
-        "820f2ba637480777d556d0a4aae6d2793a454491c84e0cfdcdba99b67386884a",
-        "140478abb22665ae035aea797c8553672eb841da134d3c8f228b9784aac3e0c5",
+        "89e8352a65fc3635fcb7f60b5c4abe95740053786d7cc2de7cad7bff8e843554",
+        "f7c052665876fa1a8188c8cd84422376cee0b7527e949aa10eea165c44e05873",
     ),
     ("individual", None): tp._HUELLAS_HEAD["individual"],
     ("general-mensual", True): (
-        "a6c6d17d9c1b4090e48485ac6da587b3708e92cfbafd9e6aab8f452d3ba652df",
-        "f7c1d13013f5450a7dde319dae79b160aabe2517f37c2091cd89f2f06b06fc48",
+        "b57f0ac17b84ce2d6e265b9cca43323f1bd892b0f2ffe142c607c09e15f35599",
+        "41e836f53450948ac4103c56281f95b54baa3de9a15f724c6d473cac4655274a",
     ),
     ("general-mensual", None): tp._HUELLAS_HEAD["general-mensual"],
     ("general-general", True): (
-        "5dca3ddba6a912602b20f3241368c77832505e402397c92ad2ebb0f0f6a6e66c",
-        "e5fb45ffbf173b0757dc37ef22788d7e291565f1df05e4eeabd97e2e183864a6",
+        "2a85313499c1b30bb91ffdb884998da01cf2e2a615fba8ab4de219e1d3122781",
+        "4dd419306a8ef64ec6de0adc6c83ef10a5b9fcbdee82db0c2567de1818679c28",
     ),
     ("general-general", None): tp._HUELLAS_HEAD["general-general"],
 }

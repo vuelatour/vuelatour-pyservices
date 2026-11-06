@@ -166,6 +166,15 @@ LIGHT = "EEF2F7"
 GREEN = "15803D"
 RED = "DC2626"
 AMBER = "FCD34D"  # horas cobradas < voladas (regla: nunca cobrar de menos)
+# Vuelo CANCELADO en la hoja de vuelos (5-nov-2026, pedido de la oficina con
+# su captura del Balance de octubre: «en la ruta cuando el vuelo sea cancelado
+# aparezca en rojito… al igual que en los tacómetros se ponga en ese
+# colorcito»): la RUTA en rojo (`RED`, como el ESTADO) y el bloque TIEMPO /
+# TACÓMETRO con este rojo suave (no voló: sin horas ni tacos). En el general,
+# TIEMPO CALZOS/HOBS (HR) hereda el relleno porque repite TIEMPO VUELO HR
+# (`_ORIGEN_GENERAL`). Las señales de siempre (ámbar) ganan al rojo suave.
+FILL_CANCELADO = "FADBD8"
+_COLS_TACO_CANCELADO = ("tiempo_vuelo", "taco_inicio", "taco_fin")
 # TC oficial de referencia autocompletado (la cotización no traía TC): azul
 # claro, sutil (pedido 27-ago). La nota de la celda dice fuente y fecha.
 TC_OFICIAL_FILL = "DCE9F8"
@@ -2850,6 +2859,9 @@ def _hoja_maestra(
             and v.horas_cobradas > 0
             and v.tiempo_vuelo - v.horas_cobradas > 0.01
         )
+        # Vuelo CANCELADO (5-nov-2026): RUTA en rojo y TIEMPO / TACÓMETRO en
+        # rojo suave (`FILL_CANCELADO`), como lo pide la oficina.
+        es_cancelado = v.estado == "CANCELADO"
         # Balance GENERAL: SOLO la celda de la CLAVE se tiñe con el color del
         # avión (así lo maneja el equipo en su libro — el resto de la fila
         # conserva los colores por bloque); en el individual viene vacío.
@@ -2862,6 +2874,8 @@ def _hoja_maestra(
             fill = disp.fills.get(grupo)
             if i == 1 and avion_fill:
                 fill = avion_fill
+            if es_cancelado and _ORIGEN_GENERAL.get(attr, attr) in _COLS_TACO_CANCELADO:
+                fill = FILL_CANCELADO
             if attr is not None:
                 val = _valor_columna(attr, v)
                 # Dato que la celda muestra: en las columnas del bloque COSTO
@@ -2888,6 +2902,9 @@ def _hoja_maestra(
                         cell.font = Font(color=MUTED, size=9)
                     elif attr == "clave" and v.es_externo:
                         cell.font = Font(italic=True, color="374151")
+                    elif attr == "ruta" and es_cancelado:
+                        # CANCELADO: la ruta en rojo, como el ESTADO.
+                        cell.font = Font(color=RED)
                     # STATUS no cambia de texto: la nota junta TODOS los
                     # cobros (uno por renglón) para verlos de un vistazo.
                     if attr == "status_cobro" and nota_status:

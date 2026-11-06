@@ -116,18 +116,22 @@ OM = "otros movimientos"
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
+# Huellas regeneradas el 5-nov-2026 (vuelo CANCELADO en la hoja de vuelos: RUTA en rojo y
+# TIEMPO / TACÓMETRO en rojo suave, pedido de la oficina; ver test_balance_cancelado_rojo):
+# cambian solo la fuente y el relleno de la fila cancelada (y styles.xml renumera los
+# estilos de todas las hojas); la vista JSON hereda el color. Ningún número se movió.
 _HUELLAS_0088 = {
     "general-mensual": (
-        "271023b90a498513af80be8cd668a5f84e8dcc3c68063ce06e3448c35395f54a",
-        "dff201dc2d347d9743d22c9b85799394836547a5d9f75c0abc317db202f5699d",
+        "3118efbeac6e59d0ad0904559fdd17a285039d7aa003a27cc03183893ac53090",
+        "cb2f0b8b981cef95e30c187e4d453dd60eae6b43de93e121b48a767dbce85931",
     ),
     "general-general": (
-        "25bdf44ce95cfae240f124537b6d3c1d30c73728d5148e343a38600c033fcd37",
-        "a2e4bee37e4569180a0fa2159f0b1b52bd05d8118047dfbd756aa273bbac1013",
+        "76f657fa9cb88a5f91da74254d4b0a3b5b42fa2926f5451bb57ab1287aaed118",
+        "ac4f39109ad6794a5ed6642d584bd084d34287d4caa834a685910a8f5b975476",
     ),
     "individual": (
-        "b307e3e1af212b2b93e2297110f20eaf2eaa3144da81d731ae8ae05742757f40",
-        "698e92a7021cb01dba85b5ee4e6790daa7dc40d790e00822f7359e43b94bbdd6",
+        "2275703116e02a75862ca53130077db6eabee53eb122ea27170c21a37755f18e",
+        "ce000b07e0eb15287fb3d730ff8a0684c04cfb640fd7ed12be578ee0d922156c",
     ),
 }
 
