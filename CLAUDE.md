@@ -2568,6 +2568,21 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `test_balance_inventario_xlsx` y las huellas de bytes de los libros con
   hoja «inventario» se regeneraron a propósito. Tests:
   `tests/test_balance_inventario_xlsx.py` (bloque PRECIO VENTA).
+- **Fechas en DD/MM/AAAA en todos lados (6-nov-2026).** Pedido del dueño:
+  «estandarizar todas las fechas al formato DD/MM/AAAA, en todos lados». El
+  panel (`lib/datetime.ts`, `FechaInput`) y el API (0.0.124, invariante 120,
+  `diaDDMMAAAA`) ya lo hacen; aquí `cierre_mes.fecha_corta` («16/10/2026», el
+  sello del cierre en los libros) y `cierre_mes.dia_corto` («30/09/2026», los
+  cortes y «cobrado el 02/10/2026» del bloque CIERRE DEL MES, también en los
+  encabezados «AL 30/09/2026») dejaron «16-oct-2026» / «30-sep»; la bitácora de
+  tacómetros (`bitacora_taco_pdf._fecha_corta`) imprime «08/05/2026» en vez del
+  «08-may» de la plantilla del equipo. Las huellas de bytes de los libros con
+  bloque de cierre se regeneraron a propósito. **Se queda como está la
+  cotización** (`cotizacion_pdf._fecha_dia` «3 sep 2026»,
+  `cotizacion_interna_pdf._dia_mes` «26-jun» / `_dia_largo`): es la plantilla
+  de administración y el panel la espeja; si el cliente la pide en DD/MM/AAAA
+  se cambia aquí y en `quote-sheet*.ts` a la vez. Un formateador nuevo con
+  nombre de mes es un bug: `f"{d:02d}/{m:02d}/{a}"`.
 
 ## Conciliación
 

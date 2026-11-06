@@ -82,7 +82,7 @@ MAESTRA_FLOTA = "reporte horas FLOTA"
 
 # La reserva de los payloads: 18.20 h × 2 motores × 55 USD/hr (la tarifa del
 # API es la Σ de los motores, 110 USD/hr) = 2,002.00 USD; en pesos al T.C.
-# oficial del cierre (30-sep-2026, 18.0243) = 36,084.65 MXN.
+# oficial del cierre (30/09/2026, 18.0243) = 36,084.65 MXN.
 HORAS, USD_HR, MOTORES, TC, TC_DIA = 18.2, 110.0, 2, 18.0243, "2026-09-30"
 RESERVA_USD = 2002.0
 RESERVA_MXN = 36084.65
@@ -105,7 +105,7 @@ TITULO = "RESERVA DE OVERHAUL · informativa (no se resta en este balance)"
 FILA_USD = "Lo que debe aportar el avión USD"
 FILA_MXN = "Lo que debe aportar el avión (MXN)"
 COMO = "18.20 h voladas en el periodo × 2 motores × 55.00 USD/hr = 2,002.00 USD"
-COMO_PESOS = COMO + " · en pesos al T.C. oficial del 30-sep-2026 (18.0243)"
+COMO_PESOS = COMO + " · en pesos al T.C. oficial del 30/09/2026 (18.0243)"
 PREFIJO_COMO = "Cómo se calcula: "
 # 26-oct-2026: desde el API 0.0.101 el reparto a socios tampoco la resta (se
 # informa por socio y solo se descuenta a quien lo pidió); la nota lo dice así.

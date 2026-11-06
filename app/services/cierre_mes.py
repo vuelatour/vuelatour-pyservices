@@ -47,7 +47,6 @@ _MESES_ES = [
     "noviembre",
     "diciembre",
 ]
-_MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
 
 # Colores de la marca (Excel): ámbar = sale o pasará; azul claro = viene.
 FILL_SALE = "FCD34D"  # el ámbar de los libros (`AMBER` del balance)
@@ -82,8 +81,9 @@ def etiqueta_mes(mes: str | None) -> str | None:
 
 def fecha_corta(ts: str | None) -> str | None:
     """Sello del cierre como lo lee la oficina: '2026-10-16T19:02:11.123Z' ⇒
-    «16-oct-2026» en hora de Cancún; un texto que no sea fecha se devuelve
-    tal cual (el API podría mandarlo ya legible); None ⇒ None."""
+    «16/10/2026» en hora de Cancún (DD/MM/AAAA en todos lados, 6-nov-2026);
+    un texto que no sea fecha se devuelve tal cual (el API podría mandarlo ya
+    legible); None ⇒ None."""
     if not ts:
         return None
     try:
@@ -92,7 +92,7 @@ def fecha_corta(ts: str | None) -> str | None:
         return ts
     if dt.tzinfo is not None:
         dt = dt.astimezone(_CANCUN)
-    return f"{dt.day:02d}-{_MESES_CORTOS[dt.month - 1]}-{dt.year}"
+    return f"{dt.day:02d}/{dt.month:02d}/{dt.year}"
 
 
 def _estado_de(obj) -> str:
@@ -143,8 +143,9 @@ def marca_es_entrada(v) -> bool:
 
 
 def dia_corto(dia: str | None) -> str | None:
-    """'2026-09-30' ⇒ «30-sep», '2026-10-04' ⇒ «4-oct»: el día corto de las
-    leyendas del API (`diaCortoDeDia`). Lo que no sea AAAA-MM-DD ⇒ None."""
+    """'2026-09-30' ⇒ «30/09/2026», '2026-10-04' ⇒ «04/10/2026»: el día de las
+    leyendas del API (`diaCortoDeDia`, DD/MM/AAAA desde el 6-nov-2026). Lo que
+    no sea AAAA-MM-DD ⇒ None."""
     if not isinstance(dia, str):
         return None
     t = dia.strip()
@@ -155,7 +156,7 @@ def dia_corto(dia: str | None) -> str | None:
     mes = int(t[5:7])
     if not 1 <= mes <= 12:
         return None
-    return f"{int(t[8:10])}-{_MESES_CORTOS[mes - 1]}"
+    return f"{t[8:10]}/{t[5:7]}/{t[:4]}"
 
 
 def _ultimo_dia_del_mes(mes: str | None, *, anterior: bool = False) -> str | None:

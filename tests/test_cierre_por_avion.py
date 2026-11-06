@@ -1,4 +1,4 @@
-"""Cierre de mes POR AVIÓN en los documentos (23-oct-2026, API 0.0.104,
+"""Cierre de mes POR AVIÓN en los documentos (23/10/2026, API 0.0.104,
 invariante 105 del API).
 
 Pedido del cliente: «poner un botón de cierre de mes individual en cada
@@ -80,7 +80,7 @@ ABIERTO = {
     "estado": "ABIERTO", "cerrado_at": None, "cerrado_por_nombre": None, "reabierto_at": None,
     "version": None, "coincide_con_snapshot": None,
 }  # fmt: skip
-SELLO_TST = "XB-TST · Mes cerrado el 16-oct-2026 por Ale"
+SELLO_TST = "XB-TST · Mes cerrado el 16/10/2026 por Ale"
 SELLO_DOS = "XB-DOS · Mes abierto"
 PARCIAL_REPARTO = "Mes cerrado parcialmente: 1 de 2 aviones (XB-TST)"
 
@@ -193,19 +193,19 @@ def test_texto_global_parcial() -> None:
     assert texto(BalanceCierre(estado="parcial", aviones_cerrados=[])) == "Mes cerrado parcialmente"
     # Los de siempre no cambian (ni con las llaves nuevas al lado).
     cerrado = BalanceCierre.model_validate({**pay.cierre_cerrado(), "aviones_cerrados": ["X"]})
-    assert texto(cerrado) == "Mes cerrado el 16-oct-2026 por Ale"
+    assert texto(cerrado) == "Mes cerrado el 16/10/2026 por Ale"
     assert texto(BalanceCierre(estado="ABIERTO", aviones_cerrados=["X"])) is None
 
 
 def test_texto_por_avion_y_flota() -> None:
     por_avion = cierre_mes.texto_estado_cierre_avion
     cerrado = RepartoCierreAvion.model_validate(CERRADO_TST)
-    assert por_avion("N621TX", cerrado) == "N621TX · Mes cerrado el 16-oct-2026 por Ale"
+    assert por_avion("N621TX", cerrado) == "N621TX · Mes cerrado el 16/10/2026 por Ale"
     reabierto = RepartoCierreAvion(
         estado="REABIERTO", cerrado_at="2026-10-16T19:00:00Z", cerrado_por_nombre="Ale",
         reabierto_at="2026-10-17T15:00:00Z", reabierto_por_nombre="Dani",
     )  # fmt: skip
-    assert por_avion("N621TX", reabierto) == "N621TX · Mes reabierto el 17-oct-2026 por Dani"
+    assert por_avion("N621TX", reabierto) == "N621TX · Mes reabierto el 17/10/2026 por Dani"
     assert por_avion("N621TX", RepartoCierreAvion(estado="ABIERTO")) == "N621TX · Mes abierto"
     assert por_avion(None, RepartoCierreAvion(estado="ABIERTO")) == "Mes abierto"
     assert por_avion("N621TX", None) is None
@@ -265,7 +265,7 @@ def test_reparto_pdf_sellos_por_avion_y_flota_parcial(pesos: bool) -> None:
     assert SELLO_TST in texto and SELLO_DOS in texto
     # El sello de siempre ya no va en la portada (la flota está PARCIAL): la
     # única vez que aparece es en el bloque de XB-TST.
-    assert texto.count("Mes cerrado el 16-oct-2026 por Ale") == 1
+    assert texto.count("Mes cerrado el 16/10/2026 por Ale") == 1
     assert "AVISO:" not in texto
     # Las listas por avión de siempre siguen ahí.
     assert "Pasan a octubre 2026 (pendientes de cobro, no se reparten): #316" in texto
@@ -290,7 +290,7 @@ def test_reparto_pdf_reabierto_por_avion_y_sin_matricula_en_sin_snapshot() -> No
     )
     p["cierre"].update(estado="REABIERTO", aviones_cerrados=[])
     texto = _texto_pdf(render_reparto_pdf(RepartoPdfRequest.model_validate(p)))
-    assert "XB-TST · Mes reabierto el 17-oct-2026 por Dani" in texto
+    assert "XB-TST · Mes reabierto el 17/10/2026 por Dani" in texto
     assert SELLO_DOS in texto
     # El global REABIERTO de siempre (es el `cierre` raíz) en la portada.
     assert "Mes reabierto" in texto
@@ -329,7 +329,7 @@ def test_reparto_xlsx_seccion_cierre_por_avion(pesos: bool) -> None:
     # Una línea por avión (matrícula en A, sello en B:H) y el aviso del
     # avión cuyos números ya no son los de su cierre; luego las listas.
     assert [ws.cell(row=tit + 1, column=c).value for c in (1, 2)] == [
-        "XB-TST", "Mes cerrado el 16-oct-2026 por Ale",
+        "XB-TST", "Mes cerrado el 16/10/2026 por Ale",
     ]  # fmt: skip
     assert ws.cell(row=tit + 2, column=1).value == f"AVISO XB-TST: {aviso}"
     assert ws.cell(row=tit + 2, column=1).font.color.rgb.endswith("B91C1C")
@@ -345,7 +345,7 @@ def test_reparto_xlsx_parcial_sin_listas_solo_sellos() -> None:
     assert ws["A2"].value.endswith(f"  ·  {PARCIAL_REPARTO}")
     tit = _fila_de(ws, "Cierre del mes")
     assert [ws.cell(row=tit + 1, column=c).value for c in (1, 2)] == [
-        "XB-TST", "Mes cerrado el 16-oct-2026 por Ale",
+        "XB-TST", "Mes cerrado el 16/10/2026 por Ale",
     ]  # fmt: skip
     assert [ws.cell(row=tit + 2, column=c).value for c in (1, 2)] == ["XB-DOS", "Mes abierto"]
     # Sin vuelos diferidos no hay encabezado de listas ni listas.
@@ -366,7 +366,7 @@ def test_balance_avion_estado_del_avion_y_linea_de_flota() -> None:
     ws = load_workbook(BytesIO(data))[MAESTRA_TST]
     tit = _fila_de(ws, "CIERRE DEL MES")
     assert ws.cell(row=tit, column=1).value == (
-        "CIERRE DEL MES — XA-TST · Mes cerrado el 16-oct-2026 por Ale"
+        "CIERRE DEL MES — XA-TST · Mes cerrado el 16/10/2026 por Ale"
     )
     assert ws.cell(row=tit + 1, column=1).value == "Mes: septiembre 2026"
     assert ws.cell(row=tit + 2, column=1).value == (
@@ -481,73 +481,76 @@ def test_dinero_flota_parcial() -> None:
 # PDF y JSON de la vista en pantalla.
 # ---------------------------------------------------------------------------
 
-# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# Huellas regeneradas el 23/10/2026 (API 0.0.105, apodos fuera de los documentos; pedido
 # del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
 # consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
-# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# Huellas regeneradas el 26/10/2026 (notas de celda auditadas; pedido del cliente con la
 # captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
 # actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
 # idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
-# Huellas regeneradas el 5-nov-2026 (vuelo CANCELADO en la hoja de vuelos: RUTA en rojo y
+# Huellas regeneradas el 05/11/2026 (vuelo CANCELADO en la hoja de vuelos: RUTA en rojo y
 # TIEMPO / TACÓMETRO en rojo suave, pedido de la oficina; ver test_balance_cancelado_rojo):
 # cambian solo la fuente y el relleno de la fila cancelada (y styles.xml renumera los
 # estilos de todas las hojas); la vista JSON hereda el color. Ningún número se movió.
-# Huellas regeneradas el 6-nov-2026 («VENDIDOS CANT» en lugar de «SALIDAS CANT» en la hoja
+# Huellas regeneradas el 06/11/2026 («VENDIDOS CANT» en lugar de «SALIDAS CANT» en la hoja
 # «inventario» del general, pedido del dueño; ver test_balance_inventario_xlsx): cambia solo
 # ese texto de encabezado (y la hoja/valores que lo contienen). Ningún número se movió.
+# Huellas regeneradas el 06/11/2026 (fechas DD/MM/AAAA en todos lados, pedido del dueño: el
+# sello «Mes cerrado el 16/10/2026 por Ale» y los cortes «AL 30/09/2026» / «cobrado el
+# 02/10/2026» del bloque CIERRE DEL MES cambian los bytes de los libros con cierre).
 _HUELLAS_HEAD_29107E6 = {
     "individual": (
-        "3219bd59f3e88d802efc25bc7b5d6e4bc89f6a4ed3610db4d8bd44803d54c089",
-        "03a198abd25261b2064a6ff8000f111ff902283ec65930b50507d3e61b9d8a74",
+        "f2227d173ad589d58918f6d9c239b4cc2e959c009a99e5dab5eae018f0de6c2e",
+        "bed974482dbf2d4a99b8bfbbe082863aa42f0e9133c016a885cdab6dd61c5346",
     ),
     "individual-351": (
-        "ae669e4d0fa20c10512a85201821b187974ff28ed77d322133bc17e9a1fe15f2",
-        "0555af5f1199b4ecfb01e690eb264420f7f5401407e3a5278201e858393b7cc9",
+        "ea1905c4f6cf006f233f6ca33fb700384fd329a6acb4705d3d48b69e4dba5ad1",
+        "22bd3c2d954400246d867e067793608cdf6178cbd7c8a0ab4b273619e610f42a",
     ),
     "general-mensual": (
-        "243738c142b1e75f08822b3f6a9a2e40da59376e9378771f244a22d8601cd01d",
-        "48e33ad1d0fb860c2429e200bf8d3c1a6319525372f2522eadde1d2fdc783e52",
+        "21ddf96ec28c941f18fbd113f30c6c6c79cd77de2750d651f447df76ab44662a",
+        "d2dde3b282ae495a4884cdaa77cef5387364151044b93d0dc1d0392192a7d5cd",
     ),
     "general-general": (
-        "2065186fb392afd0aca5f75b55798f62ef8fb4c34eaef798f0ab25dfb93c39d4",
-        "3bfaf69b6b855207a65bb441874696077cf90566e5d1cc5d952fc38a0f4b0fc6",
+        "f62e523a775b6f63d22ceb3cf5395eeb0ac5c1f788757b23df510cc13d989519",
+        "466e7f1bffa0e1f1d4733c9f3f941e8fa0b65dd40b460d8d3f4b69026239803c",
     ),
     "general-consolidado": (
-        "243738c142b1e75f08822b3f6a9a2e40da59376e9378771f244a22d8601cd01d",
-        "bf5e3a5a5d5567590f1e4507f875cde2433095fe9e381b3bc3c12a5deef50129",
+        "21ddf96ec28c941f18fbd113f30c6c6c79cd77de2750d651f447df76ab44662a",
+        "0afcd37d2a705c35daf889cf4184a73d8cd84c65522d060762e5bdd61b46cba8",
     ),
     "reparto": (
-        "086d81ea77269367cce33dcdbc799450232d7967b63019fa381da1ff9e2959ac",
-        "dcaf745f85dede8e4c4141072399f792ca38183edafa66dcd6d70e51e3161039",
+        "d1f936c3122d9ecba89f14249e73c6c46f343f15dceb40a5c44e39ffba2d2aca",
+        "d551c567b99d7fb916928645bbc79b8bc0728f9355ede230b72fc697809fe5a4",
     ),
     "reparto-sin-snapshot": (
-        "753509aa79029a0e3c47ae08ff6249b8c8cc2343ca21532c7892a5825a78e8e8",
-        "98bf00ac8aed7412576e5d5dd977b1eab93eedcfc5e59ef8ceb81cdfe8b3fa27",
+        "23dfd1e26ec113d2720b54cc8e22c0f50eb082e091938ba568e80b83b31010ed",
+        "a9cf556b810fff72625e13de7d2028c63df8ccd39d8aa4c3352677214f80d7f9",
     ),
     "reparto-reabierto": (
-        "213bca099b792d8ebf9d31b01a5631b03dd6b80ac32ae527010d067a36ac95e5",
-        "1932c0f43d69b26653519621e478b348e882166be8357533bd6aa3a406918c01",
+        "99cbaf0a274c26bf85e4ef469e8cecd8f9859cc0aab8eed3169375cb06841ac6",
+        "b066c0786ec8ee606ed255ac8895f1d6683e2d2967d9cecc6cd5c67f90540eb7",
     ),
     "reparto-351": (
-        "d4c02f1a3b46b0d391eeb2d48f1f9407a1c57eb0a931e4ce1a1151de7ad1004b",
-        "f4a5c2efa2fa95a280671702a98c62ea41eb6c1dca36c0415a6ff68ba559ba57",
+        "053ab72315de05d90417c649ceb6777e4f2ec093ffbfa8d1a722ed7c3056ab00",
+        "d42260cabfd6a75a8faab2b7cd9c160f65f14f1519773ffd7aeb26de20daba6f",
     ),
     "reparto-pesos-sin-snapshot": (
-        "8942cee439cb0c6c292083791f03f7a8f34621ed07241226840d9f4d497b14f5",
-        "fa8a1e3b3c9746b84b301ddb0f0027b6e8a181c80191c02341fa10fa38f40faa",
+        "2e86eebc95dc6314f2de5139ba0bcf3a52fe8eff8c8b65bac4aaaaaa1963a626",
+        "3226f372370af0296984e1076011e1f75e463d7302f16b0412d7e5935ad31056",
     ),
     "reparto-balance-sin-snapshot": (
-        "3816829ae1ec7e2c400c9bc2a6c3193b5abef683ad808ce998e832fbf6d7308a",
-        "c9e3b5bc777a35b9468d8763b69d5d466c52a14f11242f60307e3441e7fcd97c",
+        "6138e38aee9ca6c358e4d64bbce9fbb7288ab2c27a36e7cc5df27f019a383a02",
+        "f7afae803ba4944ef07e16f917a4d24d05cc4b86d4733dd60faf0a390169f25d",
     ),
-    "dinero": ("6ecceb4016cac49a4e485ae18f38d15e0e92ca4f9f74f04c1b2e738ae13c1b2d",),
-    "dinero-351": ("52969284361c12fa2182d2eda64864d7d99627aa389c6841efc124cb0604db96",),
+    "dinero": ("e811aad47cd97014e4ba76b7576ff818be6e29c2f6d9b4a3a6f96f5c0617697a",),
+    "dinero-351": ("f3d11251fdad20ae2c968e93f231aa9e23911eee0edf5a06e0410a1a284a2830",),
 }
 
 

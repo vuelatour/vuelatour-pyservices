@@ -22,20 +22,19 @@ from app.schemas.reportes import BitacoraTacoRequest, BitacoraTira, BitacoraTira
 
 _NAVY = "#102a43"
 _CANCUN = ZoneInfo("America/Cancun")
-# Abreviaturas fijas: el locale del contenedor no garantiza es-MX.
-_MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
 _SIN_FILAS = "Sin vuelos con tacómetro en el periodo"
 
 
 def _fecha_corta(s: str | None) -> str:
-    """ISO → "08-may" en hora Cancún (formato de la plantilla del equipo)."""
+    """ISO → "08/05/2026" en hora Cancún (DD/MM/AAAA en todos lados, 6-nov-2026;
+    la plantilla del equipo decía "08-may")."""
     if not s:
         return "—"
     try:
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
         if dt.tzinfo is not None:
             dt = dt.astimezone(_CANCUN)
-        return f"{dt.day:02d}-{_MESES[dt.month - 1]}"
+        return f"{dt.day:02d}/{dt.month:02d}/{dt.year}"
     except ValueError:
         return s
 

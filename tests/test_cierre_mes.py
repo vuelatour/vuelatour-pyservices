@@ -1,4 +1,4 @@
-"""Cierre de mes formal y vuelos que pasan al mes siguiente (16-oct-2026, API
+"""Cierre de mes formal y vuelos que pasan al mes siguiente (16/10/2026, API
 0.0.88, invariante 89 del API).
 
 Pedido del cliente: «los vuelos que aún no se cobren se marquen en el balance
@@ -72,28 +72,31 @@ AMBER = "FCD34D"  # ámbar del balance (`AMBER` de balance_avion_xlsx)
 # JSON con `vinculos_gasto: true`; PDF: los flujos de contenido de cada
 # página. Si una se mueve, un API ≤ 0.0.87 ya no ve su libro de siempre.
 # ---------------------------------------------------------------------------
-# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# Huellas regeneradas el 23/10/2026 (API 0.0.105, apodos fuera de los documentos; pedido
 # del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
 # consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
 # movimientos' y 'Otros ingresos'; todas las demás columnas corren. Mismos números y las
 # mismas fórmulas (citadas por llave, no por letra): solo cambia el layout.
-# Huellas regeneradas el 26-oct-2026 (notas de celda auditadas; pedido del cliente con la
+# Huellas regeneradas el 26/10/2026 (notas de celda auditadas; pedido del cliente con la
 # captura de la hoja «balance»: «esa nota que está en la celda B6 y B7 y todas están
 # actualizadas?, porque unas cosas nos causan ruido»): cada nota de celda queda en una
 # idea de 1–2 líneas, sin fechas ni versiones; los rótulos de la cascada de 'balance'
 # pasan a «UTILIDAD ANTES DE COMISIONES» y «UTILIDAD DESPUÉS DE COMISIONES» (esta con su
 # nota) y el pie de la reserva de overhaul ya no dice que el reparto la descuenta. Cambian
 # solo textos (notas, VML y rótulos de la columna A): ningún número ni fórmula se movió.
-# Huellas regeneradas el 5-nov-2026 (vuelo CANCELADO en la hoja de vuelos; pedido de la
+# Huellas regeneradas el 05/11/2026 (vuelo CANCELADO en la hoja de vuelos; pedido de la
 # oficina: «en la ruta cuando el vuelo sea cancelado aparezca en rojito… al igual que en
 # los tacómetros se ponga en ese colorcito»): la RUTA del cancelado en rojo y TIEMPO VUELO
 # HR / TACO INICIO / TACO FINAL (en el general, TIEMPO CALZOS/HOBS (HR)) con relleno rojo
 # suave. Cambian el .xlsx (fuente y relleno nuevos en styles.xml, que renumera los
 # estilos) y la vista JSON (hereda color de fuente y relleno). Ningún número se movió.
-# Huellas regeneradas el 6-nov-2026 («VENDIDOS CANT» en lugar de «SALIDAS CANT» en la hoja
+# Huellas regeneradas el 06/11/2026 («VENDIDOS CANT» en lugar de «SALIDAS CANT» en la hoja
 # «inventario» del general, pedido del dueño; ver test_balance_inventario_xlsx): cambia solo
 # ese texto de encabezado (y la hoja/valores que lo contienen). Ningún número se movió.
+# Huellas regeneradas el 06/11/2026 (fechas DD/MM/AAAA en todos lados, pedido del dueño: el
+# sello «Mes cerrado el 16/10/2026 por Ale» y los cortes «AL 30/09/2026» / «cobrado el
+# 02/10/2026» del bloque CIERRE DEL MES cambian los bytes de los libros con cierre).
 _HUELLAS_HEAD = {
     "individual": (
         "2275703116e02a75862ca53130077db6eabee53eb122ea27170c21a37755f18e",
@@ -110,7 +113,7 @@ _HUELLAS_HEAD = {
 }
 _HUELLA_REPARTO_PDF_HEAD = "9448b553c276bcd2bd8ddb878136bf888bf2d68f85d2fc5a1a3aaee2da91d5c0"
 _HUELLA_REPARTO_XLSX_HEAD = "4e1474b790df44f408f8634d116156b512c0c71824952734238ff42a82039dcc"
-# Huellas regeneradas el 23-oct-2026 (API 0.0.105, apodos fuera de los documentos; pedido
+# Huellas regeneradas el 23/10/2026 (API 0.0.105, apodos fuera de los documentos; pedido
 # del cliente: «dejar solo las columnas de Num de cotización, nombre completo, fecha, ruta y
 # consecutivo del vuelo»): entran CLIENTE y Nº VUELO CLIENTE entre CLAVE y FECHA en la hoja
 # maestra, la cobranza y 'dinero-vlos', y cliente / ruta / nº vuelo cliente en 'otros
@@ -244,9 +247,9 @@ def test_textos_de_presentacion() -> None:
     assert cierre_mes.etiqueta_mes("2026-13") == "2026-13"
     assert cierre_mes.etiqueta_mes(None) is None
     # Sello en hora de Cancún: 00:30 UTC del 17 = 19:30 del 16 en Cancún.
-    assert cierre_mes.fecha_corta("2026-10-17T00:30:00Z") == "16-oct-2026"
+    assert cierre_mes.fecha_corta("2026-10-17T00:30:00Z") == "16/10/2026"
     assert cierre_mes.texto_estado_cierre(BalanceCierre.model_validate(pay.cierre_cerrado())) == (
-        "Mes cerrado el 16-oct-2026 por Ale"
+        "Mes cerrado el 16/10/2026 por Ale"
     )
     assert cierre_mes.texto_estado_cierre(BalanceCierre(estado="ABIERTO")) is None
     assert cierre_mes.texto_estado_cierre(None) is None
@@ -257,7 +260,7 @@ def test_textos_de_presentacion() -> None:
         reabierto_at="2026-10-17T15:00:00Z",
         reabierto_por_nombre="Dani",
     )
-    assert cierre_mes.texto_estado_cierre(reab) == "Mes reabierto el 17-oct-2026 por Dani"
+    assert cierre_mes.texto_estado_cierre(reab) == "Mes reabierto el 17/10/2026 por Dani"
     # Color de la marca: azul solo lo que VIENE; lo que sale o pasará, ámbar
     # (también un vuelo que vino y vuelve a pasar: lo urgente es el cobro).
     entrada = cierre_mes.marca_es_entrada
@@ -389,7 +392,7 @@ def test_individual_bloque_cierre_bajo_totales_y_nota() -> None:
     )
     ws = load_workbook(BytesIO(data))[MAESTRA_TST]
     tit = _fila_de(ws, "CIERRE DEL MES")
-    assert ws.cell(row=tit, column=1).value == "CIERRE DEL MES — Mes cerrado el 16-oct-2026 por Ale"
+    assert ws.cell(row=tit, column=1).value == "CIERRE DEL MES — Mes cerrado el 16/10/2026 por Ale"
     assert tit > _fila_de(ws, "TOTALES")
     assert ws.cell(row=tit + 1, column=1).value == "Mes: septiembre 2026"
     pasan = _fila_de(ws, "Pasan a octubre 2026")
@@ -438,7 +441,7 @@ def test_individual_cobranza_marca_y_celdas_vacias() -> None:
 
 
 def test_cancelado_con_marca_no_entra_al_sumif_de_cotizacion(registros) -> None:
-    """Revisión 16-oct: TOTAL COTIZACIÓN de 'cobranza' es SUMIF(ESTADO,
+    """Revisión 16/10/2026: TOTAL COTIZACIÓN de 'cobranza' es SUMIF(ESTADO,
     "<>CANCELADO"). Si una fila CANCELADO trajera marca del cierre (el API no
     se la pone, pero nada en el esquema lo impide) y la marca reemplazara a
     «CANCELADO», su cotización ($60,000 de #404) entraría a la suma y la
@@ -504,7 +507,7 @@ def test_general_marcas_resumen_y_cobranza(variante: str, registros) -> None:
     )
     rs = wb["RESUMEN flota"]
     tit = _fila_de(rs, "CIERRE DEL MES")
-    assert rs.cell(row=tit, column=1).value == "CIERRE DEL MES — Mes cerrado el 16-oct-2026 por Ale"
+    assert rs.cell(row=tit, column=1).value == "CIERRE DEL MES — Mes cerrado el 16/10/2026 por Ale"
     pasan = _fila_de(rs, "Pasan a octubre 2026")
     # CLAVE en A:B (la A del RESUMEN es angosta) y la columna AVIÓN.
     assert [rs.cell(row=pasan + 1, column=c).value for c in (1, 3, 4, 5, 6, 7, 8, 9)] == [
@@ -585,7 +588,7 @@ def test_reparto_pdf_sello_listas_por_avion_y_externos() -> None:
     texto = _texto_pdf(
         render_reparto_pdf(RepartoPdfRequest.model_validate(pay.reparto_con_cierre()))
     )
-    assert "Mes cerrado el 16-oct-2026 por Ale" in texto
+    assert "Mes cerrado el 16/10/2026 por Ale" in texto
     # El texto del API se escapa («&» y «<» no rompen el marcado).
     assert (
         "Pasan a octubre 2026 (pendientes de cobro, no se reparten): #316 Mike & Nelson <MN> "
@@ -621,13 +624,13 @@ def test_reparto_pdf_marca_larga_se_parte_al_ancho_de_la_columna() -> None:
 def test_reparto_xlsx_sello_seccion_y_aviso() -> None:
     req = RepartoPdfRequest.model_validate(pay.reparto_con_cierre(coincide=False))
     ws = load_workbook(BytesIO(render_reparto_xlsx(req))).active
-    assert ws["A2"].value.endswith("  ·  Mes cerrado el 16-oct-2026 por Ale")
+    assert ws["A2"].value.endswith("  ·  Mes cerrado el 16/10/2026 por Ale")
     textos = [c.value for c in ws["A"] if isinstance(c.value, str)]
     assert f"AVISO: {cierre_mes.AVISO_SNAPSHOT}" in textos
     # Detalle de vuelos: la marca junto al folio.
     assert "#318 · Viene de agosto 2026" in [c.value for c in ws["B"]]
     tit = _fila_de(ws, "Cierre del mes")
-    assert ws.cell(row=tit, column=1).value == "Cierre del mes — Mes cerrado el 16-oct-2026 por Ale"
+    assert ws.cell(row=tit, column=1).value == "Cierre del mes — Mes cerrado el 16/10/2026 por Ale"
     assert [ws.cell(row=tit + 1, column=c).value for c in range(1, 9)] == ENCABEZADOS_CIERRE
     salen = _fila_de(ws, "Pasan a octubre 2026")
     assert ws.cell(row=salen, column=1).fill.fgColor.rgb.endswith(AMBER)
@@ -668,7 +671,7 @@ def test_dinero_marca_junto_a_la_clave_y_lineas_al_final() -> None:
     )["dinero-vlos"]
     assert [c.value for c in ws[6]] == [c.value for c in base[6]]
     tit = _fila_de(ws, "CIERRE DEL MES")
-    assert ws.cell(row=tit, column=1).value == "CIERRE DEL MES — Mes cerrado el 16-oct-2026 por Ale"
+    assert ws.cell(row=tit, column=1).value == "CIERRE DEL MES — Mes cerrado el 16/10/2026 por Ale"
     assert ws.cell(row=tit + 1, column=1).value == (
         "Pasan a octubre 2026 (pendientes de cobro al cierre: no suman en este mes): "
         "#499 · Cliente Nueve — venta $36,632.89 MXN, cobrado $0.00, por cobrar $36,632.89."
@@ -708,7 +711,7 @@ def test_rutas_aceptan_los_payloads_del_cierre(monkeypatch, request) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 8) Caso #351 (16-oct-2026, API 0.0.91): «aparece que aún no se cobran pero
+# 8) Caso #351 (16/10/2026, API 0.0.91): «aparece que aún no se cobran pero
 # sí están cobrados». Con el `motivo` (y el `corte`) del API, los montos de
 # las listas van AL CORTE y se dice lo cobrado DESPUÉS; sin ellos, todo como
 # siempre (las huellas de arriba lo congelan).
@@ -718,9 +721,9 @@ POSTERIOR = "COBRO_POSTERIOR"
 
 
 def test_helpers_del_corte() -> None:
-    assert cierre_mes.dia_corto("2026-09-30") == "30-sep"
-    assert cierre_mes.dia_corto("2026-10-04") == "4-oct"
-    assert cierre_mes.dia_corto("2026-10-04T12:00:00Z") == "4-oct"
+    assert cierre_mes.dia_corto("2026-09-30") == "30/09/2026"
+    assert cierre_mes.dia_corto("2026-10-04") == "04/10/2026"
+    assert cierre_mes.dia_corto("2026-10-04T12:00:00Z") == "04/10/2026"
     for raro in (None, "", "2026-13-01", "30/09/2026", 7):
         assert cierre_mes.dia_corto(raro) is None
     sin_motivo = BalanceCierre.model_validate(
@@ -768,36 +771,36 @@ def test_linea_del_libro_por_motivo() -> None:
     )
     assert linea(_vuelo_libro(motivo=POSTERIOR, corte="2026-09-30", cobrado_despues_mxn=36632.89,
                               fecha_cobro_despues="2026-10-14")) == (
-        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30-sep $0.00, "
-        "cobrado después $36,632.89 el 14-oct"
+        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30/09/2026 $0.00, "
+        "cobrado después $36,632.89 el 14/10/2026"
     )  # fmt: skip
     # Mes cerrado: la bitácora solo guardó el motivo (sin monto ni fecha).
     assert linea(_vuelo_libro(motivo=POSTERIOR, corte="2026-09-30")) == (
-        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30-sep $0.00, "
-        "cobrado después del 30-sep"
+        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30/09/2026 $0.00, "
+        "cobrado después del 30/09/2026"
     )
     assert linea(_vuelo_libro(motivo=POSTERIOR, fecha_cobro_despues="2026-10-14")) == (
-        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30-sep $0.00, "
-        "cobrado el 14-oct, después del 30-sep"
+        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30/09/2026 $0.00, "
+        "cobrado el 14/10/2026, después del 30/09/2026"
     )
     assert linea(_vuelo_libro(motivo="COBRO_PARCIAL", cobrado_mxn=500, por_cobrar_mxn=1500,
                               venta_mxn=2000, cobrado_despues_mxn=700,
                               fecha_cobro_despues="2026-10-03")) == (
-        "#351 · Cliente 351 — venta $2,000.00 MXN, cobrado al 30-sep $500.00, "
-        "por cobrar al 30-sep $1,500.00, cobrado después $700.00 el 3-oct"
+        "#351 · Cliente 351 — venta $2,000.00 MXN, cobrado al 30/09/2026 $500.00, "
+        "por cobrar al 30/09/2026 $1,500.00, cobrado después $700.00 el 03/10/2026"
     )  # fmt: skip
     assert linea(_vuelo_libro(motivo="SIN_COBRO", cobrado_despues_mxn=0)) == (
-        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30-sep $0.00, "
-        "por cobrar al 30-sep $36,632.89"
+        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30/09/2026 $0.00, "
+        "por cobrar al 30/09/2026 $36,632.89"
     )
 
 
 def test_titulos_con_el_corte() -> None:
     assert cierre_mes.titulo_pasan("2026-10", "2026-09-30") == (
-        "Pasan a octubre 2026 (sin cobro completo al 30-sep: no suman en este mes)"
+        "Pasan a octubre 2026 (sin cobro completo al 30/09/2026: no suman en este mes)"
     )
     assert cierre_mes.titulo_pasarian("2026-10", "2026-09-30") == (
-        "Pasarán a octubre 2026 al cerrar el mes: sin cobro completo al 30-sep (hoy sí suman)"
+        "Pasarán a octubre 2026 al cerrar el mes: sin cobro completo al 30/09/2026 (hoy sí suman)"
     )
     assert cierre_mes.titulo_vienen("2026-08", "2026-08-31") == cierre_mes.titulo_vienen("2026-08")
     # Sin corte, los de siempre.
@@ -809,7 +812,7 @@ def test_titulos_con_el_corte() -> None:
 def _cierre_351(p: dict) -> dict:
     p["cierre"]["pasan"][0].update(
         motivo=POSTERIOR, corte="2026-09-30",
-        leyenda="Pasa a octubre 2026 (cobrado después del 30-sep; al cierre: $0.00 MXN de "
+        leyenda="Pasa a octubre 2026 (cobrado después del 30/09/2026; al cierre: $0.00 MXN de "
         "$36,632.89 MXN)",
     )  # fmt: skip
     return p
@@ -822,14 +825,14 @@ def test_balance_bloque_cierre_con_el_corte() -> None:
     ]
     pasan = _fila_de(ws, "Pasan a octubre 2026")
     assert ws.cell(row=pasan, column=1).value == (
-        "Pasan a octubre 2026 (sin cobro completo al 30-sep: no suman en este mes)"
+        "Pasan a octubre 2026 (sin cobro completo al 30/09/2026: no suman en este mes)"
     )
     assert [ws.cell(row=pasan + 1, column=c).value for c in range(1, 8)] == [
-        "CLAVE", "FECHA", "VENTA\nMXN", "COBRADO MXN\nAL 30-SEP", "POR COBRAR MXN\nAL 30-SEP",
-        "VENTA\nUSD", "LEYENDA",
+        "CLAVE", "FECHA", "VENTA\nMXN", "COBRADO MXN\nAL 30/09/2026",
+        "POR COBRAR MXN\nAL 30/09/2026", "VENTA\nUSD", "LEYENDA",
     ]  # fmt: skip
     assert ws.cell(row=pasan + 2, column=7).value.startswith(
-        "Pasa a octubre 2026 (cobrado después del 30-sep"
+        "Pasa a octubre 2026 (cobrado después del 30/09/2026"
     )
     # Los que VIENEN no traen motivo: su encabezado no cambia.
     vienen = _fila_de(ws, "Vienen de agosto 2026")
@@ -849,14 +852,14 @@ def test_dinero_lineas_con_el_corte() -> None:
     ]
     tit = _fila_de(ws, "CIERRE DEL MES")
     assert ws.cell(row=tit + 1, column=1).value == (
-        "Pasan a octubre 2026 (sin cobro completo al 30-sep: no suman en este mes): "
-        "#499 · Cliente Nueve — venta $36,632.89 MXN, cobrado al 30-sep $0.00, "
-        "cobrado después del 30-sep."
+        "Pasan a octubre 2026 (sin cobro completo al 30/09/2026: no suman en este mes): "
+        "#499 · Cliente Nueve — venta $36,632.89 MXN, cobrado al 30/09/2026 $0.00, "
+        "cobrado después del 30/09/2026."
     )
     assert ws.cell(row=tit + 3, column=1).value == (
-        "Pasarán a octubre 2026 al cerrar el mes: sin cobro completo al 30-sep (hoy sí suman): "
-        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30-sep $0.00, "
-        "cobrado después $36,632.89 el 14-oct."
+        "Pasarán a octubre 2026 al cerrar el mes: sin cobro completo al 30/09/2026 (hoy sí suman): "
+        "#351 · Cliente 351 — venta $36,632.89 MXN, cobrado al 30/09/2026 $0.00, "
+        "cobrado después $36,632.89 el 14/10/2026."
     )
 
 
@@ -864,7 +867,7 @@ def _reparto_351() -> dict:
     p = pay.reparto_con_cierre(estado="REABIERTO")
     p["cierre"]["diferidos_salen"][0].update(
         motivo=POSTERIOR, cobrado_posterior_usd=0,
-        leyenda="Pasa a octubre 2026 · cobrado después del 30-sep (al 30-sep: $0.00 USD de "
+        leyenda="Pasa a octubre 2026 · cobrado después del 30/09/2026 (al 30/09/2026: $0.00 USD de "
         "$2,076.40 USD)",
     )  # fmt: skip
     p["cierre"]["pendientes_que_pasarian"] = [
@@ -872,8 +875,8 @@ def _reparto_351() -> dict:
          "venta_usd": 2343.2, "cobrado_usd": 0, "por_cobrar_usd": 2343.2, "destino": "2026-10",
          "motivo": POSTERIOR, "cobrado_posterior_usd": 2343.2,
          "fecha_cobro_posterior": "2026-10-14",
-         "leyenda": "Pasará a octubre 2026 al cerrar · cobrado el 14-oct, después del 30-sep "
-         "(al 30-sep: $0.00 USD de $2,343.20 USD)"},
+         "leyenda": "Pasará a octubre 2026 al cerrar · cobrado el 14/10/2026, "
+         "después del 30/09/2026 (al 30/09/2026: $0.00 USD de $2,343.20 USD)"},
     ]  # fmt: skip
     return p
 
@@ -881,12 +884,14 @@ def _reparto_351() -> dict:
 def test_reparto_pdf_con_el_corte() -> None:
     texto = _texto_pdf(render_reparto_pdf(RepartoPdfRequest.model_validate(_reparto_351())))
     assert (
-        "Pasan a octubre 2026 (sin cobro completo al 30-sep, no se reparten): #316 Mike & Nelson "
-        "<MN> $2,076.40 (cobrado al 30-sep $0.00, cobrado después del 30-sep)"
+        "Pasan a octubre 2026 (sin cobro completo al 30/09/2026, no se reparten): "
+        "#316 Mike & Nelson <MN> $2,076.40 (cobrado al 30/09/2026 $0.00, "
+        "cobrado después del 30/09/2026)"
     ) in texto
     assert (
-        "Pasarán a octubre 2026 al cerrar el mes (sin cobro completo al 30-sep): #351 Cliente 351 "
-        "$2,343.20 (cobrado al 30-sep $0.00, cobrado después $2,343.20 el 14-oct)"
+        "Pasarán a octubre 2026 al cerrar el mes (sin cobro completo al 30/09/2026): "
+        "#351 Cliente 351 $2,343.20 (cobrado al 30/09/2026 $0.00, "
+        "cobrado después $2,343.20 el 14/10/2026)"
     ) in texto
     # El que VIENE no trae motivo en el payload de prueba: su línea de siempre.
     assert "(cobrado $800.00, por cobrar $0.00)" in texto
@@ -909,7 +914,7 @@ def test_reparto_xlsx_encabezados_al_cierre() -> None:
     ]  # fmt: skip
     salen = _fila_de(ws, "Pasan a octubre 2026")
     assert ws.cell(row=salen, column=1).value == (
-        "Pasan a octubre 2026 (sin cobro completo al 30-sep, no se reparten)"
+        "Pasan a octubre 2026 (sin cobro completo al 30/09/2026, no se reparten)"
     )
     pasarian = _fila_de(ws, "Pasarán a octubre 2026")
     assert ws.cell(row=pasarian + 1, column=8).value.startswith("Pasará a octubre 2026 al cerrar")
