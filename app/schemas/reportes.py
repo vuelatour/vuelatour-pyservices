@@ -1473,6 +1473,22 @@ class BalanceAvionBalanceBloque(BaseModel):
     # migración ⇒ ni columnas, ni totales, ni nota: libro byte a byte.
     entregado_socios_mxn: float | None = None
     por_entregar_socios_mxn: float | None = None
+    # LA RESERVA DE OVERHAUL SE RETIENE (7-nov-2026, API 0.0.128; decisión del
+    # cliente: «aún no se está reteniendo de las utilidades para cada socio en
+    # cada avión, aún dice informativa no se resta; debe verse bien y retenerse
+    # bien en el balance por avión y general»). La reserva pasa a ser una RESTA
+    # explícita de la cascada antes del reparto. ADITIVAS:
+    # `utilidad_a_repartir_usd` = round2(utilidad_cobrada_usd −
+    # reserva_overhaul_usd) es el DISCRIMINADOR (`_reserva_se_retiene` en el
+    # render: número, 0.0 también cuenta) y `utilidad_a_repartir_mxn` =
+    # round2(utilidad_cobrada_mxn − reserva_overhaul_mxn) (None si falta
+    # alguna de las dos en pesos ⇒ «—»). Llegan junto con las
+    # `reserva_overhaul_*`; nunca en EXTERNOS ni en el consolidado FLOTA.
+    # `socios[]` no cambia de forma: su `monto_*` YA es neto (round2(% ×
+    # utilidad cobrada) − round2(% × reserva)). None (API previo) ⇒ la cascada
+    # de siempre y el bloque de la reserva solo informativo, byte a byte.
+    utilidad_a_repartir_usd: float | None = None
+    utilidad_a_repartir_mxn: float | None = None
 
     @field_validator(
         "reserva_overhaul_horas_hr",

@@ -441,6 +441,19 @@ class RepartoAvion(BaseModel):
     afac_tarifa_usd_hr: float | None = None
     reserva_retenida_usd: float | None = None
     reserva_retenida_mxn: float | None = None
+    # LA RESERVA DE OVERHAUL SE RETIENE (7-nov-2026, API 0.0.128; decisión del
+    # cliente: la reserva debe «retenerse bien … y verse también en el reparto
+    # de utilidades»). ADITIVAS: `saldo_a_repartir_usd` = round2(saldo_usd −
+    # reserva_overhaul_usd) es el DISCRIMINADOR (`reparto_reserva.
+    # reserva_retenida`: número, 0.0 también cuenta) y `saldo_a_repartir_mxn`
+    # = round2(saldo_mxn − reserva_overhaul_mxn) (None ⇒ «—»). Con ellas
+    # `saldo_*` sigue siendo el saldo ANTES de la reserva, `reparto[].monto_*`
+    # ya es neto (utilidad − reserva; Σ monto = saldo a repartir al centavo) y
+    # `reserva_retenida_*` es la reserva completa. Solo cambian los documentos
+    # con la cascada del balance (`reparto_como_balance`, donde `saldo_*` va
+    # antes de la reserva); None (API previo) ⇒ los de siempre, byte a byte.
+    saldo_a_repartir_usd: float | None = None
+    saldo_a_repartir_mxn: float | None = None
     # ADITIVOS (23-oct-2026, API 0.0.103, invariante 104 del API; pedido del
     # cliente: «debemos separar gastos directos del combustible, porque los
     # está uniendo, porque no nos está coincidiendo con el excel»). El

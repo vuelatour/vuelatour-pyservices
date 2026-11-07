@@ -12,8 +12,10 @@ y paréntesis. Una celda con fórmula se evalúa con el valor COMPLETO de las
 fórmulas que cita (como Excel), no con su caché redondeada.
 
 `verificar_libro` exige además que toda fórmula lleve ROUND exterior salvo
-las referencias puras y la lista blanca `ENCABEZADOS_SIN_ROUND` (revisión
-5-oct-2026: sin esa regla, quitar un ROUND seguía cuadrando a la vista).
+las referencias puras, las sumas/restas de ROUNDs enteros (`es_suma_de_rounds`,
+7-nov-2026: el socio = ROUND(% × cobrada, 2) − ROUND(% × reserva, 2)) y la
+lista blanca `ENCABEZADOS_SIN_ROUND` (revisión 5-oct-2026: sin esa regla,
+quitar un ROUND seguía cuadrando a la vista).
 """
 
 from __future__ import annotations
@@ -216,6 +218,26 @@ def es_round_externo(formula: str) -> bool:
     return False
 
 
+def es_suma_de_rounds(formula: str) -> bool:
+    """¿La fórmula es una suma/resta de DOS o más términos que son, cada uno,
+    un ROUND(…) entero? (7-nov-2026, API 0.0.128: cada socio de la hoja
+    'balance' = ROUND(% × cobrada, 2) − ROUND(% × reserva, 2), la aritmética
+    del API sin un round2 final; sumar o restar números ya a centavos es
+    exacto salvo el último bit, que `_exacto` tolera.)"""
+    terminos: list[str] = []
+    nivel, inicio = 0, 0
+    for i, ch in enumerate(formula):
+        if ch == "(":
+            nivel += 1
+        elif ch == ")":
+            nivel -= 1
+        elif ch in "+-" and nivel == 0 and i > inicio:
+            terminos.append(formula[inicio:i])
+            inicio = i + 1
+    terminos.append(formula[inicio:])
+    return len(terminos) > 1 and all(es_round_externo(t) for t in terminos)
+
+
 # Las ÚNICAS fórmulas que no llevan ROUND exterior (revisión 5-oct-2026): el
 # API no hace `round2` en su cadena (AE = Y/z, AF = AE/1.16, …; solo redondea
 # al SERIALIZAR) y la fórmula tampoco, o el siguiente eslabón dejaría de
@@ -286,7 +308,7 @@ def tolerancia(libro: Libro, hoja: str, celda: str) -> str:
     redondea al serializar). Revienta con un AssertionError legible si la
     fórmula no lleva ROUND y no está en la lista blanca."""
     formula = libro.con_formulas[hoja][celda].value[1:]
-    if es_round_externo(formula):
+    if es_round_externo(formula) or es_suma_de_rounds(formula):
         return "exacta"
     if es_referencia_pura(formula):
         m = _REF.match(formula)
