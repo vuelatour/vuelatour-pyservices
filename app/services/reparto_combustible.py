@@ -67,15 +67,15 @@ NOTA_COMBUSTIBLE_SEPARADO = (
     "gastos directos − provisión AFAC; Saldo disponible = utilidad antes de gastos − "
     "combustible − gastos indirectos − permisos − fijos + otros ingresos del avión."
 )
-# La misma nota con la reserva de overhaul RETENIDA (7-nov-2026, API 0.0.128,
-# `reparto_reserva.reserva_retenida_req`): la columna del saldo se llama
-# «Saldo antes de reserva» y el saldo a repartir la resta.
-NOTA_COMBUSTIBLE_SEPARADO_RETENIDA = (
+# La misma nota con la reserva de overhaul EN LA CASCADA (9-nov-2026, API
+# 0.0.129, `reparto_reserva.reserva_en_cascada_req`): la reserva es una resta
+# más antes del saldo, que se llama «Saldo a repartir».
+NOTA_COMBUSTIBLE_SEPARADO_RESERVA_EN_CASCADA = (
     "Gastos directos SIN combustible: el combustible (gasavión/turbosina) va en su propia "
     "columna, como en el Balance. Utilidad antes de gastos = venta cobrada − comisiones − "
-    "gastos directos − provisión AFAC; Saldo antes de reserva = utilidad antes de gastos − "
-    "combustible − gastos indirectos − permisos − fijos + otros ingresos del avión; Saldo a "
-    "repartir = saldo antes de reserva − reserva de overhaul."
+    "gastos directos − provisión AFAC; Saldo a repartir = utilidad antes de gastos − "
+    "combustible − gastos indirectos − permisos − fijos − reserva de overhaul + otros "
+    "ingresos del avión."
 )
 # La fila del Balance por avión se llama «UTILIDAD DESPUÉS DE COMISIONES» desde
 # el 26-oct-2026; la columna del reparto conserva su nombre.

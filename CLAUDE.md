@@ -2594,76 +2594,102 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   « (se descuenta)» por socio; con alguno que no descuenta (snapshots cerrados
   antes), los textos de la invariante 99 tal cual. Nunca decidir por la fecha.
   Tests: `tests/test_reparto_como_balance.py` (bloque «RESERVA PARA TODOS»).
-- **La reserva de overhaul SE RETIENE (7-nov-2026, API 0.0.128).** Decisión
-  del cliente: «aún no se está reteniendo de las utilidades para cada socio
-  en cada avión, aún dice informativa no se resta; debe verse bien y
-  retenerse bien en el balance por avión y general, y verse también en el
-  reparto de utilidades». La reserva (horas voladas × tarifa USD/hr de los
-  motores) es una RESTA explícita de la cascada antes de repartir y ningún
-  texto dice «informativa» ni «no se resta» cuando llegan las llaves. Todo
-  ADITIVO y opcional en pydantic; **sin las llaves, libros byte a byte**
-  (bloque informativo del 0.0.98 e invariante 121 incluidos). Aquí no se
-  calcula nada.
+- **La reserva de overhaul RESTA EN LA CASCADA, antes del total (9-nov-2026,
+  API 0.0.129, invariante 125 del API).** El 7-nov (API 0.0.128, commit
+  `bb3fe07`) la reserva se restaba DESPUÉS de UTILIDAD COBRADA / del saldo
+  («UTILIDAD A REPARTIR», «Saldo antes de la reserva» − reserva = «Saldo a
+  repartir», socio = ROUND(%×cobrada) − ROUND(%×reserva)) y el cliente lo
+  rechazó el 9-nov: «Necesito resolver ese tema del Overhaul, que quede ANTES
+  del total». Su Excel manual y el Diseño Funcional §4.8 la tienen como UNA
+  RESTA MÁS de la cascada: INGRESOS − GASTOS DIRECTOS − GASTOS INDIRECTOS −
+  OTROS GASTOS − PERMISOS − RESERVA OVERHAUL − PENDIENTE DE COBRO = SALDO
+  DISPONIBLE → Aerocharter % + Socios %. Discriminador ÚNICO, aditivo y
+  booleano: **`reserva_overhaul_en_cascada: true`** (validador liberal: solo
+  un `true` JSON cuenta; llega junto a `reserva_overhaul_*`). Con él los
+  números del API YA RESTAN la reserva y aquí no se calcula nada; ningún
+  texto dice «informativa», «no se resta» ni «a repartir» aparte. **Sin la
+  llave, libros byte a byte** (bloque informativo del 0.0.98 e invariante 121
+  incluidos). Las llaves del 0.0.128 (`utilidad_a_repartir_*`,
+  `saldo_a_repartir_*`) ya no viajan: siguen en los esquemas DEPRECADAS y el
+  render las IGNORA (un payload del 0.0.128 en los minutos del deploy no da
+  422 y se pinta como el informativo de siempre).
   - **Balance** (`BalanceAvionBalanceBloque`, libro individual y cada
     `aviones[]` del general; nunca en EXTERNOS ni en el consolidado FLOTA):
-    `utilidad_a_repartir_usd` = round2(utilidad_cobrada − reserva_overhaul)
-    es el DISCRIMINADOR (`_reserva_se_retiene`; 0.0 también cuenta) y
-    `utilidad_a_repartir_mxn` (None si falta alguna de las dos en pesos ⇒
-    «—» con `_NOTA_SIN_PESOS_DERIVADA`); `socios[]` no cambia de forma: su
-    `monto_*` ya es neto (round2(% × cobrada) − round2(% × reserva)). Hoja
-    'balance' (`_bloque_balance` / `_bloque_balance_pesos`): justo después
-    de UTILIDAD COBRADA, «(−) RESERVA DE OVERHAUL USD|(MXN)» (valor del API
-    con nota `_NOTA_CASCADA_RESERVA[_PESOS]`; en pesos None ⇒ «—» con
-    `_NOTA_SIN_PESOS_RESERVA`) y «UTILIDAD A REPARTIR USD|(MXN)» =
-    `ROUND(B{cobrada}-B{reserva},2)` (y en C, en pesos), negritas,
-    verde/rojo; cada socio = `_formula_socio` =
-    `ROUND(B{r}/100*$B${cobrada},2)-ROUND(B{r}/100*$B${reserva},2)` (la
-    aritmética EXACTA del API, sin ROUND final: el evaluador de los tests lo
-    acepta con `es_suma_de_rounds`), también en la columna USD informativa;
-    sin la reserva en esa moneda, la fórmula de siempre. Los socios corren
-    dos renglones y `celdas_empresa` y las entregas los siguen solos (van
-    por coordenada). Títulos `_TITULO_SOCIOS_A_REPARTIR` /
-    `_TITULO_SOCIOS_PESOS_A_REPARTIR`, nota `_NOTA_SIN_PESOS_SOCIO_A_REPARTIR`,
-    bloque ámbar con `_TITULO_RESERVA_OVERHAUL_RETENIDA` y
-    `_NOTA_RESERVA_OVERHAUL_RETENIDA` (su «Cómo se calcula» se conserva y
-    `_NOTA_RESERVA_OVERHAUL_INCOMPLETA` se queda), pie en pesos
-    `_NOTA_BALANCE_PESOS_RETENIDA` (en el general, si ALGÚN bloque trae el
-    discriminador). `libro_json` es genérico: la vista en pantalla hereda
-    filas, fórmulas y notas sin cambio.
-  - **Reparto** (`RepartoAvion`): `saldo_a_repartir_usd` = round2(saldo −
-    reserva) es el DISCRIMINADOR (`reparto_reserva.reserva_retenida`; 0.0
-    cuenta) y `saldo_a_repartir_mxn`; `saldo_*` sigue siendo el saldo ANTES
-    de la reserva, `reparto[].monto_*` ya neto (Σ = saldo a repartir al
-    centavo) y `reserva_retenida_*` la reserva completa. SOLO con la cascada
-    del balance (`reparto_como_balance`, donde `saldo_*` va antes de la
-    reserva): sin ella la llave se ignora. Helpers en
-    `app/services/reparto_reserva.py` (fuente única PDF/Excel:
-    `reserva_retenida[_req]`, `saldo_a_repartir_usd/_mxn`). PDF
-    (`_bloque_avion[_pesos]`): «Saldo antes de la reserva de overhaul»
-    (subtotal, `saldo_*`) → «(-) Reserva de overhaul (se retiene para el
-    overhaul)» (en negativo; en pesos sigue la línea gris del T.C. oficial
-    del cierre) → «Saldo a repartir» (la fila resaltada); las filas grises
-    `_filas_reserva_informativa` ya no se pintan; socios y resumen «Reserva
-    retenida» (sin sufijo « (se descuenta)»); pie
-    `_PIE_CASCADA_BALANCE_RETENIDA`; portada y resumen suman
-    `saldo_a_repartir_*` y «Gastos del periodo» mete la reserva
-    (`_gastos_avion[_pesos]`) para que venta + otros ingresos − gastos =
-    saldo a repartir siga cuadrando (como antes del 0.0.101). Excel
-    (`render_reparto_xlsx` / `_render_reparto_xlsx_pesos`): «Reserva
-    overhaul (se retiene)» / «(MXN, se retiene)» en número normal, «Saldo
-    antes de reserva[ (MXN)]» y, justo después, «Saldo a repartir USD» /
-    «Saldo a repartir (MXN)» con su total (corrimiento `osr` = 1 que se SUMA
-    al `oc` del combustible: `money_cols`, informativas, otros ingresos del
-    avión, AFAC al final, anchos y merges; también en la tabla USD
+    `_reserva_en_cascada(b)` = llave `true` + `reserva_overhaul_usd`
+    presente. `utilidad_despues_*` y `utilidad_cobrada_*` llegan netas y
+    `socios[].monto_*` = round2(% × utilidad cobrada) (`socios[].reserva_*`
+    informativa). Hoja 'balance' (`_bloque_balance` / `_bloque_balance_pesos`
+    y el general por bloques): fila **«(−) RESERVA DE OVERHAUL USD|(MXN)»**
+    (`_FILA_RESERVA_CASCADA[_PESOS]`, VALOR del API —no tiene hoja, no está
+    en `_CASCADA_REFS`— con nota `_NOTA_CASCADA_RESERVA[_PESOS]`) JUSTO
+    DESPUÉS de «(−) PERMISOS» y ANTES de «(+) OTROS INGRESOS» / «UTILIDAD
+    DESPUÉS DE GASTOS»; `_formulas_cascada(letra, k, con_oi=…,
+    con_reserva=…)` (fuente única USD/pesos): DESPUÉS = ROUND(antes −
+    combustible − indirectos − refacciones − permisos − reserva [+ otros
+    ingresos], 2) con los índices corridos una fila, COBRADA = ROUND(después −
+    pendiente, 2); socios con la fórmula de siempre `_formula_socio(letra,
+    row, fila_cobrada)` = `ROUND(B{r}/100*$B${cobrada},2)` y los títulos de
+    siempre (`_TITULO_SOCIOS[_PESOS]`); ENTREGAS y `celdas_empresa` no se
+    mueven de lugar relativo (todo corre una fila, van por coordenada). En
+    pesos, sin T.C. oficial del cierre la reserva es «—»
+    (`_NOTA_SIN_PESOS_RESERVA`), el API manda DESPUÉS/COBRADA/`monto_mxn`
+    None (⇒ «—» con las notas de siempre) y DESPUÉS (MXN) NO lleva fórmula
+    (jamás una fórmula que cite una celda de texto; si el API mandara número,
+    valor). Bloque ámbar del final (`_bloque_reserva_overhaul(…,
+    en_cascada=True)`): título «RESERVA DE OVERHAUL · ya restada en la
+    cascada (fila «(−) RESERVA DE OVERHAUL»)» (`_TITULO_RESERVA_OVERHAUL_EN_
+    CASCADA`; envuelve en la hoja USD), fila «Lo que aporta el avión USD|
+    (MXN)» (`_FILA_RESERVA_EN_CASCADA[_PESOS]`), «Cómo se calcula: …» igual
+    y nota `_NOTA_RESERVA_OVERHAUL_EN_CASCADA` (ya restada antes de UTILIDAD
+    DESPUÉS DE GASTOS; cada socio aporta su % dentro de su utilidad y
+    VuelaTour la guarda para el overhaul). Pie en pesos
+    `_NOTA_BALANCE_PESOS_EN_CASCADA` (en el general, si ALGÚN bloque trae la
+    llave). `libro_json` es genérico: la vista en pantalla hereda la fila,
+    las fórmulas y las notas.
+  - **Reparto** (`RepartoAvion`, llave junto a `reserva_overhaul_usd`; SOLO
+    con la cascada del balance `reparto_como_balance`, sin ella se ignora
+    porque el `saldo_*` de siempre ya la resta): `saldo_usd/_mxn` YA RESTAN
+    la reserva; `reparto[].utilidad_*` = su parte del saldo ANTES de la
+    reserva, `reparto[].reserva_*` su parte, `monto_*` = utilidad − reserva
+    (Σ = `saldo_*` al centavo), `descuenta_reserva` true en todos,
+    `reserva_retenida_*` = Σ reserva de los socios. Fuente única
+    `app/services/reparto_reserva.py` (`reserva_en_cascada[_req]`; los
+    helpers `saldo_a_repartir_*` del 0.0.128 se eliminaron: se usa `saldo_*`
+    directo). PDF (`_bloque_avion[_pesos]`): fila **«(-) Reserva de overhaul
+    (se retiene para el overhaul)»** (`FILA_RESERVA_EN_CASCADA`, en negativo,
+    ASCII «-») JUSTO DESPUÉS de «(-) Fijos (prorrateo + reparto manual)» —en
+    pesos con la línea gris del T.C. oficial del cierre debajo— y ANTES de
+    «(+) Otros ingresos del avión» (sin combustible separado, antes de la
+    provisión AFAC); la fila resaltada es **«Saldo a repartir»**
+    (`FILA_SALDO_A_REPARTIR`) = `saldo_*`; SIN «Saldo antes de la reserva» ni
+    las filas grises `_filas_reserva_informativa`; socios y resumen «Reserva
+    retenida» (`ENCABEZADOS_*_RETENIDA`); pie
+    `_PIE_CASCADA_BALANCE_RESERVA_EN_CASCADA`; portada y resumen suman
+    `saldo_*` y «Gastos del periodo» mete la reserva (`_gastos_avion[_pesos]`)
+    para que venta + otros ingresos − gastos = saldo a repartir. Excel
+    (`render_reparto_xlsx` / `_render_reparto_xlsx_pesos`): NINGUNA columna
+    nueva ni corrimiento (el `osr` del 0.0.128 desapareció): la reserva se
+    queda en su columna como «Reserva overhaul (se retiene)» / «Reserva
+    overhaul (MXN, se retiene)» en número normal con total, y la del saldo se
+    rotula «Saldo a repartir» / «Saldo a repartir (MXN)»
+    (`ENCABEZADO_SALDO_A_REPARTIR[_PESOS]`; también en la tabla USD
     informativa del libro en pesos); notas `NOTA_CASCADA_RETENIDA`,
     `NOTA_OTROS_INGRESOS_AVION_RETENIDA`, `NOTA_REPARTO_SOCIO_BALANCE_RETENIDA`
-    y `reparto_combustible.NOTA_COMBUSTIBLE_SEPARADO_RETENIDA`; «Reparto por
-    socio» con «Reserva retenida». Donde no llega la llave, textos por datos
-    (invariante 121). Orden de deploy: pyservices ⇒ API 0.0.128 (seguro en
-    los dos sentidos: sin la llave nada cambia; API nuevo con pyservices
-    previo ⇒ `extra="ignore"`, montos netos con los textos viejos).
-  - Tests: `tests/test_balance_reserva_retenida.py` (balance) y
-    `tests/test_reparto_reserva_retenida.py` (PDF y Excel del reparto).
+    y `reparto_combustible.NOTA_COMBUSTIBLE_SEPARADO_RESERVA_EN_CASCADA`
+    («… − fijos − reserva de overhaul + otros ingresos del avión»); «Reparto
+    por socio» con «Reserva retenida». Donde no llega la llave, textos por
+    datos (invariante 121). Orden de deploy: pyservices ⇒ API 0.0.129 (seguro
+    en los dos sentidos: sin la llave nada cambia; API nuevo con pyservices
+    previo ⇒ `extra="ignore"`, montos ya netos con los textos informativos
+    viejos).
+  - Tests: `tests/test_balance_reserva_retenida.py` (balance: posición de la
+    fila, fórmula de DESPUÉS con la reserva, socio = ROUND(% × cobrada),
+    textos, «—» en pesos sin T.C. sin fórmulas sobre texto, general por
+    bloques, byte a byte sin la llave / con las deprecadas) y
+    `tests/test_reparto_reserva_retenida.py` (PDF y Excel: orden de filas,
+    mismas columnas, totales, byte a byte). `tests/_evaluador_formulas.py`
+    volvió a exigir ROUND exterior en toda fórmula (el `es_suma_de_rounds`
+    del 0.0.128 se retiró: ya no hay fórmula que lo necesite).
 - **PRECIO VENTA UNITARIO en la hoja «inventario» (rev. 2, API 0.0.125).** La
   columna es el precio por unidad al que se VENDIÓ en el periodo (lo calcula
   el API: VENDIDO ÷ unidades); con `precio_venta_fuente == "ULTIMA_VENTA"` la

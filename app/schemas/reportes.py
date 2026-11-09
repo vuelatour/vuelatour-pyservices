@@ -1473,20 +1473,32 @@ class BalanceAvionBalanceBloque(BaseModel):
     # migración ⇒ ni columnas, ni totales, ni nota: libro byte a byte.
     entregado_socios_mxn: float | None = None
     por_entregar_socios_mxn: float | None = None
-    # LA RESERVA DE OVERHAUL SE RETIENE (7-nov-2026, API 0.0.128; decisión del
-    # cliente: «aún no se está reteniendo de las utilidades para cada socio en
-    # cada avión, aún dice informativa no se resta; debe verse bien y retenerse
-    # bien en el balance por avión y general»). La reserva pasa a ser una RESTA
-    # explícita de la cascada antes del reparto. ADITIVAS:
-    # `utilidad_a_repartir_usd` = round2(utilidad_cobrada_usd −
-    # reserva_overhaul_usd) es el DISCRIMINADOR (`_reserva_se_retiene` en el
-    # render: número, 0.0 también cuenta) y `utilidad_a_repartir_mxn` =
-    # round2(utilidad_cobrada_mxn − reserva_overhaul_mxn) (None si falta
-    # alguna de las dos en pesos ⇒ «—»). Llegan junto con las
-    # `reserva_overhaul_*`; nunca en EXTERNOS ni en el consolidado FLOTA.
-    # `socios[]` no cambia de forma: su `monto_*` YA es neto (round2(% ×
-    # utilidad cobrada) − round2(% × reserva)). None (API previo) ⇒ la cascada
-    # de siempre y el bloque de la reserva solo informativo, byte a byte.
+    # LA RESERVA DE OVERHAUL RESTA EN LA CASCADA (9-nov-2026, API 0.0.129,
+    # invariante 125 del API; decisión del cliente: «Necesito resolver ese tema
+    # del Overhaul, que quede ANTES del total», como en su Excel manual y en el
+    # Diseño Funcional §4.8: INGRESOS − GASTOS DIRECTOS − GASTOS INDIRECTOS −
+    # OTROS GASTOS − PERMISOS − RESERVA OVERHAUL − PENDIENTE DE COBRO = SALDO
+    # DISPONIBLE). DISCRIMINADOR ÚNICO, aditivo y booleano:
+    # `reserva_overhaul_en_cascada` (solo un `true` JSON cuenta; llega junto
+    # con las `reserva_overhaul_*`; nunca en EXTERNOS ni en el consolidado
+    # FLOTA). Con él, `utilidad_despues_*` y `utilidad_cobrada_*` YA RESTAN
+    # `reserva_overhaul_*`: UTILIDAD DESPUÉS DE COMISIONES − combustible −
+    # indirectos (+ otros) − refacciones − permisos − RESERVA DE OVERHAUL [+
+    # otros ingresos del avión] = UTILIDAD DESPUÉS DE GASTOS; − pendiente de
+    # pago = UTILIDAD COBRADA; y `socios[].monto_*` = round2(% × utilidad
+    # cobrada), ya neto, SIN resta aparte (`socios[].reserva_*` = su parte de
+    # la reserva, informativa). Si `reserva_overhaul_mxn` es None (sin T.C.
+    # oficial del cierre) el API manda `utilidad_despues_mxn`,
+    # `utilidad_cobrada_mxn` y `monto_mxn` None (⇒ «—», como cualquier hoja
+    # sin pesos). None/false (API ≤ 0.0.127) ⇒ la cascada de siempre y el
+    # bloque de la reserva solo informativo, byte a byte.
+    reserva_overhaul_en_cascada: bool | None = None
+    # DEPRECADAS (API 0.0.128, 7-nov-2026, vigente dos días: la reserva se
+    # restaba DESPUÉS de UTILIDAD COBRADA en una fila «UTILIDAD A REPARTIR»;
+    # el cliente lo rechazó el 9-nov). Ningún API las vuelve a mandar y el
+    # render las IGNORA; siguen en el esquema para que un payload del 0.0.128
+    # durante los minutos de un deploy no dé 422 (se pinta como el informativo
+    # de siempre).
     utilidad_a_repartir_usd: float | None = None
     utilidad_a_repartir_mxn: float | None = None
 
@@ -1513,11 +1525,11 @@ class BalanceAvionBalanceBloque(BaseModel):
     def _reserva_tc_dia_liberal(cls, v: Any) -> str | None:
         return _texto_liberal(v)
 
-    @field_validator("reserva_overhaul_incompleta", mode="before")
+    @field_validator("reserva_overhaul_incompleta", "reserva_overhaul_en_cascada", mode="before")
     @classmethod
-    def _reserva_incompleta_liberal(cls, v: Any) -> bool | None:
-        """Solo un `true` JSON la enciende; lo demás (null, false, texto) ⇒
-        None = con tarifa."""
+    def _reserva_banderas_liberales(cls, v: Any) -> bool | None:
+        """Solo un `true` JSON las enciende; lo demás (null, false, texto,
+        número) ⇒ None = con tarifa / la cascada de siempre."""
         return True if v is True else None
 
 

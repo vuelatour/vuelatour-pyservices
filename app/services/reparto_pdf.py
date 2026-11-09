@@ -49,12 +49,7 @@ from app.services.reparto_comisiones import (
     linea_comision_vendedor,
     solo_gasto_real,
 )
-from app.services.reparto_reserva import (
-    reserva_retenida,
-    reserva_retenida_req,
-    saldo_a_repartir_mxn,
-    saldo_a_repartir_usd,
-)
+from app.services.reparto_reserva import reserva_en_cascada, reserva_en_cascada_req
 
 BRAND = colors.HexColor("#0F4C81")
 LIGHT = colors.HexColor("#EEF2F7")
@@ -241,21 +236,23 @@ _PIE_CASCADA_BALANCE_TODOS = (
     "reserva de overhaul (lo que el avión debe guardar) se descuenta a cada socio de su "
     "utilidad: VuelaTour la retiene."
 )
-# LA RESERVA DE OVERHAUL SE RETIENE (7-nov-2026, API 0.0.128; decisión del
-# cliente: la reserva debe «retenerse bien … y verse también en el reparto de
-# utilidades»; helpers en `reparto_reserva`). Con `saldo_a_repartir_usd`
-# (`reserva_retenida`) y la cascada del balance, la reserva vuelve a RESTAR
-# en la cascada: «Saldo antes de la reserva de overhaul» (`saldo_*`, un
-# subtotal) → «(-) Reserva de overhaul (se retiene para el overhaul)» (en
-# negativo, como las demás restas) → «Saldo a repartir» (`saldo_a_repartir_*`,
-# la fila resaltada); las filas grises informativas ya no se pintan (en pesos
-# queda la línea del T.C. oficial del cierre); socios y resumen «Reserva
-# retenida»; el resumen global suma el saldo a repartir y sus «Gastos del
-# periodo» incluyen la reserva, para que venta + otros ingresos − gastos =
-# saldo a repartir siga cuadrando. Sin la llave, los documentos de siempre
-# (textos por datos, invariante 121). En Helvetica no van «−» ni «→».
-FILA_SALDO_ANTES_RESERVA = "Saldo antes de la reserva de overhaul"
-FILA_RESERVA_RETENIDA = "(-) Reserva de overhaul (se retiene para el overhaul)"
+# LA RESERVA DE OVERHAUL RESTA EN LA CASCADA (9-nov-2026, API 0.0.129,
+# invariante 125 del API; decisión del cliente: «Necesito resolver ese tema
+# del Overhaul, que quede ANTES del total», como en su Excel manual; helpers
+# en `reparto_reserva`). Con la llave `reserva_overhaul_en_cascada`
+# (`reserva_en_cascada`) y la cascada del balance, la reserva es UNA RESTA MÁS
+# de la cascada: «(-) Reserva de overhaul (se retiene para el overhaul)» (en
+# negativo, como las demás restas) JUSTO DESPUÉS de «(-) Fijos» y ANTES de
+# «(+) Otros ingresos del avión», y la fila resaltada es «Saldo a repartir»
+# (`saldo_*`, que el API ya manda neto). Sin «Saldo antes de la reserva» ni
+# filas grises informativas de la reserva (en pesos, la línea gris del T.C.
+# oficial del cierre va bajo la resta); socios y resumen «Reserva retenida»;
+# el resumen global suma `saldo_*` y sus «Gastos del periodo» incluyen la
+# reserva, para que venta + otros ingresos − gastos = saldo a repartir siga
+# cuadrando. (El 0.0.128 del 7-nov la restaba DESPUÉS del saldo; el cliente lo
+# rechazó.) Sin la llave, los documentos de siempre (textos por datos,
+# invariante 121). En Helvetica no van «−» ni «→».
+FILA_RESERVA_EN_CASCADA = "(-) Reserva de overhaul (se retiene para el overhaul)"
 FILA_SALDO_A_REPARTIR = "Saldo a repartir"
 ENCABEZADOS_SOCIOS_BALANCE_RETENIDA = ["Socio", "%", "Utilidad", "Reserva retenida", "A recibir"]
 ENCABEZADOS_SOCIOS_BALANCE_PESOS_RETENIDA = [
@@ -265,10 +262,11 @@ ENCABEZADOS_RESUMEN_SOCIOS_BALANCE_RETENIDA = ["Socio", "Reserva retenida", "Tot
 ENCABEZADOS_RESUMEN_SOCIOS_BALANCE_PESOS_RETENIDA = [
     "Socio", "Reserva retenida (MXN)", "Total a recibir (MXN)",
 ]  # fmt: skip
-_PIE_CASCADA_BALANCE_RETENIDA = (
+_PIE_CASCADA_BALANCE_RESERVA_EN_CASCADA = (
     " Saldo a repartir = venta del avión cobrada - comisiones - gastos - fijos - provisión "
-    "AFAC + otros ingresos del avión - reserva de overhaul; la reserva se retiene a cada "
-    "socio en proporción a su % y VuelaTour la guarda para el overhaul."
+    "AFAC - reserva de overhaul + otros ingresos del avión; la reserva de overhaul resta en "
+    "la cascada y se retiene a cada socio en proporción a su %: VuelaTour la guarda para el "
+    "overhaul."
 )
 
 
@@ -406,10 +404,10 @@ def _tabla_socios_balance(avion: RepartoAvion, *, pesos: bool) -> Table:
     (su parte del saldo) · Reserva a guardar (su parte de la reserva de
     overhaul; « (se descuenta)» si VuelaTour se la retiene) · A recibir
     (`monto_*` del API: utilidad − reserva solo a quien la descuenta)."""
-    # Con la reserva RETENIDA (API 0.0.128) el encabezado dice «Reserva
+    # Con la reserva EN LA CASCADA (API 0.0.129) el encabezado dice «Reserva
     # retenida»; con TODOS descontando (invariante 121) el encabezado ya lo
     # dice y el sufijo « (se descuenta)» sobra; si alguno no, la tabla de antes.
-    retenida = reserva_retenida(avion)
+    retenida = reserva_en_cascada(avion)
     todos = todos_descuentan_reserva(avion)
     if retenida:
         enc = (
@@ -488,7 +486,7 @@ def _resumen_socios_balance(
         )
     else:
         orden = sorted(total_usd, key=lambda n: total_usd[n], reverse=True)
-    if reserva_retenida_req(req):
+    if reserva_en_cascada_req(req):
         encabezados = (
             ENCABEZADOS_RESUMEN_SOCIOS_BALANCE_PESOS_RETENIDA
             if pesos
@@ -562,8 +560,8 @@ def _pie(req: RepartoPdfRequest) -> str:
     if hay_combustible_separado(req):
         fin = pie_combustible(req) + fin
     if req.reparto_como_balance:
-        if reserva_retenida_req(req):
-            fin = _PIE_CASCADA_BALANCE_RETENIDA + fin
+        if reserva_en_cascada_req(req):
+            fin = _PIE_CASCADA_BALANCE_RESERVA_EN_CASCADA + fin
         else:
             todos = todos_descuentan_reserva_req(req)
             fin = (_PIE_CASCADA_BALANCE_TODOS if todos else _PIE_CASCADA_BALANCE) + fin
@@ -869,10 +867,7 @@ def render_reparto_pdf(req: RepartoPdfRequest) -> bytes:
         story.append(_tabla_resumen_pesos(req))
     else:
         total_ingresos = sum(a.ingresos_cobrado_usd for a in req.aviones)
-        # Con la reserva retenida (API 0.0.128), lo que de verdad se reparte.
-        total_saldo = sum(
-            saldo_a_repartir_usd(a, como_balance=req.reparto_como_balance) for a in req.aviones
-        )
+        total_saldo = sum(a.saldo_usd for a in req.aviones)
         # comisiones_venta_usd: 0 desde el 28-ago-2026 (regla A) y, desde la
         # regla de septiembre 2026 (API 0.0.65), las comisiones que absorbe cada
         # avión (banco + lo del vendedor: su provisión hasta el API 0.0.73, el
@@ -1089,12 +1084,12 @@ def _gastos_avion(a: RepartoAvion, como_balance: bool = False) -> float:
     overhaul (ya no resta), para que venta − gastos = saldo siga cuadrando.
     Con el combustible separado (23-oct-2026, API 0.0.103) el combustible ya
     no viene dentro de los directos y se suma aparte; sin la llave, nada. Con
-    la reserva RETENIDA (7-nov-2026, API 0.0.128) la reserva vuelve a entrar:
-    venta + otros ingresos − gastos = saldo a repartir."""
+    la reserva EN LA CASCADA (9-nov-2026, API 0.0.129) la reserva vuelve a
+    entrar: venta + otros ingresos − gastos = saldo a repartir."""
     base = a.gastos_directos_usd + a.gastos_indirectos_usd + a.permisos_usd + a.otros_usd
     base += a.combustible_usd or 0.0
     if como_balance:
-        reserva = a.reserva_overhaul_usd if reserva_retenida(a) else 0.0
+        reserva = a.reserva_overhaul_usd if reserva_en_cascada(a) else 0.0
         return base + (a.afac_reservado_usd or 0.0) + reserva
     return base + a.reserva_overhaul_usd
 
@@ -1202,10 +1197,15 @@ def _bloque_avion(
         ["(-) Permisos", _usd(-avion.permisos_usd)],
         ["(-) Fijos (prorrateo + reparto manual)", _usd(-avion.otros_usd)],
     ]
+    # LA RESERVA EN LA CASCADA (9-nov-2026, API 0.0.129): una resta más,
+    # justo después de los fijos (el `saldo_usd` del API ya la trae restada).
+    en_cascada = como_balance and reserva_en_cascada(avion)
+    if en_cascada:
+        filas.append([FILA_RESERVA_EN_CASCADA, _usd(-avion.reserva_overhaul_usd)])
     # LA CASCADA DEL BALANCE (20-oct-2026): la provisión AFAC resta en lugar
-    # de la reserva; la reserva va DESPUÉS del saldo, en gris (no se resta).
-    # Con el combustible separado la provisión ya restó arriba (orden del
-    # Excel).
+    # de la reserva; la reserva va DESPUÉS del saldo, en gris (no se resta)
+    # —salvo con la llave del 0.0.129, que ya la restó arriba—. Con el
+    # combustible separado la provisión ya restó arriba (orden del Excel).
     if como_balance:
         if not con_combustible:
             filas.append(
@@ -1217,24 +1217,15 @@ def _bloque_avion(
         info_rows += [len(filas) + i for i in grises_oi]
         filas += filas_oi
     # El saldo se resalta por su índice: con la cascada del balance ya no es
-    # la última fila. Con la reserva RETENIDA (API 0.0.128): «Saldo antes de
-    # la reserva» (subtotal) → «(-) Reserva de overhaul (se retiene…)» →
-    # «Saldo a repartir» (la fila resaltada); sin la llave, «Saldo disponible»
-    # y las filas grises informativas de siempre.
-    idx_antes_reserva: int | None = None
-    if como_balance and reserva_retenida(avion):
-        idx_antes_reserva = len(filas)
-        filas.append([FILA_SALDO_ANTES_RESERVA, _usd(avion.saldo_usd)])
-        filas.append([FILA_RESERVA_RETENIDA, _usd(-avion.reserva_overhaul_usd)])
-        idx_saldo = len(filas)
-        filas.append([FILA_SALDO_A_REPARTIR, _usd(avion.saldo_a_repartir_usd)])
-    else:
-        idx_saldo = len(filas)
-        filas.append(["Saldo disponible", _usd(avion.saldo_usd)])
-        if como_balance:
-            reserva = _filas_reserva_informativa(avion, pesos=False)
-            info_rows += range(len(filas), len(filas) + len(reserva))
-            filas += reserva
+    # la última fila. Con la reserva en la cascada se llama «Saldo a
+    # repartir» y no lleva las filas grises informativas de la reserva.
+    idx_saldo = len(filas)
+    rotulo_saldo = FILA_SALDO_A_REPARTIR if en_cascada else "Saldo disponible"
+    filas.append([rotulo_saldo, _usd(avion.saldo_usd)])
+    if como_balance and not en_cascada:
+        reserva = _filas_reserva_informativa(avion, pesos=False)
+        info_rows += range(len(filas), len(filas) + len(reserva))
+        filas += reserva
     cascada = Table(filas, colWidths=[120 * mm, 50 * mm])
     estilo: list = [
         ("FONTSIZE", (0, 0), (-1, -1), 9),
@@ -1247,15 +1238,13 @@ def _bloque_avion(
         ("TEXTCOLOR", (0, idx_saldo), (-1, idx_saldo), BRAND),
         ("BACKGROUND", (0, idx_saldo), (-1, idx_saldo), LIGHT),
     ]
-    # Subtotales «= Utilidad antes de gastos» (combustible separado) y «Saldo
-    # antes de la reserva de overhaul» (reserva retenida): en negritas con una
-    # línea arriba, sin el fondo ni el azul del saldo.
-    for idx in (idx_utilidad, idx_antes_reserva):
-        if idx is not None:
-            estilo += [
-                ("LINEABOVE", (0, idx), (-1, idx), 0.4, MUTED),
-                ("FONTNAME", (0, idx), (-1, idx), "Helvetica-Bold"),
-            ]
+    # Subtotal «= Utilidad antes de gastos» (combustible separado): en
+    # negritas con una línea arriba, sin el fondo ni el azul del saldo.
+    if idx_utilidad is not None:
+        estilo += [
+            ("LINEABOVE", (0, idx_utilidad), (-1, idx_utilidad), 0.4, MUTED),
+            ("FONTNAME", (0, idx_utilidad), (-1, idx_utilidad), "Helvetica-Bold"),
+        ]
     for info_idx in info_rows:
         estilo += [
             ("TEXTCOLOR", (0, info_idx), (-1, info_idx), MUTED),
@@ -1466,8 +1455,8 @@ def _gastos_avion_pesos(a: RepartoAvion, como_balance: bool = False) -> float | 
             a.permisos_mxn,
             a.otros_mxn,
             a.afac_reservado_mxn if como_balance else a.reserva_overhaul_mxn,
-            # Reserva RETENIDA (API 0.0.128): vuelve a entrar, como en USD.
-            a.reserva_overhaul_mxn if como_balance and reserva_retenida(a) else 0.0,
+            # Reserva EN LA CASCADA (API 0.0.129): vuelve a entrar, como en USD.
+            a.reserva_overhaul_mxn if como_balance and reserva_en_cascada(a) else 0.0,
             a.comisiones_venta_mxn if a.comisiones_venta_usd or a.comisiones_venta_mxn else 0.0,
         ]
     )
@@ -1480,16 +1469,13 @@ def _tabla_resumen_pesos(req: RepartoPdfRequest) -> Table:
     aviones = req.aviones
     como_balance = req.reparto_como_balance
     total_ingresos = _suma_pesos([a.ingresos_cobrado_mxn for a in aviones])
-    # Con la reserva retenida (API 0.0.128), lo que de verdad se reparte.
-    total_saldo = _suma_pesos(
-        [saldo_a_repartir_mxn(a, como_balance=como_balance) for a in aviones]
-    )
+    total_saldo = _suma_pesos([a.saldo_mxn for a in aviones])
     total_gastos = _suma_pesos([_gastos_avion_pesos(a, como_balance) for a in aviones])
     total_otros = req.otros_ingresos_vuelatour_total_usd or sum(
         a.otros_ingresos_vuelatour_usd for a in aviones
     )
     usd_ingresos = sum(a.ingresos_cobrado_usd for a in aviones)
-    usd_saldo = sum(saldo_a_repartir_usd(a, como_balance=como_balance) for a in aviones)
+    usd_saldo = sum(a.saldo_usd for a in aviones)
     usd_gastos = sum(_gastos_avion(a, como_balance) + a.comisiones_venta_usd for a in aviones)
     con_oi = any(a.otros_ingresos_avion_usd or a.otros_ingresos_avion_mxn for a in aviones)
     if con_oi:
@@ -1748,9 +1734,26 @@ def _bloque_avion_pesos(
             _usd(-avion.otros_usd),
         ],
     ]
+    # LA RESERVA EN LA CASCADA (9-nov-2026, API 0.0.129): una resta más justo
+    # después de los fijos (el `saldo_*` del API ya la trae restada), con su
+    # línea gris del T.C. oficial del cierre debajo.
+    en_cascada = como_balance and reserva_en_cascada(avion)
+    if en_cascada:
+        filas.append(
+            [
+                FILA_RESERVA_EN_CASCADA,
+                _dinero_neg(avion.reserva_overhaul_mxn),
+                _usd(-avion.reserva_overhaul_usd),
+            ]
+        )
+        linea_tc = _linea_tc_cierre(avion)
+        if linea_tc:
+            info_rows.append(len(filas))
+            filas.append([linea_tc, "", ""])
     # LA CASCADA DEL BALANCE (20-oct-2026): la provisión AFAC resta en lugar
-    # de la reserva; la reserva va DESPUÉS del saldo, en gris (no se resta).
-    # Con el combustible separado la provisión ya restó arriba.
+    # de la reserva; la reserva va DESPUÉS del saldo, en gris (no se resta)
+    # —salvo con la llave del 0.0.129, que ya la restó arriba—. Con el
+    # combustible separado la provisión ya restó arriba.
     if fila_afac is not None:
         if not con_combustible:
             filas.append(fila_afac)
@@ -1765,39 +1768,20 @@ def _bloque_avion_pesos(
     if con_combustible:
         info_rows += [len(filas) + i for i in grises_oi]
         filas += filas_oi
-    # Reserva RETENIDA (API 0.0.128): saldo antes de la reserva (subtotal),
-    # la reserva en negativo con su línea gris del T.C. y el saldo a repartir
-    # (la fila resaltada); sin la llave, la cascada de siempre.
-    idx_antes_reserva: int | None = None
-    if como_balance and reserva_retenida(avion):
-        idx_antes_reserva = len(filas)
-        filas.append([FILA_SALDO_ANTES_RESERVA, _dinero(avion.saldo_mxn), _usd(avion.saldo_usd)])
-        filas.append(
-            [
-                FILA_RESERVA_RETENIDA,
-                _dinero_neg(avion.reserva_overhaul_mxn),
-                _usd(-avion.reserva_overhaul_usd),
-            ]
-        )
-        linea_tc = _linea_tc_cierre(avion)
-        if linea_tc:
-            info_rows.append(len(filas))
-            filas.append([linea_tc, "", ""])
-        idx_saldo = len(filas)
-        filas.append(
-            [
-                FILA_SALDO_A_REPARTIR,
-                _dinero(avion.saldo_a_repartir_mxn),
-                _usd(avion.saldo_a_repartir_usd),
-            ]
-        )
-    else:
-        idx_saldo = len(filas)
-        filas.append(["Saldo disponible", _dinero(avion.saldo_mxn), _usd(avion.saldo_usd)])
-        if como_balance:
-            reserva = _filas_reserva_informativa(avion, pesos=True)
-            info_rows += range(len(filas), len(filas) + len(reserva))
-            filas += reserva
+    # Con la reserva en la cascada el saldo se llama «Saldo a repartir» y no
+    # lleva las filas grises informativas de la reserva.
+    idx_saldo = len(filas)
+    filas.append(
+        [
+            FILA_SALDO_A_REPARTIR if en_cascada else "Saldo disponible",
+            _dinero(avion.saldo_mxn),
+            _usd(avion.saldo_usd),
+        ]
+    )
+    if como_balance and not en_cascada:
+        reserva = _filas_reserva_informativa(avion, pesos=True)
+        info_rows += range(len(filas), len(filas) + len(reserva))
+        filas += reserva
     cascada = Table(filas, colWidths=_COLS_CASCADA_PESOS)
     estilo: list = [
         ("FONTSIZE", (0, 0), (-1, -1), 9),
@@ -1821,15 +1805,13 @@ def _bloque_avion_pesos(
         ("TEXTCOLOR", (0, idx_saldo), (1, idx_saldo), BRAND),
         ("BACKGROUND", (0, idx_saldo), (-1, idx_saldo), LIGHT),
     ]
-    # Subtotales «= Utilidad antes de gastos» (combustible separado) y «Saldo
-    # antes de la reserva de overhaul» (reserva retenida): pesos en negritas
-    # con una línea arriba; los dólares siguen informativos.
-    for idx in (idx_utilidad, idx_antes_reserva):
-        if idx is not None:
-            estilo += [
-                ("LINEABOVE", (0, idx), (-1, idx), 0.4, MUTED),
-                ("FONTNAME", (0, idx), (1, idx), "Helvetica-Bold"),
-            ]
+    # Subtotal «= Utilidad antes de gastos» (combustible separado): pesos en
+    # negritas con una línea arriba; los dólares siguen informativos.
+    if idx_utilidad is not None:
+        estilo += [
+            ("LINEABOVE", (0, idx_utilidad), (-1, idx_utilidad), 0.4, MUTED),
+            ("FONTNAME", (0, idx_utilidad), (1, idx_utilidad), "Helvetica-Bold"),
+        ]
     for info_idx in info_rows:
         estilo += [
             ("TEXTCOLOR", (0, info_idx), (1, info_idx), MUTED),

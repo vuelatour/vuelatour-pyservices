@@ -441,17 +441,28 @@ class RepartoAvion(BaseModel):
     afac_tarifa_usd_hr: float | None = None
     reserva_retenida_usd: float | None = None
     reserva_retenida_mxn: float | None = None
-    # LA RESERVA DE OVERHAUL SE RETIENE (7-nov-2026, API 0.0.128; decisión del
-    # cliente: la reserva debe «retenerse bien … y verse también en el reparto
-    # de utilidades»). ADITIVAS: `saldo_a_repartir_usd` = round2(saldo_usd −
-    # reserva_overhaul_usd) es el DISCRIMINADOR (`reparto_reserva.
-    # reserva_retenida`: número, 0.0 también cuenta) y `saldo_a_repartir_mxn`
-    # = round2(saldo_mxn − reserva_overhaul_mxn) (None ⇒ «—»). Con ellas
-    # `saldo_*` sigue siendo el saldo ANTES de la reserva, `reparto[].monto_*`
-    # ya es neto (utilidad − reserva; Σ monto = saldo a repartir al centavo) y
-    # `reserva_retenida_*` es la reserva completa. Solo cambian los documentos
-    # con la cascada del balance (`reparto_como_balance`, donde `saldo_*` va
-    # antes de la reserva); None (API previo) ⇒ los de siempre, byte a byte.
+    # LA RESERVA DE OVERHAUL RESTA EN LA CASCADA (9-nov-2026, API 0.0.129,
+    # invariante 125 del API; decisión del cliente: «Necesito resolver ese tema
+    # del Overhaul, que quede ANTES del total», como en su Excel manual).
+    # DISCRIMINADOR ÚNICO, aditivo y booleano: `reserva_overhaul_en_cascada`
+    # (solo un `true` JSON cuenta; `reparto_reserva.reserva_en_cascada`). Con
+    # él y la cascada del balance (`reparto_como_balance`), `saldo_usd` y
+    # `saldo_mxn` YA RESTAN `reserva_overhaul_usd/_mxn`: venta cobrada −
+    # comisiones − gastos directos − provisión AFAC = utilidad antes de gastos;
+    # − combustible − indirectos − permisos − fijos − RESERVA DE OVERHAUL +
+    # otros ingresos del avión = SALDO A REPARTIR. `reparto[].utilidad_*` = su
+    # parte del saldo ANTES de la reserva, `reparto[].reserva_*` = su parte de
+    # la reserva, `monto_*` = utilidad − reserva (Σ monto = `saldo_*` al
+    # centavo), `descuenta_reserva` true en todos y `reserva_retenida_*` = Σ
+    # reserva de los socios (= la del avión). Aquí jamás se resta nada.
+    # None/false (API ≤ 0.0.127) ⇒ los documentos de siempre, byte a byte.
+    reserva_overhaul_en_cascada: bool | None = None
+    # DEPRECADAS (API 0.0.128, 7-nov-2026, vigente dos días: la reserva se
+    # restaba DESPUÉS del saldo —«Saldo antes de la reserva» − reserva =
+    # «Saldo a repartir»—; el cliente lo rechazó el 9-nov). Ningún API las
+    # vuelve a mandar y el render las IGNORA; siguen en el esquema para que un
+    # payload del 0.0.128 durante los minutos de un deploy no dé 422 (se pinta
+    # como el de siempre).
     saldo_a_repartir_usd: float | None = None
     saldo_a_repartir_mxn: float | None = None
     # ADITIVOS (23-oct-2026, API 0.0.103, invariante 104 del API; pedido del
@@ -484,6 +495,13 @@ class RepartoAvion(BaseModel):
     def _cierre_avion_liberal(cls, v: Any) -> Any:
         """Solo un objeto se valida; lo demás (null, texto, lista) ⇒ None."""
         return v if isinstance(v, dict | RepartoCierreAvion) else None
+
+    @field_validator("reserva_overhaul_en_cascada", mode="before")
+    @classmethod
+    def _en_cascada_liberal(cls, v: Any) -> bool | None:
+        """Solo un `true` JSON la enciende; lo demás (null, false, texto,
+        número) ⇒ None = los documentos de siempre."""
+        return True if v is True else None
 
     @field_validator(
         "otros_ingresos_avion_usd", "otros_ingresos_avion_sin_tc_mxn", mode="before"
