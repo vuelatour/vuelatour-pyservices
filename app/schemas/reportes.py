@@ -1357,11 +1357,44 @@ class BalanceAvionSocio(BaseModel):
     entregado_usd: float | None = None
     entregas: int | None = None
     por_entregar_mxn: float | None = None
+    # LA RESERVA DE OVERHAUL, SOCIO POR SOCIO (9-nov-2026, API 0.0.130; el
+    # cliente: «necesito que sea claro en cada total lo que se les está
+    # descontando del total de la utilidad»). Las llaves viajan desde el
+    # 20-oct (API 0.0.101) y hasta hoy aquí se ignoraban; con el bloque en
+    # `reserva_overhaul_en_cascada` el API 0.0.130 las arma así:
+    # `utilidad_*` = round2(% × (utilidad cobrada + reserva)) —su parte de la
+    # utilidad cobrada ANTES de la reserva—, `reserva_*` = round2(% ×
+    # reserva_overhaul_*) —su parte de la reserva— y `monto_*` = utilidad −
+    # reserva, EXACTO por renglón (reserva 0 ⇒ utilidad = monto = su % de la
+    # cobrada); `descuenta_reserva` true. Sin T.C. oficial del cierre
+    # (`reserva_overhaul_mxn` None) las tres en pesos son None (⇒ «—»). Solo
+    # se pintan con la llave del bloque; sin ella, libro byte a byte.
+    # Liberales: jamás un 422 por una columna del reparto.
+    utilidad_usd: float | None = None
+    utilidad_mxn: float | None = None
+    reserva_usd: float | None = None
+    reserva_mxn: float | None = None
+    descuenta_reserva: bool | None = None
 
-    @field_validator("entregado_mxn", "entregado_usd", "por_entregar_mxn", mode="before")
+    @field_validator(
+        "entregado_mxn",
+        "entregado_usd",
+        "por_entregar_mxn",
+        "utilidad_usd",
+        "utilidad_mxn",
+        "reserva_usd",
+        "reserva_mxn",
+        mode="before",
+    )
     @classmethod
     def _entregas_numeros_liberales(cls, v: Any) -> float | None:
         return numero_cierre_liberal(v)
+
+    @field_validator("descuenta_reserva", mode="before")
+    @classmethod
+    def _descuenta_liberal(cls, v: Any) -> bool | None:
+        """Solo un booleano JSON cuenta; null/texto/número ⇒ None."""
+        return v if isinstance(v, bool) else None
 
     @field_validator("entregas", mode="before")
     @classmethod

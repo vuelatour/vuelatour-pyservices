@@ -2646,6 +2646,53 @@ Reglas de este microservicio (FastAPI, Python 3.12).
     `_NOTA_BALANCE_PESOS_EN_CASCADA` (en el general, si ALGÚN bloque trae la
     llave). `libro_json` es genérico: la vista en pantalla hereda la fila,
     las fórmulas y las notas.
+  - **Socio por socio (API 0.0.130, mismo 9-nov).** Con el 0.0.129
+    desplegado el cliente siguió sin verlo: «aún lo veo como antes, que solo
+    es informativo; necesito que sea claro en cada total lo que se les está
+    descontando del total de la utilidad». Misma llave del bloque; cambian
+    `balance.socios[]` (`BalanceAvionSocio`, llaves ADITIVAS que el API manda
+    desde el 20-oct y aquí se ignoraban: `utilidad_usd/_mxn` = round2(% ×
+    (utilidad cobrada + reserva)) —su parte de la utilidad ANTES de la
+    reserva—, `reserva_usd/_mxn` = round2(% × reserva), `monto_*` = utilidad −
+    reserva EXACTO por renglón, `descuenta_reserva` true; sin T.C. las tres en
+    pesos None; validadores liberales). Render `_tabla_socios_en_cascada`
+    (fuente única USD/pesos; `_bloque_balance[_pesos]` hacen `return` por esa
+    rama y lo de siempre no se toca): título «Reparto a socios: su % de la
+    utilidad ANTES de la reserva − su parte de la reserva de overhaul = monto a
+    recibir» (`_TITULO_SOCIOS_EN_CASCADA`, envuelve con `_titulo_envuelto`),
+    columnas **SOCIO · PORCENTAJE · UTILIDAD USD (antes de la reserva) · (−)
+    RESERVA DE OVERHAUL USD · MONTO A RECIBIR USD** (pesos: «UTILIDAD (MXN,
+    antes de la reserva)», «(−) RESERVA DE OVERHAUL (MXN)», «MONTO A RECIBIR
+    (MXN)» + «USD (informativo)» del monto en F) y después las ENTREGAS de
+    siempre si vienen (POR ENTREGAR = ROUND(E − G, 2) en pesos). Fórmulas:
+    UTILIDAD `ROUND(B{r}/100*($B$cobrada+$B$reserva),2)`, RESERVA
+    `ROUND(B{r}/100*$B$reserva,2)`, MONTO `ROUND(C{r}-D{r},2)`; en pesos las
+    mismas letras y el USD informativo
+    `ROUND(ROUND(B/100*($C$cob+$C$res),2)-ROUND(B/100*$C$res),2)`. Fila
+    **TOTAL** (A:B combinadas, relleno LIGHT): `ROUND(SUM(col),2)` de C, D y E
+    (y F) con la re-suma del API en caché (la Σ de la reserva por socio puede
+    diferir un centavo de la del avión: redondeo por renglón); la fila
+    «Entregado a socios / Por entregar» sigue después, sobre el MONTO; nota al
+    pie `_NOTA_SOCIOS_EN_CASCADA` «A cada socio se le descuenta su parte de la
+    reserva de overhaul (en proporción a su %); VuelaTour la guarda para el
+    overhaul de los motores.» (tras la nota de entregas si la hay).
+    `celdas_empresa` cita la celda MONTO nueva (E; en pesos también la F USD).
+    Una «—» no se cita jamás: sin T.C. las celdas en pesos van «—» con
+    `_NOTA_SIN_PESOS_SOCIO` / `_NOTA_SIN_PESOS_RESERVA` y sin fórmula; un
+    socio sin `utilidad_*`/`reserva_*` (skew con el API 0.0.129) deja esas
+    celdas vacías y su MONTO con `_formula_socio` de siempre. Bloque ámbar:
+    «RESERVA DE OVERHAUL RETENIDA A LOS SOCIOS · ya restada en la cascada
+    (fila «(−) RESERVA DE OVERHAUL»)», fila «Retenido a los socios en el
+    periodo USD|(MXN)» y nota «Cada socio aporta su parte (columna «(−)
+    RESERVA DE OVERHAUL» de la tabla de arriba) y VuelaTour la guarda para el
+    overhaul de los motores. No es dinero depositado en una cuenta aparte ni
+    un acumulado.» Anchos `_ANCHOS_BALANCE_USD_EN_CASCADA` [46, 14, 16, 20,
+    18] / `_ANCHOS_BALANCE_PESOS_EN_CASCADA` [56, 18, 17, 20, 18, 16]
+    (`_anchos_base`); el pie en pesos dice «su % de la utilidad COBRADA en
+    pesos antes de la reserva … menos su parte de la reserva». Ojo
+    `libro_json`: el encabezado D repite el rótulo de la fila de la cascada;
+    contar por columna. Sin la llave del bloque —aunque los socios traigan
+    `utilidad_*`/`reserva_*`/`descuenta_reserva`— byte a byte.
   - **Reparto** (`RepartoAvion`, llave junto a `reserva_overhaul_usd`; SOLO
     con la cascada del balance `reparto_como_balance`, sin ella se ignora
     porque el `saldo_*` de siempre ya la resta): `saldo_usd/_mxn` YA RESTAN
@@ -2683,9 +2730,11 @@ Reglas de este microservicio (FastAPI, Python 3.12).
     previo ⇒ `extra="ignore"`, montos ya netos con los textos informativos
     viejos).
   - Tests: `tests/test_balance_reserva_retenida.py` (balance: posición de la
-    fila, fórmula de DESPUÉS con la reserva, socio = ROUND(% × cobrada),
-    textos, «—» en pesos sin T.C. sin fórmulas sobre texto, general por
-    bloques, byte a byte sin la llave / con las deprecadas) y
+    fila, fórmula de DESPUÉS con la reserva, tabla socio por socio con sus
+    fórmulas y TOTAL, entregas detrás del MONTO, celda de la empresa, skew
+    0.0.129, textos, «—» en pesos sin T.C. sin fórmulas sobre texto, general
+    por bloques, byte a byte sin la llave / con las deprecadas / con las
+    llaves de socio del 0.0.101) y
     `tests/test_reparto_reserva_retenida.py` (PDF y Excel: orden de filas,
     mismas columnas, totales, byte a byte). `tests/_evaluador_formulas.py`
     volvió a exigir ROUND exterior en toda fórmula (el `es_suma_de_rounds`

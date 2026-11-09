@@ -4494,7 +4494,11 @@ def _hoja_balance(
     periodo = f"Periodo: {req.periodo_desde or '—'} a {req.periodo_hasta or '—'} (todo en USD)"
     ws.cell(row=2, column=1, value=periodo).font = Font(italic=True, size=10, color=MUTED)
     _bloque_balance(ws, req, 4, refs=refs)
-    _anchos_hoja_balance(ws, _ANCHOS_BALANCE_USD, _con_entregas_socios(req.balance))
+    _anchos_hoja_balance(
+        ws,
+        _anchos_base(pesos=False, en_cascada=_reserva_en_cascada(req.balance)),
+        _con_entregas_socios(req.balance),
+    )
 
 
 # Anchos de la hoja 'balance' en dólares (A etiqueta, B monto, C MONTO USD de
@@ -4644,31 +4648,58 @@ def _con_reserva_overhaul(b: BalanceAvionBalanceBloque) -> bool:
 # DESPUÉS de «(−) PERMISOS» y ANTES de «(+) OTROS INGRESOS» / «UTILIDAD DESPUÉS
 # DE GASTOS»; UTILIDAD DESPUÉS = ROUND(antes − combustible − indirectos −
 # refacciones − permisos − reserva [+ otros ingresos], 2) (`_formulas_cascada`
-# con `con_reserva`) y de ahí para abajo todo igual: la UTILIDAD COBRADA ya es
-# neta y cada socio = ROUND(% × cobrada, 2), la fórmula de siempre
-# (`_formula_socio`). El bloque ámbar del final se queda por su «Cómo se
-# calcula», con otro título y otra nota; ningún texto dice «informativa» ni
-# «no se resta». Todo lo de abajo corre UNA fila (`celdas_empresa` y las
-# entregas van por coordenada). Sin la llave (API ≤ 0.0.127) todo es byte a
-# byte, bloque informativo incluido. Las llaves `utilidad_a_repartir_*` del
-# 0.0.128 se IGNORAN (deprecadas en el esquema).
+# con `con_reserva`) y de ahí para abajo la UTILIDAD COBRADA ya es neta. El
+# bloque ámbar del final se queda por su «Cómo se calcula», con otro título y
+# otra nota; ningún texto dice «informativa» ni «no se resta». Todo lo de abajo
+# corre UNA fila (`celdas_empresa` y las entregas van por coordenada). Sin la
+# llave (API ≤ 0.0.127) todo es byte a byte, bloque informativo incluido. Las
+# llaves `utilidad_a_repartir_*` del 0.0.128 se IGNORAN (deprecadas en el
+# esquema).
+# SOCIO POR SOCIO (9-nov-2026, API 0.0.130; el cliente, con el 0.0.129 ya
+# desplegado: «aún lo veo como antes, que solo es informativo; necesito que sea
+# claro en cada total lo que se les está descontando del total de la
+# utilidad»). Con la misma llave, la tabla «Reparto a socios» se vuelve
+# `_tabla_socios_en_cascada`: SOCIO · PORCENTAJE · UTILIDAD (antes de la
+# reserva) · (−) RESERVA DE OVERHAUL · MONTO A RECIBIR [· USD informativo en
+# pesos] [· ENTREGAS de siempre], con fila TOTAL y nota al pie; cada renglón
+# = ROUND(% × (cobrada + reserva), 2) − ROUND(% × reserva, 2) = ROUND(C − D,
+# 2), la aritmética del API (`socios[].utilidad_*`, `reserva_*`, `monto_*`).
+# `celdas_empresa` cita la celda MONTO nueva (E). El bloque ámbar pasa a
+# «RESERVA DE OVERHAUL RETENIDA A LOS SOCIOS».
 _FILA_RESERVA_CASCADA = "(−) RESERVA DE OVERHAUL USD"
 _FILA_RESERVA_CASCADA_PESOS = "(−) RESERVA DE OVERHAUL (MXN)"
 _TITULO_SOCIOS = "Reparto a socios (utilidad COBRADA × % vigente)"
+_TITULO_SOCIOS_EN_CASCADA = (
+    "Reparto a socios: su % de la utilidad ANTES de la reserva − su parte de la reserva de "
+    "overhaul = monto a recibir"
+)
+_COL_SOCIO_UTILIDAD = "UTILIDAD USD (antes de la reserva)"
+_COL_SOCIO_RESERVA = "(−) RESERVA DE OVERHAUL USD"
+_COL_SOCIO_MONTO = "MONTO A RECIBIR USD"
+_COL_SOCIO_UTILIDAD_PESOS = "UTILIDAD (MXN, antes de la reserva)"
+_COL_SOCIO_RESERVA_PESOS = "(−) RESERVA DE OVERHAUL (MXN)"
+_COL_SOCIO_MONTO_PESOS = "MONTO A RECIBIR (MXN)"
+_FILA_TOTAL_SOCIOS = "TOTAL"
+_NOTA_SOCIOS_EN_CASCADA = (
+    "A cada socio se le descuenta su parte de la reserva de overhaul (en proporción a su %); "
+    "VuelaTour la guarda para el overhaul de los motores."
+)
 _TITULO_RESERVA_OVERHAUL_EN_CASCADA = (
-    "RESERVA DE OVERHAUL · ya restada en la cascada (fila «(−) RESERVA DE OVERHAUL»)"
+    "RESERVA DE OVERHAUL RETENIDA A LOS SOCIOS · ya restada en la cascada (fila «(−) RESERVA "
+    "DE OVERHAUL»)"
 )
-# Con la reserva ya restada, el avión no «debe aportar»: aporta.
-_FILA_RESERVA_EN_CASCADA = "Lo que aporta el avión USD"
-_FILA_RESERVA_EN_CASCADA_PESOS = "Lo que aporta el avión (MXN)"
+_FILA_RESERVA_EN_CASCADA = "Retenido a los socios en el periodo USD"
+_FILA_RESERVA_EN_CASCADA_PESOS = "Retenido a los socios en el periodo (MXN)"
 _NOTA_RESERVA_OVERHAUL_EN_CASCADA = (
-    "Es la aportación del periodo para el overhaul de los motores de este "
-    "avión: horas voladas × tarifa por hora de cada motor. Ya está restada en "
-    "la cascada de arriba, antes de UTILIDAD DESPUÉS DE GASTOS, como una "
-    "partida más del periodo: cada socio aporta su % dentro de su utilidad y "
-    "VuelaTour la guarda para el overhaul de los motores. No es dinero "
-    "depositado en una cuenta aparte ni un acumulado."
+    "Cada socio aporta su parte (columna «(−) RESERVA DE OVERHAUL» de la tabla de arriba) y "
+    "VuelaTour la guarda para el overhaul de los motores. No es dinero depositado en una "
+    "cuenta aparte ni un acumulado."
 )
+# Anchos de la hoja 'balance' con la tabla socio por socio: C UTILIDAD · D
+# (−) RESERVA · E MONTO A RECIBIR (y F USD informativo en pesos); A y B, los
+# de siempre. Las ENTREGAS siguen sumando sus tres columnas.
+_ANCHOS_BALANCE_USD_EN_CASCADA = [46, 14, 16, 20, 18]
+_ANCHOS_BALANCE_PESOS_EN_CASCADA = [56, 18, 17, 20, 18, 16]
 # Nota de la celda «(−) RESERVA DE OVERHAUL» de la cascada (una idea, sin
 # repetir el rótulo): qué es la cifra y que resta ahí; el bloque del final
 # dice cómo se calcula.
@@ -4697,9 +4728,240 @@ def _reserva_en_cascada(b: BalanceAvionBalanceBloque) -> bool:
 def _formula_socio(letra: str, row: int, fila_cobrada: int) -> str:
     """Lo que le toca a un socio: ROUND(% ÷ 100 × UTILIDAD COBRADA, 2), la
     aritmética del API (fuente única de la hoja USD y de las dos columnas de
-    la hoja en pesos). Con la reserva en la cascada la utilidad cobrada ya es
-    neta: no hay resta aparte."""
+    la hoja en pesos). Con la reserva en la cascada (API 0.0.130) solo es el
+    RESPALDO de un socio al que el API no le mandó utilidad y reserva."""
     return f"ROUND(B{row}/100*${letra}${fila_cobrada},2)"
+
+
+def _anchos_base(*, pesos: bool, en_cascada: bool) -> list[int]:
+    """Anchos base de la hoja 'balance' (sin las entregas): con la reserva en
+    la cascada (API 0.0.130) la tabla de socios trae dos columnas más."""
+    if pesos:
+        return _ANCHOS_BALANCE_PESOS_EN_CASCADA if en_cascada else _ANCHOS_BALANCE_PESOS
+    return _ANCHOS_BALANCE_USD_EN_CASCADA if en_cascada else _ANCHOS_BALANCE_USD
+
+
+def _titulo_envuelto(ws: Worksheet, texto: str, row: int, span: int, ancho: float) -> None:
+    """Título de tabla (`_title`, tamaño 11) que ENVUELVE cuando no cabe en el
+    ancho combinado (`ancho`, en caracteres; las negritas se estiman un 15 %
+    más anchas): combinado sin wrap, Excel lo cortaría."""
+    _title(ws, texto, row, span, size=11)
+    lineas = math.ceil(len(texto) * 1.15 / ancho)
+    if lineas > 1:
+        c = ws.cell(row=row, column=1)
+        c.alignment = Alignment(wrap_text=True, vertical="center")
+        ws.row_dimensions[row].height = 16 * lineas + 1
+
+
+def _suma_lista(valores: list[float | None]) -> float | None:
+    """Re-suma para MOSTRAR un total de la tabla de socios (lo único que se
+    calcula aquí): un None ⇒ None («—» / vacío), jamás un 0 inventado."""
+    if any(v is None for v in valores):
+        return None
+    return round(sum(valores), 2)
+
+
+def _tabla_socios_en_cascada(
+    ws: Worksheet,
+    req: BalanceAvionRequest,
+    row: int,
+    *,
+    pesos: bool,
+    fila_cobrada: int,
+    fila_reserva: int,
+    celdas_empresa: list[_CeldaSocioEmpresa] | None,
+) -> int:
+    """Tabla «Reparto a socios» con la reserva EN la cascada (9-nov-2026, API
+    0.0.130): SOCIO · PORCENTAJE · UTILIDAD (antes de la reserva) · (−)
+    RESERVA DE OVERHAUL · MONTO A RECIBIR [· USD (informativo) del monto, en
+    la hoja en pesos] [· las tres columnas de ENTREGAS de siempre, si el API
+    las manda], fila TOTAL (Σ de cada columna como fórmula; la Σ de la
+    reserva es la reserva del avión), la fila de entregas de siempre sobre el
+    MONTO y la nota al pie. Fórmulas, la aritmética del API: UTILIDAD =
+    ROUND(B{r}/100*($B$cobrada+$B$reserva),2), RESERVA =
+    ROUND(B{r}/100*$B$reserva,2), MONTO = ROUND(C{r}-D{r},2); en pesos las
+    mismas letras (la cascada en B) y el USD informativo cita la columna C de
+    la cascada con el mismo cálculo. Una «—» no se cita jamás: sin T.C.
+    oficial del cierre (reserva en pesos None) las celdas en pesos van «—» con
+    las notas de siempre y sin fórmula; un socio al que el API no le mandó
+    utilidad y reserva deja esas celdas vacías y su MONTO con la fórmula de
+    siempre. `celdas_empresa` recibe la celda MONTO (E) y, en pesos, la USD
+    (F). Empieza en `row` (la fila en blanco tras la cascada ya está puesta)
+    y devuelve la siguiente fila libre."""
+    b = req.balance
+    con_entregas = _con_entregas_socios(b)
+    n_base = 6 if pesos else 5
+    col_entregas = n_base + 1
+    n_tabla = n_base + (_N_COLS_ENTREGAS if con_entregas else 0)
+    ancho = sum(_anchos_base(pesos=pesos, en_cascada=True))
+    if con_entregas:
+        ancho += _ANCHO_COL_ENTREGAS * _N_COLS_ENTREGAS
+    _titulo_envuelto(ws, _TITULO_SOCIOS_EN_CASCADA, row, n_tabla, ancho)
+    row += 1
+    if pesos:
+        columnas = [_COL_SOCIO_UTILIDAD_PESOS, _COL_SOCIO_RESERVA_PESOS, _COL_SOCIO_MONTO_PESOS]
+    else:
+        columnas = [_COL_SOCIO_UTILIDAD, _COL_SOCIO_RESERVA, _COL_SOCIO_MONTO]
+    _header_row(ws, row, ["SOCIO", "PORCENTAJE", *columnas])
+    if pesos:
+        _encabezado_info(ws, row, 6)
+    if con_entregas:
+        _encabezados_entregas(ws, row, col_entregas)
+    row += 1
+    fila_ini = row
+    # Celdas de la cascada que citan las fórmulas: B (USD en la hoja USD; MXN
+    # en la hoja en pesos) y, en pesos, C (USD informativo).
+    cob, res = f"$B${fila_cobrada}", f"$B${fila_reserva}"
+    cob_usd, res_usd = f"$C${fila_cobrada}", f"$C${fila_reserva}"
+    cascada_mxn_ok = b.utilidad_cobrada_mxn is not None and b.reserva_overhaul_mxn is not None
+    for s in b.socios:
+        ws.cell(row=row, column=1, value=s.nombre).border = _border
+        pc = _num(ws, row, 2, s.porcentaje, '0.00"%"')
+        pc.border = _border
+        f_utilidad = f"ROUND(B{row}/100*({cob}+{res}),2)"
+        f_reserva = f"ROUND(B{row}/100*{res},2)"
+        f_monto = f"ROUND(C{row}-D{row},2)"
+        if pesos:
+            completos = s.utilidad_mxn is not None and s.reserva_mxn is not None
+            _celda_pesos(
+                ws,
+                row,
+                3,
+                f_utilidad if cascada_mxn_ok else None,
+                s.utilidad_mxn,
+                nota_sin=_NOTA_SIN_PESOS_SOCIO,
+                color="000000",
+            )
+            _celda_pesos(
+                ws,
+                row,
+                4,
+                f_reserva if cascada_mxn_ok else None,
+                s.reserva_mxn,
+                nota_sin=_NOTA_SIN_PESOS_RESERVA,
+                color="000000",
+            )
+            if not completos:
+                f_monto = _formula_socio("B", row, fila_cobrada) if cascada_mxn_ok else None
+            mc = _celda_pesos(
+                ws,
+                row,
+                5,
+                f_monto,
+                s.monto_mxn,
+                nota_sin=_NOTA_SIN_PESOS_SOCIO,
+                bold=True,
+                color="000000",
+            )
+            if s.monto_mxn is not None:
+                _rojo_si_negativo(ws, mc.coordinate)
+            # USD informativo del monto: la misma aritmética sobre la columna
+            # USD de la cascada (no hay celdas USD de utilidad ni de reserva).
+            if s.utilidad_usd is not None and s.reserva_usd is not None:
+                f_usd = (
+                    f"ROUND(ROUND(B{row}/100*({cob_usd}+{res_usd}),2)"
+                    f"-ROUND(B{row}/100*{res_usd},2),2)"
+                )
+            else:
+                f_usd = _formula_socio("C", row, fila_cobrada)
+            ic = _celda_usd_info(ws, row, 6, f_usd, s.monto_usd)
+            if celdas_empresa is not None and s.es_empresa:
+                celdas_empresa.append(
+                    _CeldaSocioEmpresa(
+                        req.matricula or "—",
+                        s.porcentaje,
+                        mc.coordinate,
+                        s.monto_usd,
+                        celda_usd=ic.coordinate,
+                        monto_mxn=s.monto_mxn,
+                    )
+                )
+            if con_entregas:
+                # POR ENTREGAR = ROUND(MONTO MXN − ENTREGADO, 2): E es el MONTO.
+                _celdas_entregas_socio(ws, row, col_entregas, s, col_monto_mxn="E")
+        else:
+            completos = s.utilidad_usd is not None and s.reserva_usd is not None
+            _formula(ws, row, 3, f_utilidad, s.utilidad_usd, MONEY).border = _border
+            _formula(ws, row, 4, f_reserva, s.reserva_usd, MONEY).border = _border
+            if not completos:
+                f_monto = _formula_socio("B", row, fila_cobrada)
+            mc = _formula(ws, row, 5, f_monto, s.monto_usd, MONEY, bold=True)
+            mc.border = _border
+            _rojo_si_negativo(ws, mc.coordinate)
+            if celdas_empresa is not None and s.es_empresa:
+                celdas_empresa.append(
+                    _CeldaSocioEmpresa(
+                        req.matricula or "—", s.porcentaje, mc.coordinate, s.monto_usd
+                    )
+                )
+            if con_entregas:
+                # En la hoja USD no está el MONTO MXN: POR ENTREGAR va como valor.
+                _celdas_entregas_socio(ws, row, col_entregas, s, col_monto_mxn=None)
+        row += 1
+    fila_fin = row - 1
+    if not b.socios:
+        ws.cell(
+            row=row, column=1, value="Sin socios configurados para este avión (ver pendientes)."
+        ).font = Font(color=RED, italic=True)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_base)
+        row += 1
+    else:
+        # Fila TOTAL: Σ de cada columna como fórmula (con el Σ de los números
+        # del API en caché; un socio sin dato ⇒ «—»/vacío, nunca un 0).
+        tc = ws.cell(row=row, column=1, value=_FILA_TOTAL_SOCIOS)
+        tc.font = Font(bold=True, color=NAVY)
+        for col in range(1, n_base + 1):
+            c = ws.cell(row=row, column=col)
+            c.fill = PatternFill("solid", fgColor=LIGHT)
+            c.border = _border
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
+        if pesos:
+            columnas_total = [
+                (3, [s.utilidad_mxn for s in b.socios], _NOTA_SIN_PESOS_DERIVADA),
+                (4, [s.reserva_mxn for s in b.socios], _NOTA_SIN_PESOS_RESERVA),
+                (5, [s.monto_mxn for s in b.socios], _NOTA_SIN_PESOS_DERIVADA),
+            ]
+        else:
+            columnas_total = [
+                (3, [s.utilidad_usd for s in b.socios], None),
+                (4, [s.reserva_usd for s in b.socios], None),
+                (5, [s.monto_usd for s in b.socios], None),
+            ]
+        for col, valores, nota_sin in columnas_total:
+            letra = get_column_letter(col)
+            formula = f"ROUND(SUM({letra}{fila_ini}:{letra}{fila_fin}),2)"
+            total = _suma_lista(valores)
+            if pesos:
+                cell = _celda_pesos(
+                    ws, row, col, formula, total, nota_sin=nota_sin, bold=True, color="000000"
+                )
+            else:
+                cell = _formula(ws, row, col, formula, total, MONEY, bold=True)
+                cell.border = _border
+            if col == 5 and total is not None:
+                _rojo_si_negativo(ws, cell.coordinate)
+        if pesos:
+            _celda_usd_info(
+                ws,
+                row,
+                6,
+                f"ROUND(SUM(F{fila_ini}:F{fila_fin}),2)",
+                _suma_lista([s.monto_usd for s in b.socios]),
+            )
+        row += 1
+    if con_entregas:
+        row = _pie_entregas_socios(
+            ws,
+            b,
+            row,
+            col=col_entregas,
+            fila_ini=fila_ini,
+            fila_fin=fila_fin,
+            n_cols=n_tabla,
+            ancho=ancho,
+        )
+    _pinta_nota_envuelta(ws, row, _NOTA_SOCIOS_EN_CASCADA, n_tabla, ancho)
+    return row + 1
 
 
 # ENTREGAS A SOCIOS en la tabla «Reparto a socios» (21-oct-2026, invariante
@@ -4872,11 +5134,13 @@ def _bloque_reserva_overhaul(
     en pesos B = el MXN del API —None ⇒ «—» con `_NOTA_SIN_PESOS_RESERVA`— y
     C = el USD informativo), «Cómo se calcula: …» y la nota al pie, todo con
     relleno ámbar claro. Sin `en_cascada` es INFORMATIVO (API 0.0.98–0.0.127:
-    no resta nada); con ella (API 0.0.129, la cascada ya la restó en su fila
-    «(−) RESERVA DE OVERHAUL») cambian solo el título, el rótulo del monto
-    («Lo que aporta el avión») y la nota al pie. No mueve ninguna fila de
-    arriba (los socios y `celdas_empresa` quedan donde estaban). Devuelve la
-    siguiente fila libre."""
+    no resta nada); con ella (API 0.0.129/0.0.130, la cascada ya la restó en
+    su fila «(−) RESERVA DE OVERHAUL» y la tabla de socios la descuenta socio
+    por socio) cambian solo el título («RESERVA DE OVERHAUL RETENIDA A LOS
+    SOCIOS …»), el rótulo del monto («Retenido a los socios en el periodo») y
+    la nota al pie. No mueve ninguna fila de arriba (los socios y
+    `celdas_empresa` quedan donde estaban). Devuelve la siguiente fila
+    libre."""
     n_cols = 4 if pesos else 3
     ancho = _ANCHO_HOJA_BALANCE_PESOS if pesos else _ANCHO_HOJA_BALANCE
     relleno = PatternFill("solid", fgColor=_FILL_RESERVA)
@@ -5083,10 +5347,11 @@ def _bloque_balance(
     «(−) RESERVA DE OVERHAUL USD» (valor del API, con nota) justo después de
     «(−) PERMISOS USD» y antes de «(+) OTROS INGRESOS USD» / «UTILIDAD
     DESPUÉS DE GASTOS USD», que pasa a ROUND(antes − las cuatro restas −
-    reserva [+ otros ingresos], 2); la utilidad cobrada ya es neta, los
-    socios siguen con ROUND(% × cobrada, 2) y el bloque del final dice que ya
-    está restada. Todo lo de abajo corre una fila. Sin la llave, byte a
-    byte."""
+    reserva [+ otros ingresos], 2); la utilidad cobrada ya es neta. Con la
+    misma llave (API 0.0.130) la tabla de socios es `_tabla_socios_en_cascada`
+    (UTILIDAD antes de la reserva · (−) RESERVA · MONTO A RECIBIR, TOTAL y
+    nota) y el bloque del final dice que se retiene a los socios. Todo lo de
+    abajo corre una fila. Sin la llave, byte a byte."""
     b = req.balance
     refs = refs or {}
     fila_ini = row
@@ -5187,6 +5452,21 @@ def _bloque_balance(
         row += 1
 
     row += 1
+    # LA RESERVA EN LA CASCADA, socio por socio (9-nov-2026, API 0.0.130): la
+    # tabla con UTILIDAD antes de la reserva · (−) RESERVA · MONTO A RECIBIR,
+    # su TOTAL y su nota, y el bloque ámbar «retenida a los socios». Lo de
+    # siempre (abajo) no se toca: sin la llave, byte a byte.
+    if con_reserva:
+        row = _tabla_socios_en_cascada(
+            ws,
+            req,
+            row,
+            pesos=False,
+            fila_cobrada=fila_cobrada,
+            fila_reserva=k + 5,
+            celdas_empresa=celdas_empresa,
+        )
+        return _bloque_reserva_overhaul(ws, b, row, pesos=False, en_cascada=True)
     # Entregas a socios (21-oct-2026, invariante 100): con el discriminador,
     # tres columnas más DESPUÉS de las de siempre (D..F), totales y nota.
     con_entregas = _con_entregas_socios(b)
@@ -5887,7 +6167,8 @@ _NOTA_BALANCE_PESOS_EN_CASCADA = (
     "—la venta del avión al tipo de cambio de su cotización y los gastos en "
     "pesos tal cual (los de dólares, a su tipo de cambio)—; no es la cifra en "
     "dólares convertida con un tipo de cambio único. El reparto a socios "
-    "es la utilidad COBRADA en pesos × el % de cada socio. La columna «USD "
+    "es su % de la utilidad COBRADA en pesos antes de la reserva de overhaul "
+    "menos su parte de la reserva (= monto a recibir). La columna «USD "
     "(informativo)» es la misma cascada en dólares, solo de referencia: cada "
     "gasto pasa a dólares con su T.C. propio o, si no lo trae, con el T.C. "
     "oficial del día en que se pagó (el mismo criterio del reparto a socios). "
@@ -6081,9 +6362,10 @@ def _bloque_balance_pesos(
     USD) y UTILIDAD DESPUÉS DE GASTOS la resta en las dos columnas
     (`_formulas_cascada` con `con_reserva`); sin T.C. oficial del cierre la
     reserva en pesos es «—» y DESPUÉS (MXN) no la cita (el API manda None ⇒
-    «—», como COBRADA y los socios); la utilidad cobrada ya es neta y los
-    socios siguen con ROUND(% × cobrada, 2); el bloque del final dice que ya
-    está restada."""
+    «—», como COBRADA y los socios); la utilidad cobrada ya es neta. Con la
+    misma llave (API 0.0.130) la tabla de socios es `_tabla_socios_en_cascada`
+    en pesos (con el USD informativo del monto) y el bloque del final dice
+    que se retiene a los socios."""
     b = req.balance
     refs_mxn = refs_mxn or {}
     refs_usd = refs_usd or {}
@@ -6229,6 +6511,20 @@ def _bloque_balance_pesos(
         row += 1
 
     row += 1
+    # LA RESERVA EN LA CASCADA, socio por socio (9-nov-2026, API 0.0.130): la
+    # misma tabla que la hoja USD, en pesos con el USD informativo del monto.
+    # Lo de siempre (abajo) no se toca: sin la llave, byte a byte.
+    if con_reserva:
+        row = _tabla_socios_en_cascada(
+            ws,
+            req,
+            row,
+            pesos=True,
+            fila_cobrada=fila_cobrada,
+            fila_reserva=k + 5,
+            celdas_empresa=celdas_empresa,
+        )
+        return _bloque_reserva_overhaul(ws, b, row, pesos=True, en_cascada=True)
     # Entregas a socios (21-oct-2026, invariante 100): con el discriminador,
     # tres columnas más DESPUÉS de las de siempre (E..G), totales y nota.
     con_entregas = _con_entregas_socios(b)
@@ -6318,7 +6614,11 @@ def _hoja_balance_pesos(
         _con_reserva_overhaul(req.balance), en_cascada=_reserva_en_cascada(req.balance)
     )
     _pinta_nota_envuelta(ws, row + 1, nota, 4, _ANCHO_HOJA_BALANCE_PESOS)
-    _anchos_hoja_balance(ws, _ANCHOS_BALANCE_PESOS, _con_entregas_socios(req.balance))
+    _anchos_hoja_balance(
+        ws,
+        _anchos_base(pesos=True, en_cascada=_reserva_en_cascada(req.balance)),
+        _con_entregas_socios(req.balance),
+    )
 
 
 def _bloque_empresa_pesos(
@@ -6613,7 +6913,11 @@ def _hoja_balance_general_pesos(
     )
     _pinta_nota_envuelta(ws, row, nota, 4, _ANCHO_HOJA_BALANCE_PESOS)
     _anchos_hoja_balance(
-        ws, _ANCHOS_BALANCE_PESOS, any(_con_entregas_socios(a.balance) for a in req.aviones)
+        ws,
+        _anchos_base(
+            pesos=True, en_cascada=any(_reserva_en_cascada(a.balance) for a in req.aviones)
+        ),
+        any(_con_entregas_socios(a.balance) for a in req.aviones),
     )
 
 
@@ -8820,7 +9124,10 @@ def construir_balance_general(req: BalanceGeneralRequest) -> Workbook:
                 )
             _anchos_hoja_balance(
                 ws_b,
-                _ANCHOS_BALANCE_USD,
+                _anchos_base(
+                    pesos=False,
+                    en_cascada=any(_reserva_en_cascada(a.balance) for a in req.aviones),
+                ),
                 any(_con_entregas_socios(a.balance) for a in req.aviones),
             )
 
