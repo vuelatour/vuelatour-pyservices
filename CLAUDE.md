@@ -2747,6 +2747,38 @@ Reglas de este microservicio (FastAPI, Python 3.12).
 UNITARIO MXN» /
   «…UNITARIO USD (sin T.C.)»; la nota al pie lo explica. Ya no es el precio de
   lista de hoy.
+- **Reserva de overhaul CON VIGENCIA — «a partir de» (10-nov-2026, API
+  0.0.135, invariante 130 del API).** Pedido del cliente: «que pudiéramos
+  ponerle desde cuándo entra en vigor esa reserva de overhaul… que dijera ahí
+  "a partir de" y la fecha». El API guarda cada tarifa con su fecha y
+  multiplica las horas de cada vuelo por la tarifa vigente ESE día; **aquí
+  solo cambia UN texto**: «Cómo se calcula» del bloque de la reserva de la
+  hoja 'balance'. Campos ADITIVOS de `BalanceAvionBalanceBloque`, que el API
+  manda SOLO cuando el avión tiene tarifas con fecha:
+  `reserva_overhaul_tramos` (`BalanceReservaTramo`: `vigente_desde`,
+  `usd_por_hora` = Σ de los motores, `motores`, `horas_hr`, `usd`),
+  `reserva_overhaul_horas_sin_tarifa_hr` (horas voladas ANTES de la primera
+  tarifa: no generan reserva) y `reserva_overhaul_primera_vigencia`. **El
+  DISCRIMINADOR es la presencia de `reserva_overhaul_tramos`** (una lista,
+  también vacía; liberal: lo que no es lista ⇒ None, lo que no es objeto se
+  descarta, jamás un 422). Con ella `_como_se_calcula_reserva` delega en
+  `_como_se_calcula_reserva_con_vigencia`: un tramo ⇒ «18.20 h voladas en el
+  periodo: 18.20 h × 2 motores × 55.00 USD/hr (tarifa a partir del
+  01/01/2026) = 2,002.00 USD»; periodo anterior al «a partir de» ⇒ «18.20 h
+  voladas en el periodo, todas antes del 01/11/2026: la reserva de overhaul
+  de este avión se aparta a partir de esa fecha = 0.00 USD»; periodo que
+  cruza la fecha o con cambio de tarifa ⇒ una parte por tramo separadas por
+  «; » y «; total X USD» (las horas previas: «8.20 h antes del 15/09/2026 no
+  generan reserva»); después, el T.C. de siempre. La tarifa por motor se
+  muestra Σ ÷ motores, como en el texto de siempre; fechas con
+  `cierre_mes.fecha_corta` (DD/MM/AAAA). **Aquí no se calcula nada** (los
+  montos siguen siendo `reserva_overhaul_usd/_mxn`) y **sin la llave el texto
+  es el de siempre, byte a byte** (también si llegan las otras dos llaves
+  solas). El PDF/Excel del reparto no imprimen horas × tarifa: no cambian.
+  Orden: pyservices ⇒ API 0.0.135 (con el API primero el Excel diría «0.00 h
+  × 0 motores» en un periodo anterior al «a partir de»: los números serían
+  correctos y el texto raro). Tests: última sección de
+  `tests/test_balance_reserva_overhaul.py`.
 
 ## Conciliación
 

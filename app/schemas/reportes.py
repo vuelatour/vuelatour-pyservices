@@ -1409,6 +1409,37 @@ def bandera_liberal(v: Any) -> bool:
     return v is True
 
 
+class BalanceReservaTramo(BaseModel):
+    """Una parte de las horas del periodo con SU tarifa de reserva de overhaul
+    (10-nov-2026, API 0.0.135, invariante 130 del API: la tarifa tiene «a
+    partir de»). Solo alimenta el texto «Cómo se calcula»; liberal: jamás un
+    422 por un metadato. `usd_por_hora` = Σ de los motores."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    vigente_desde: str | None = None
+    usd_por_hora: float | None = None
+    motores: int | None = None
+    horas_hr: float | None = None
+    usd: float | None = None
+
+    @field_validator("vigente_desde", mode="before")
+    @classmethod
+    def _desde_liberal(cls, v: Any) -> str | None:
+        return v.strip() or None if isinstance(v, str) else None
+
+    @field_validator("usd_por_hora", "horas_hr", "usd", mode="before")
+    @classmethod
+    def _numeros_liberales(cls, v: Any) -> float | None:
+        return numero_cierre_liberal(v)
+
+    @field_validator("motores", mode="before")
+    @classmethod
+    def _motores_liberal(cls, v: Any) -> int | None:
+        n = numero_cierre_liberal(v)
+        return int(n) if n is not None and n >= 0 and n.is_integer() else None
+
+
 class BalanceAvionBalanceBloque(BaseModel):
     """Hoja 'balance': bloque A–I del original (todo USD) + socios."""
 
@@ -1498,6 +1529,18 @@ class BalanceAvionBalanceBloque(BaseModel):
     reserva_overhaul_tc: float | None = None  # T.C. oficial con que salió el MXN
     reserva_overhaul_tc_dia: str | None = None  # 'YYYY-MM-DD', día Cancún del T.C.
     reserva_overhaul_incompleta: bool | None = None
+    # RESERVA CON VIGENCIA — «a partir de» (10-nov-2026, API 0.0.135,
+    # invariante 130 del API; pedido del cliente: «que pudiéramos ponerle desde
+    # cuándo entra en vigor esa reserva de overhaul»). ADITIVAS y solo cuando
+    # el avión tiene tarifas CON FECHA: las horas del periodo partidas por
+    # tarifa, las voladas ANTES de la primera (no generan reserva) y el día en
+    # que esa primera empieza. `reserva_overhaul_tramos` es el DISCRIMINADOR
+    # (una lista, también vacía; None = API previo o tarifa «desde siempre» ⇒
+    # el texto «Cómo se calcula» de siempre, byte a byte). Aquí no se calcula
+    # nada: los montos siguen siendo `reserva_overhaul_usd/_mxn`.
+    reserva_overhaul_tramos: list[BalanceReservaTramo] | None = None
+    reserva_overhaul_horas_sin_tarifa_hr: float | None = None
+    reserva_overhaul_primera_vigencia: str | None = None
     # ENTREGAS A SOCIOS (21-oct-2026, invariante 100 del API): Σ de
     # `socios[].entregado_mxn` y Σ de `socios[].por_entregar_mxn` (None si a
     # algún socio le faltan pesos), en pesos. `entregado_socios_mxn` es el
@@ -1539,6 +1582,7 @@ class BalanceAvionBalanceBloque(BaseModel):
         "reserva_overhaul_horas_hr",
         "reserva_overhaul_usd_hr",
         "reserva_overhaul_tc",
+        "reserva_overhaul_horas_sin_tarifa_hr",
         "entregado_socios_mxn",
         "por_entregar_socios_mxn",
         mode="before",
@@ -1546,6 +1590,20 @@ class BalanceAvionBalanceBloque(BaseModel):
     @classmethod
     def _reserva_numeros_liberales(cls, v: Any) -> float | None:
         return numero_cierre_liberal(v)
+
+    @field_validator("reserva_overhaul_tramos", mode="before")
+    @classmethod
+    def _reserva_tramos_liberal(cls, v: Any) -> list | None:
+        """Una lista ⇒ sus objetos (lo que no sea objeto se descarta); lo
+        demás ⇒ None = la llave no vino (texto de siempre)."""
+        if not isinstance(v, list):
+            return None
+        return [x for x in v if isinstance(x, dict)]
+
+    @field_validator("reserva_overhaul_primera_vigencia", mode="before")
+    @classmethod
+    def _reserva_primera_vigencia_liberal(cls, v: Any) -> str | None:
+        return _texto_liberal(v)
 
     @field_validator("reserva_overhaul_motores", mode="before")
     @classmethod

@@ -143,6 +143,7 @@ from app.schemas.reportes import (
     BalanceHojaInventario,
     BalanceHojaOtrosMovimientos,
     BalanceOtroMovimientoFila,
+    BalanceReservaTramo,
     BalanceVinculoGasto,
     TcHoy,
 )
@@ -5095,6 +5096,52 @@ def _pie_entregas_socios(
     return row + 1
 
 
+def _tramo_reserva_txt(t: BalanceReservaTramo) -> str:
+    """«29.20 h × 2 motores × 55.00 USD/hr (tarifa a partir del 15/09/2026) =
+    3,212.00 USD». La tarifa del API es la Σ de los motores: se muestra por
+    motor (Σ ÷ motores), como en el texto de siempre."""
+    motores = t.motores or 0
+    usd_hr = t.usd_por_hora or 0.0
+    por_motor = usd_hr / motores if motores else usd_hr
+    desde = cierre_mes.fecha_corta(t.vigente_desde)
+    cuando = f" (tarifa a partir del {desde})" if desde else ""
+    return (
+        f"{t.horas_hr or 0.0:.2f} h × {motores} "
+        f"{'motor' if motores == 1 else 'motores'} × {por_motor:,.2f} USD/hr"
+        f"{cuando} = {t.usd or 0.0:,.2f} USD"
+    )
+
+
+def _como_se_calcula_reserva_con_vigencia(
+    b: BalanceAvionBalanceBloque, horas: float, usd: float
+) -> str:
+    """El «Cómo se calcula» cuando la tarifa de la reserva tiene «a partir de»
+    (`reserva_overhaul_tramos` presente; 10-nov-2026, API 0.0.135, invariante
+    130 del API): cada parte de las horas con SU tarifa y desde cuándo vale, y
+    las horas voladas ANTES de la primera tarifa, que no generan reserva. Aquí
+    no se calcula nada: horas, tarifas y montos llegan del API."""
+    tramos = b.reserva_overhaul_tramos or []
+    sin_tarifa = b.reserva_overhaul_horas_sin_tarifa_hr or 0.0
+    desde = cierre_mes.fecha_corta(b.reserva_overhaul_primera_vigencia)
+    if not tramos:
+        if sin_tarifa > 0 and desde:
+            return (
+                f"{horas:.2f} h voladas en el periodo, todas antes del {desde}: "
+                f"la reserva de overhaul de este avión se aparta a partir de esa "
+                f"fecha = {usd:,.2f} USD"
+            )
+        return f"{horas:.2f} h voladas en el periodo sin tarifa vigente = {usd:,.2f} USD"
+    partes = [_tramo_reserva_txt(t) for t in tramos]
+    if sin_tarifa > 0:
+        antes = f" antes del {desde}" if desde else " sin tarifa vigente"
+        partes.insert(0, f"{sin_tarifa:.2f} h{antes} no generan reserva")
+    if len(partes) == 1:
+        return f"{horas:.2f} h voladas en el periodo: {partes[0]}"
+    return (
+        f"{horas:.2f} h voladas en el periodo: " + "; ".join(partes) + f"; total {usd:,.2f} USD"
+    )
+
+
 def _como_se_calcula_reserva(b: BalanceAvionBalanceBloque) -> str:
     """Texto de la fila «Cómo se calcula» del bloque: «18.20 h voladas en el
     periodo × 2 motores × 55.00 USD/hr = 2,002.00 USD» (la tarifa del API es
@@ -5108,11 +5155,15 @@ def _como_se_calcula_reserva(b: BalanceAvionBalanceBloque) -> str:
     usd_hr = b.reserva_overhaul_usd_hr or 0.0
     por_motor = usd_hr / motores if motores else usd_hr
     usd = b.reserva_overhaul_usd or 0.0
-    texto = (
-        f"{horas:.2f} h voladas en el periodo × {motores} "
-        f"{'motor' if motores == 1 else 'motores'} × {por_motor:,.2f} USD/hr "
-        f"= {usd:,.2f} USD"
-    )
+    if b.reserva_overhaul_tramos is not None:
+        # CON VIGENCIA — «a partir de» (10-nov-2026, API 0.0.135).
+        texto = _como_se_calcula_reserva_con_vigencia(b, horas, usd)
+    else:
+        texto = (
+            f"{horas:.2f} h voladas en el periodo × {motores} "
+            f"{'motor' if motores == 1 else 'motores'} × {por_motor:,.2f} USD/hr "
+            f"= {usd:,.2f} USD"
+        )
     if b.reserva_overhaul_tc is not None:
         dia = cierre_mes.fecha_corta(b.reserva_overhaul_tc_dia)
         cuando = f" del {dia}" if dia else ""

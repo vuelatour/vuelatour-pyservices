@@ -996,3 +996,157 @@ def test_usd_por_gasto_sin_bandera_las_formulas_de_siempre() -> None:
     assert ws[f"{letra}2"].comment is None
     assert ws[f"{letra}3"].value == p["vuelos"][0]["costo_usd"]  # degradada a valor
     assert load_workbook(BytesIO(data))["combustible"]["E4"].comment is None
+
+
+# ---------------------------------------------------------------------------
+# RESERVA CON VIGENCIA — «a partir de» (10-nov-2026, API 0.0.135, invariante
+# 130 del API). Pedido del cliente: «que pudiéramos ponerle desde cuándo entra
+# en vigor esa reserva de overhaul… que dijera ahí "a partir de" y la fecha».
+# El API manda las horas partidas por tarifa SOLO cuando el avión tiene
+# tarifas con fecha; aquí cambia UN texto («Cómo se calcula») y nada más.
+# ---------------------------------------------------------------------------
+
+
+def _con_vigencia(**cambios) -> BalanceAvionBalanceBloque:
+    base = individual()["balance"]
+    return BalanceAvionBalanceBloque.model_validate({**base, **cambios})
+
+
+def test_como_se_calcula_sin_la_llave_es_el_texto_de_siempre() -> None:
+    """Sin `reserva_overhaul_tramos` (API previo o tarifa «desde siempre») el
+    texto no cambia ni una letra, aunque lleguen las otras dos llaves."""
+    b = _con_vigencia(
+        reserva_overhaul_horas_sin_tarifa_hr=5,
+        reserva_overhaul_primera_vigencia="2026-11-01",
+    )
+    assert b.reserva_overhaul_tramos is None
+    assert _como_se_calcula_reserva(b) == COMO_PESOS
+
+
+def test_como_se_calcula_un_tramo_dice_desde_cuando_vale_la_tarifa() -> None:
+    b = _con_vigencia(
+        reserva_overhaul_tramos=[
+            {
+                "vigente_desde": "2026-01-01",
+                "usd_por_hora": 110,
+                "motores": 2,
+                "horas_hr": 18.2,
+                "usd": 2002,
+            }
+        ],
+        reserva_overhaul_horas_sin_tarifa_hr=0,
+        reserva_overhaul_primera_vigencia=None,
+    )
+    assert _como_se_calcula_reserva(b) == (
+        "18.20 h voladas en el periodo: 18.20 h × 2 motores × 55.00 USD/hr "
+        "(tarifa a partir del 01/01/2026) = 2,002.00 USD "
+        "· en pesos al T.C. oficial del 30/09/2026 (18.0243)"
+    )
+
+
+def test_como_se_calcula_periodo_anterior_al_a_partir_de() -> None:
+    """El caso del cliente: septiembre ya entregado sin reserva y la tarifa
+    «a partir del 1-nov» ⇒ 0.00 USD, con la razón a la vista y sin marcarse
+    como «sin tarifa»."""
+    b = _con_vigencia(
+        reserva_overhaul_usd=0,
+        reserva_overhaul_mxn=0,
+        reserva_overhaul_usd_hr=0,
+        reserva_overhaul_motores=0,
+        reserva_overhaul_tc=None,
+        reserva_overhaul_tc_dia=None,
+        reserva_overhaul_tramos=[],
+        reserva_overhaul_horas_sin_tarifa_hr=18.2,
+        reserva_overhaul_primera_vigencia="2026-11-01",
+    )
+    assert _como_se_calcula_reserva(b) == (
+        "18.20 h voladas en el periodo, todas antes del 01/11/2026: la reserva de "
+        "overhaul de este avión se aparta a partir de esa fecha = 0.00 USD"
+    )
+
+
+def test_como_se_calcula_periodo_que_cruza_el_a_partir_de_y_cambio_de_tarifa() -> None:
+    cruza = _con_vigencia(
+        reserva_overhaul_usd=1100,
+        reserva_overhaul_tramos=[
+            {
+                "vigente_desde": "2026-09-15",
+                "usd_por_hora": 110,
+                "motores": 2,
+                "horas_hr": 10,
+                "usd": 1100,
+            }
+        ],
+        reserva_overhaul_horas_sin_tarifa_hr=8.2,
+        reserva_overhaul_primera_vigencia="2026-09-15",
+        reserva_overhaul_tc=None,
+    )
+    assert _como_se_calcula_reserva(cruza) == (
+        "18.20 h voladas en el periodo: 8.20 h antes del 15/09/2026 no generan "
+        "reserva; 10.00 h × 2 motores × 55.00 USD/hr (tarifa a partir del "
+        "15/09/2026) = 1,100.00 USD; total 1,100.00 USD"
+    )
+    dos = _con_vigencia(
+        reserva_overhaul_usd=2084,
+        reserva_overhaul_tramos=[
+            {
+                "vigente_desde": "2026-01-01",
+                "usd_por_hora": 110,
+                "motores": 2,
+                "horas_hr": 8.2,
+                "usd": 902,
+            },
+            {
+                "vigente_desde": "2026-09-15",
+                "usd_por_hora": 118.2,
+                "motores": 2,
+                "horas_hr": 10,
+                "usd": 1182,
+            },
+        ],
+        reserva_overhaul_horas_sin_tarifa_hr=0,
+        reserva_overhaul_tc=None,
+    )
+    assert _como_se_calcula_reserva(dos) == (
+        "18.20 h voladas en el periodo: 8.20 h × 2 motores × 55.00 USD/hr (tarifa a "
+        "partir del 01/01/2026) = 902.00 USD; 10.00 h × 2 motores × 59.10 USD/hr "
+        "(tarifa a partir del 15/09/2026) = 1,182.00 USD; total 2,084.00 USD"
+    )
+
+
+def test_tramos_de_la_reserva_son_liberales() -> None:
+    """Un metadato jamás da 422: lo que no es lista ⇒ None (texto de siempre);
+    dentro de la lista, lo que no es objeto se descarta y los campos raros
+    quedan en None."""
+    assert _con_vigencia(reserva_overhaul_tramos="x").reserva_overhaul_tramos is None
+    assert _con_vigencia(reserva_overhaul_tramos=None).reserva_overhaul_tramos is None
+    b = _con_vigencia(
+        reserva_overhaul_tramos=[
+            7,
+            {
+                "vigente_desde": 5,
+                "usd_por_hora": "x",
+                "motores": 2.5,
+                "horas_hr": None,
+                "usd": True,
+                "otro": 1,
+            },
+        ],
+        reserva_overhaul_horas_sin_tarifa_hr="x",
+        reserva_overhaul_primera_vigencia=9,
+    )
+    assert b.reserva_overhaul_tramos is not None and len(b.reserva_overhaul_tramos) == 1
+    t = b.reserva_overhaul_tramos[0]
+    assert (t.vigente_desde, t.usd_por_hora, t.motores, t.horas_hr, t.usd) == (
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    assert b.reserva_overhaul_horas_sin_tarifa_hr is None
+    assert b.reserva_overhaul_primera_vigencia is None
+    # Y el texto no revienta con un tramo vacío.
+    assert _como_se_calcula_reserva(b).startswith(
+        "18.20 h voladas en el periodo: 0.00 h × 0 motores"
+    )
