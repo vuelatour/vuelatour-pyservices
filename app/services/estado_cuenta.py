@@ -126,18 +126,28 @@ def _delimitador(texto: str) -> str:
     return mejor
 
 
-def _filas_crudas(req: ConciliacionParseRequest, formato: str) -> list[list[str]]:
-    """Todas las filas del archivo como texto, SIN suponer encabezado."""
+def _filas_crudas(
+    req: ConciliacionParseRequest, formato: str, recortar: bool = True
+) -> list[list[str]]:
+    """Todas las filas del archivo como texto, SIN suponer encabezado.
+
+    `recortar=False` deja cada celda con sus espacios: los necesita
+    `_linea_original` para volver a unir un renglón que Excel partió."""
+
+    def celda(c) -> str:
+        t = "" if c is None else str(c)
+        return t.strip() if recortar else t
+
     raw = base64.b64decode(req.file_base64)
     if formato == "csv":
         texto = _decodificar(raw)
         lector = csv.reader(io.StringIO(texto), delimiter=_delimitador(texto))
-        return [[("" if c is None else str(c).strip()) for c in fila] for fila in lector]
+        return [[celda(c) for c in fila] for fila in lector]
 
     import pandas as pd  # lazy
 
     df = pd.read_excel(io.BytesIO(raw), dtype=str, header=None).fillna("")
-    return [[("" if c is None else str(c).strip()) for c in fila] for fila in df.values.tolist()]
+    return [[celda(c) for c in fila] for fila in df.values.tolist()]
 
 
 # --- Una sola columna con texto delimitado (27-oct-2026) --------------------
@@ -153,20 +163,71 @@ _NOTA_COLUMNA_UNICA = (
     "El archivo traía todos los datos en una sola columna separada por «{d}»: "
     "se desempaquetó en {n} columnas."
 )
+# --- Renglones que Excel partió por una COMA (23-nov-2026) -------------------
+# Ese XLSX de una columna no lo exporta el banco: el banco entrega un .csv de
+# texto separado por «|» y la oficina lo abre en Excel y lo guarda como .xlsx
+# (el libro dice «Microsoft Excel» y la hoja se llama como el .csv). Excel
+# parte cada renglón por las COMAS, no por «|»: mientras ningún movimiento
+# trae coma todo cae en la columna A, pero basta UNA coma en el concepto de un
+# SPEI («PAGO FACT 123, 124», «OPERADORA X, S.A. DE C.V.») para que ESE renglón
+# se reparta en dos o más celdas. El lector exigía «todo en la primera celda»,
+# no desempaquetaba NADA y el archivo entero respondía «No se reconocieron
+# columnas de monto» (cuenta eje, 23-nov-2026: las cuentas de gastos y de
+# combustible, sin comas ese mes, sí entraban). Reproducido con Excel real.
+_SEPARADOR_DE_EXCEL = ","
+
+
+def _nota_filas_repartidas(n: int) -> str:
+    if n == 1:
+        return (
+            "1 renglón venía partido en varias celdas por una coma de su texto "
+            "(así lo deja Excel al abrir el archivo del banco): se volvió a unir."
+        )
+    return (
+        f"{n} renglones venían partidos en varias celdas por una coma de su texto "
+        "(así los deja Excel al abrir el archivo del banco): se volvieron a unir."
+    )
+
+
+def _es_fila_repartida(fila: list[str]) -> bool:
+    """Fila con texto MÁS ALLÁ de la primera celda."""
+    return any(c.strip() for c in fila[1:])
+
+
+def _linea_original(fila: list[str]) -> str:
+    """El renglón como venía en el archivo de texto del banco: las celdas en
+    que Excel lo repartió, unidas otra vez con la coma que se llevó. Las celdas
+    vacías del final son relleno de la hoja, no texto."""
+    ultima = max((i for i, c in enumerate(fila) if c.strip()), default=0)
+    return _SEPARADOR_DE_EXCEL.join(fila[: ultima + 1]).strip()
+
+
+def _filas_repartidas(filas: list[list[str]]) -> int:
+    return sum(1 for f in filas if _es_fila_repartida(f))
 
 
 def _desempaquetar_columna_unica(filas: list[list[str]]) -> tuple[list[list[str]], str | None]:
-    """Si cada fila con texto trae UNA sola celda (la primera) y ese texto se
-    parte de forma consistente con un separador, devuelve las filas ya
-    partidas y el separador; si no, las mismas filas y None."""
-    con_texto = [f for f in filas if any(c for c in f)]
+    """Si el archivo trae cada renglón como UN texto en la primera celda (o
+    repartido en varias por una coma, ver arriba) y ese texto se parte de forma
+    consistente con un separador, devuelve las filas ya partidas y el
+    separador; si no, las mismas filas y None.
+
+    Un archivo en columnas de verdad se deja igual: o no trae renglones de una
+    sola celda, o al unir sus celdas el separador consistente es la coma."""
+    con_texto = [f for f in filas if any(c.strip() for c in f)]
     if len(con_texto) < 2:
         return filas, None
-    for f in con_texto:
-        if not f[0] or any(c for c in f[1:]):
-            return filas, None
-    texto = "\n".join(f[0] for f in con_texto)
+    if any(not f[0].strip() for f in con_texto):
+        return filas, None
+    repartidas = _filas_repartidas(con_texto)
+    # Encabezados y resumen del banco nunca traen coma: sin al menos dos
+    # renglones de UNA celda, esto es una tabla en columnas.
+    if repartidas and len(con_texto) - repartidas < 2:
+        return filas, None
+    texto = "\n".join(_linea_original(f) for f in con_texto)
     delim = _delimitador(texto)
+    if repartidas and delim == _SEPARADOR_DE_EXCEL:
+        return filas, None
     try:
         partidas = list(csv.reader(io.StringIO(texto), delimiter=delim))
     except csv.Error:
@@ -217,10 +278,14 @@ def _leer_tabla(req: ConciliacionParseRequest, formato: str):
     desempaquetado (None si el archivo venía en columnas)."""
     import pandas as pd  # lazy
 
-    filas = _filas_crudas(req, formato)
+    filas = _filas_crudas(req, formato, recortar=False)
     if not filas:
         return pd.DataFrame(), None
+    repartidas = _filas_repartidas(filas)
     filas, delim = _desempaquetar_columna_unica(filas)
+    if delim is None:
+        # Camino de siempre (archivo en columnas): celdas sin espacios sobrantes.
+        filas = [[c.strip() for c in fila] for fila in filas]
     h = _fila_encabezado(filas)
     columnas = _nombres_columnas(filas[h])
     ancho = len(columnas)
@@ -230,6 +295,8 @@ def _leer_tabla(req: ConciliacionParseRequest, formato: str):
         if any(str(c).strip() for c in fila)
     ]
     nota = _NOTA_COLUMNA_UNICA.format(d=delim, n=ancho) if delim else None
+    if nota and repartidas:
+        nota = f"{nota} {_nota_filas_repartidas(repartidas)}"
     return pd.DataFrame(datos, columns=columnas, dtype=str).fillna(""), nota
 
 
@@ -636,6 +703,28 @@ def _advertencia_moneda(df, cols: list[str], cuenta_moneda: str | None) -> list[
     ]
 
 
+_NOTA_SIN_MOVIMIENTOS = "No se reconocieron columnas de monto. Revisa el formato del archivo."
+
+
+def _nota_sin_movimientos(renglones: int, columnas: int, hay_fecha: bool, hay_importe: bool) -> str:
+    """El aviso de siempre + QUÉ leyó el lector (23-nov-2026): con «81
+    renglones en 2 columnas» una captura de pantalla ya dice si el archivo
+    llegó en una sola columna, partido o sin encabezados. Sin datos del
+    archivo: solo conteos."""
+    leido = (
+        f"Se leyeron {renglones} {'renglón' if renglones == 1 else 'renglones'} "
+        f"en {columnas} {'columna' if columnas == 1 else 'columnas'}"
+    )
+    faltan = [n for n, hay in (("fecha", hay_fecha), ("importe", hay_importe)) if not hay]
+    if len(faltan) == 2:
+        detalle = "no se encontró la columna de fecha ni la de importe"
+    elif faltan:
+        detalle = f"no se encontró la columna de {faltan[0]}"
+    else:
+        detalle = "ningún renglón trae un importe"
+    return f"{_NOTA_SIN_MOVIMIENTOS} {leido}; {detalle}."
+
+
 def _parse_tabular(req: ConciliacionParseRequest, formato: str) -> ConciliacionParseResponse:
     df, nota_columna = _leer_tabla(req, formato)
     cols = [str(c) for c in df.columns]
@@ -723,7 +812,9 @@ def _parse_tabular(req: ConciliacionParseRequest, formato: str) -> ConciliacionP
     notas = (
         ""
         if movimientos
-        else "No se reconocieron columnas de monto. Revisa el formato del archivo."
+        else _nota_sin_movimientos(
+            len(df), len(cols), bool(col_fecha), bool(col_cargo or col_abono or col_monto)
+        )
     )
     if movimientos and "paywise" in req.filename.lower():
         notas = (

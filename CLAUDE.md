@@ -2853,6 +2853,42 @@ UNITARIO MXN» /
   movimientos, 18 abonos / 62 cargos, saldos íntegros, 0 sin fecha. Tests:
   `tests/test_estado_cuenta_scotiabank_columna_unica.py` (datos sintéticos
   con la estructura exacta).
+- **Ese XLSX de una columna lo guarda EXCEL, no el banco: un renglón con COMA
+  llega partido en varias celdas** (23-nov-2026; WhatsApp de la oficina: «la
+  cuenta eje de Scotia […] me pone este anuncio y no me deja subirlo […] está
+  exactamente el mismo formato y la misma forma de bajarlo que el de gastos y
+  el de combustible»). El banco entrega un .csv de TEXTO separado por «|»; la
+  oficina lo abre en Excel y lo guarda como .xlsx (el libro dice «Microsoft
+  Excel» y la hoja se llama como el .csv, recortada a 31 caracteres). Excel
+  parte cada renglón por las COMAS: sin comas todo cae en la columna A, pero
+  UNA coma en el concepto de un SPEI («PAGO FACT 123, 124», «OPERADORA X,
+  S.A. DE C.V.») reparte ESE renglón en dos o más celdas.
+  `_desempaquetar_columna_unica` exigía «todo en la primera celda», no
+  desempaquetaba NADA y el archivo entero respondía «No se reconocieron
+  columnas de monto» (sin la nota del desempaquetado: esa es la pista).
+  Reproducido con Excel 16 es-MX sobre la muestra real: una coma en 1 de 82
+  renglones ⇒ 0 movimientos. Hoy: `_filas_crudas(…, recortar=False)` entrega
+  las celdas con sus espacios, `_linea_original` vuelve a unir cada renglón
+  con la coma que Excel se llevó (`_SEPARADOR_DE_EXCEL`; las celdas vacías
+  del final son relleno) y de ahí sigue el desempaquetado de siempre; `notas`
+  lo dice («1 renglón venía partido en varias celdas por una coma…»).
+  Candados para no tocar una tabla en columnas DE VERDAD: hacen falta ≥ 2
+  renglones de UNA sola celda (resumen y encabezados del banco nunca traen
+  coma) y, con renglones repartidos, el separador consistente no puede ser
+  la coma; el resto son los de antes (≥ 4 columnas en la mayoría). Sin
+  renglones repartidos el camino es el de siempre: la muestra real da la
+  respuesta IDÉNTICA antes y después. Con los .xlsx guardados por Excel real,
+  el dinero (fecha, sentido, monto, saldo, referencia) es el del .csv del
+  banco leído directo; lo único que puede variar es un espacio del concepto
+  cuando Excel vuelve número un pedazo que solo trae dígitos («12, 13» ⇒
+  «12,13»). **El .csv del banco SIN pasar por Excel también entra** (camino
+  CSV con «|») y no sufre nada de esto. De paso el aviso de «sin
+  movimientos» dice qué se leyó (`_nota_sin_movimientos`: «Se leyeron 81
+  renglones en 2 columnas; no se encontró la columna de fecha ni la de
+  importe.»): solo conteos, nunca datos del archivo. No se pudo ver el
+  archivo de la oficina: el diagnóstico sale del mensaje exacto, de los
+  metadatos de la muestra del 27-oct y de la reproducción. Tests: sección
+  «Renglones que Excel partió por una COMA» del mismo archivo.
 - **Estado de cuenta PDF por BLOQUES de páginas** (29-sep-2026). El
   Scotiabank mensual (1.18 MB, impreso del portal) daba 422 «demasiados
   movimientos»: el PDF completo iba en UNA llamada y la respuesta se

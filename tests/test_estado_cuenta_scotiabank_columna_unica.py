@@ -18,7 +18,9 @@ El panel respondía «No se reconocieron columnas de monto». Se congela:
  5. la referencia de relleno «00000000000000000001» se omite;
  6. la cadena de saldos se valida al revés (archivo descendente) y sigue
     avisando cuando de verdad falta un movimiento;
- 7. un movimiento en otra moneda que la cuenta se avisa.
+ 7. un movimiento en otra moneda que la cuenta se avisa;
+ 8. (23-nov-2026) un renglón que Excel partió en varias celdas por una coma
+    de su texto se vuelve a unir: ya no tumba el archivo entero.
 
 Los datos son SINTÉTICOS con la estructura exacta del archivo real.
 """
@@ -32,6 +34,7 @@ from app.schemas.conciliacion import ConciliacionParseRequest
 from app.services.estado_cuenta import (
     _contraparte_spei,
     _desempaquetar_columna_unica,
+    _nota_sin_movimientos,
     parsear_estado_cuenta,
 )
 
@@ -275,3 +278,182 @@ def test_desempaquetar_solo_cuando_de_verdad_es_una_columna() -> None:
     # Una columna sin separador consistente: se deja igual.
     suelto = [["Estado de cuenta"], ["Cuenta 123"], ["Saldo 1,000.00"]]
     assert _desempaquetar_columna_unica(suelto) == (suelto, None)
+
+
+# --- Renglones que Excel partió por una COMA (23-nov-2026) -------------------
+# Caso real (cuenta eje, WhatsApp del 23-nov-2026): «estoy tratando de subir el
+# estado de cuenta de la cuenta eje de Scotia y me pone este anuncio […] está
+# exactamente el mismo formato y la misma forma de bajarlo que el de gastos y
+# el de combustible». El .xlsx no lo exporta el banco: la oficina abre el .csv
+# del banco (texto separado por «|») en Excel y lo guarda. Excel parte cada
+# renglón por las COMAS: un movimiento con coma en su concepto queda en dos o
+# más celdas, el lector no desempaquetaba nada y el archivo entero daba «No se
+# reconocieron columnas de monto». Reproducido con Excel 16 (es-MX) sobre la
+# muestra real del 27-oct: UNA coma en un renglón de 82 ⇒ cero movimientos.
+
+
+def _como_excel(linea: str) -> list:
+    """Las celdas en que Excel deja un renglón del .csv del banco al abrirlo:
+    lo parte por comas (conserva los espacios de cada pedazo) y vuelve NÚMERO
+    el pedazo que solo trae dígitos («014» ⇒ 14)."""
+    celdas: list = []
+    for pedazo in linea.split(","):
+        limpio = pedazo.strip()
+        celdas.append(int(limpio) if limpio.isdigit() else pedazo)
+    return celdas
+
+
+def _req_excel(lineas: list[str], **kw) -> ConciliacionParseRequest:
+    wb = Workbook()
+    ws = wb.active
+    for linea in lineas:
+        ws.append(_como_excel(linea))
+    buf = BytesIO()
+    wb.save(buf)
+    return ConciliacionParseRequest(
+        filename="eje scotia.xlsx",
+        file_base64=base64.b64encode(buf.getvalue()).decode("ascii"),
+        **kw,
+    )
+
+
+def _dinero(res) -> list[tuple]:
+    return [(m.fecha, m.tipo, m.monto, m.saldo_posterior, m.referencia) for m in res.movimientos]
+
+
+# El SPEI del 02-oct con una coma en el concepto (va en la leyenda Y en la
+# información adicional: el renglón queda en TRES celdas).
+CON_COMA = [
+    *LINEAS[:5],
+    LINEAS[5].replace("pre fact corner 4480", "pre fact corner 4480, 4481"),
+    LINEAS[6],
+]
+
+
+def test_un_renglon_partido_por_una_coma_ya_no_tumba_el_archivo() -> None:
+    lineas = [RESUMEN, ENCABEZADO, *CON_COMA]
+    res = parsear_estado_cuenta(_req_excel(lineas, cuenta_moneda="MXN"))
+    assert res.total == 7
+    assert len(res.columnas) == 15 and res.columnas[6] == "Importe"
+    # El dinero es el del archivo sin la coma: fecha, sentido, monto, saldo y
+    # referencia de los 7 movimientos, y la cadena de saldos sigue cuadrando.
+    assert _dinero(res) == _dinero(parsear_estado_cuenta(_req_xlsx()))
+    assert res.advertencias == []
+    # El concepto vuelve con su coma.
+    assert res.movimientos[5].descripcion == (
+        "SEL TRANSF. INTERBANCARIA SPEI BANORTE pre fact corner 4480, 4481 CORNER CAFE SA DE CV"
+    )
+    assert "una sola columna separada por «|»" in res.notas
+    assert "1 renglón venía partido en varias celdas por una coma" in res.notas
+    assert "No se reconocieron" not in res.notas
+
+
+def test_el_xlsx_guardado_en_excel_da_lo_mismo_que_el_csv_del_banco() -> None:
+    lineas = [RESUMEN, ENCABEZADO, *CON_COMA]
+    de_excel = parsear_estado_cuenta(_req_excel(lineas))
+    del_banco = parsear_estado_cuenta(_req_csv("\n".join(lineas) + "\n"))
+    assert [m.model_dump() for m in de_excel.movimientos] == [
+        m.model_dump() for m in del_banco.movimientos
+    ]
+
+
+def test_pedazo_que_excel_volvio_numero_no_mueve_el_dinero() -> None:
+    # «FACT 12, 13, 014 VIP»: Excel deja « 13» como el número 13 (se pierde el
+    # espacio) y « 014 VIP…» como texto. Solo cambia ese espacio del concepto.
+    lineas = [
+        RESUMEN, ENCABEZADO, *LINEAS[:5],
+        LINEAS[5].replace("|pre fact corner 4480|", "|FACT 12, 13, 014 VIP|"),
+        LINEAS[6],
+    ]
+    res = parsear_estado_cuenta(_req_excel(lineas))
+    assert res.total == 7
+    assert _dinero(res) == _dinero(parsear_estado_cuenta(_req_xlsx()))
+    assert "FACT 12,13, 014 VIP" in res.movimientos[5].descripcion
+    assert "1 renglón venía partido" in res.notas
+
+
+def test_todos_los_movimientos_con_coma_tambien_se_leen() -> None:
+    # Resumen y encabezados nunca traen coma: con esos dos renglones de una
+    # celda basta para saber que es el archivo del banco pasado por Excel.
+    lineas = [RESUMEN, ENCABEZADO, *(_con_coma_en_leyenda(ln) for ln in LINEAS)]
+    res = parsear_estado_cuenta(_req_excel(lineas))
+    assert res.total == 7
+    assert _dinero(res) == _dinero(parsear_estado_cuenta(_req_xlsx()))
+    assert "7 renglones venían partidos" in res.notas
+    assert all(", SA DE CV" in m.descripcion for m in res.movimientos)
+
+
+def _con_coma_en_leyenda(linea: str) -> str:
+    campos = linea.split("|")
+    campos[12] = "PAGO A PROVEEDOR, SA DE CV"  # Leyenda 3
+    return "|".join(campos)
+
+
+def test_tabla_en_columnas_con_preambulo_se_deja_igual() -> None:
+    # Un estado de cuenta en columnas DE VERDAD con dos renglones de preámbulo
+    # en una sola celda: al unir sus celdas el separador consistente es la
+    # coma ⇒ no es el archivo empaquetado, no se toca.
+    tabla = [
+        ["Estado de cuenta", "", "", ""],
+        ["Cuenta 0025830577", "", "", ""],
+        ["Fecha", "Concepto", "Cargo", "Saldo"],
+        ["07/09/2026", "ASUR CANCUN", "100.00", "900.00"],
+        ["08/09/2026", "OXXO CISNE", "50.00", "850.00"],
+        ["09/09/2026", "ADO", "124.00", "726.00"],
+    ]
+    assert _desempaquetar_columna_unica(tabla) == (tabla, None)
+    # Y uno con «|» dentro de un concepto tampoco se confunde.
+    con_pipe = [fila[:] for fila in tabla]
+    con_pipe[3][1] = "ASUR | CANCUN"
+    assert _desempaquetar_columna_unica(con_pipe) == (con_pipe, None)
+
+
+def test_xlsx_en_columnas_de_verdad_se_lee_como_siempre() -> None:
+    wb = Workbook()
+    ws = wb.active
+    for fila in (
+        ["Estado de cuenta"],
+        ["Cuenta 0025830577"],
+        ["Fecha", "Concepto", "Cargo", "Abono", "Saldo"],
+        ["07/09/2026", "  ASUR CANCUN, TERMINAL 2  ", "100.00", "", "900.00"],
+        ["08/09/2026", "SEL TRASPASO ENTRE CUENTAS", "", "50.00", "950.00"],
+    ):
+        ws.append(fila)
+    buf = BytesIO()
+    wb.save(buf)
+    res = parsear_estado_cuenta(
+        ConciliacionParseRequest(
+            filename="banco.xlsx", file_base64=base64.b64encode(buf.getvalue()).decode("ascii")
+        )
+    )
+    assert res.columnas == ["Fecha", "Concepto", "Cargo", "Abono", "Saldo"]
+    assert [(m.tipo, m.monto, m.saldo_posterior) for m in res.movimientos] == [
+        ("CARGO", 100.0, 900.0), ("ABONO", 50.0, 950.0),
+    ]
+    # La celda sigue llegando sin espacios sobrantes y con su coma.
+    assert res.movimientos[0].descripcion == "ASUR CANCUN, TERMINAL 2"
+    assert res.notas == ""
+
+
+def test_sin_movimientos_el_aviso_dice_que_se_leyo() -> None:
+    assert _nota_sin_movimientos(81, 2, False, False) == (
+        "No se reconocieron columnas de monto. Revisa el formato del archivo. "
+        "Se leyeron 81 renglones en 2 columnas; no se encontró la columna de fecha "
+        "ni la de importe."
+    )
+    assert _nota_sin_movimientos(1, 1, True, False).endswith(
+        "Se leyeron 1 renglón en 1 columna; no se encontró la columna de importe."
+    )
+    assert _nota_sin_movimientos(5, 6, False, True).endswith(
+        "no se encontró la columna de fecha."
+    )
+    assert _nota_sin_movimientos(5, 6, True, True).endswith("ningún renglón trae un importe.")
+    # Un archivo que no es un estado de cuenta: el aviso de siempre + conteos.
+    res = parsear_estado_cuenta(
+        _req_xlsx(["Estado de cuenta", "Cuenta 123", "Saldo 1,000.00"])
+    )
+    assert res.total == 0
+    assert res.notas.startswith(
+        "No se reconocieron columnas de monto. Revisa el formato del archivo."
+    )
+    assert "Se leyeron 2 renglones en 1 columna" in res.notas
