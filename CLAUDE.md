@@ -2398,6 +2398,69 @@ Reglas de este microservicio (FastAPI, Python 3.12).
   `tests/test_balance_entregas_socios.py` (38). Orden de deploy: pyservices ⇒
   API (ambos sentidos seguros).
 
+- **Vuelos pagados con utilidades en la hoja 'balance' (23-nov-2026, API
+  0.0.148).** Pedido del dueño: los socios a veces pagan un vuelo propio
+  «descontándolo de sus utilidades»; el API lo registra como una ENTREGA al
+  socio ligada a un cobro del vuelo y el balance por avión y el general lo
+  muestran APARTE del dinero entregado. Aquí no se calcula nada. Contrato
+  ADITIVO, que el API manda SOLO cuando el avión tiene al menos un vuelo así
+  en el periodo: por avión (`BalanceAvionBalanceBloque`)
+  `vuelos_utilidades_socios_mxn` (**DISCRIMINADOR**: un número),
+  `entregado_efectivo_socios_mxn` (= `entregado_socios_mxn` − el anterior) y
+  `vuelos_utilidades` (lista de `BalanceVueloUtilidades`: `folio`, `fecha`
+  'YYYY-MM-DD', `socio`, `matricula` —el avión que VOLÓ, puede ser otro—,
+  `cliente`, `monto_mxn`); por socio (`BalanceAvionSocio`)
+  `vuelos_utilidades_mxn` (0 si no tiene), `entregado_efectivo_mxn` (=
+  `entregado_mxn` − el anterior) y `entregado_efectivo_usd` (informativo). Lo
+  de siempre NO cambia de significado: `entregado_mxn` /
+  `entregado_socios_mxn` = TODAS las entregas (vuelos incluidos) y
+  `por_entregar_*` = monto − entregado, ya neto. Liberal, jamás un 422: los
+  números con `numero_cierre_liberal`; la lista, lo que no sea lista ⇒ [] y
+  las filas que no son objeto o no traen `monto_mxn` numérico se saltan (un
+  folio que no es entero ≥ 1 o un texto vacío ⇒ None: esa pieza no se
+  escribe). SOLO lo pinta la tabla de socios EN CASCADA de la hoja en PESOS
+  (`_tabla_socios_en_cascada` con `pesos=True`, la única viva;
+  `_vuelos_utilidades_en_tabla` = pesos + `_reserva_en_cascada` +
+  `_con_entregas_socios` + el discriminador). Con él, las entregas pasan de
+  tres a CUATRO columnas (G..J): `(−) VUELOS PAGADOS\nCON UTILIDADES (MXN)`
+  (valor del API; 0.00 si el socio no tiene) · `ENTREGADO (MXN)` (ya solo el
+  dinero: `entregado_efectivo_mxn`; respaldo `entregado_mxn` −
+  `vuelos_utilidades_mxn`) · `POR ENTREGAR (MXN)` = `ROUND(E−G−H,2)` con el
+  `por_entregar_mxn` de siempre en caché · `ENTREGADO USD (informativo)`
+  (`entregado_efectivo_usd`; respaldo `entregado_usd`). El pie se rotula
+  «Vuelos pagados con utilidades / Entregado a socios / Por entregar» y suma
+  las cuatro (`ROUND(SUM(col),2)` con `vuelos_utilidades_socios_mxn`,
+  `entregado_efectivo_socios_mxn` —respaldo: todas − vuelos—,
+  `por_entregar_socios_mxn` y el USD re-sumado). Debajo de
+  `_NOTA_ENTREGAS_SOCIOS` va `_NOTA_VUELOS_UTILIDADES` («Vuelos pagados con
+  utilidades: el socio pagó su vuelo descontándolo de sus utilidades (no
+  entró dinero). El vuelo cuenta como cobrado y aquí se le resta al socio;
+  por eso no aparece en ENTREGADO.») y, tras las notas de la tabla y una fila
+  en blanco, el DETALLE (`_detalle_vuelos_utilidades`): título «VUELOS
+  PAGADOS CON UTILIDADES», una fila por vuelo («#498 · 28/10/2026 · Macedo ·
+  N621TX», combinada A..F: folio · fecha · socio · matrícula, sin las piezas
+  que no vienen y con « · cliente» solo si es otro que el socio; el monto en
+  G) y la fila TOTAL = `ROUND(SUM(filas),2)` (re-suma de lo que se ve); sin
+  filas en la lista no hay detalle (la columna, el pie y la nota sí). Anchos:
+  una columna más de 20 (`_anchos_hoja_balance` con `con_vuelos`; en el
+  general basta UN bloque con el discriminador). Lo de después (bloque
+  «RESERVA DE OVERHAUL RETENIDA…», el avión siguiente, el bloque VUELATOUR y
+  el pie de la hoja) baja solo: cada función devuelve la fila siguiente. En
+  el general la decisión es POR BLOQUE: un avión con cuatro columnas y otro
+  con tres conviven. La tabla en cascada en USD y las tablas legadas
+  (`_bloque_balance`, `_bloque_balance_pesos`) IGNORAN las llaves. Sin el
+  discriminador (API ≤ 0.0.147 o un avión sin vuelos así; null, texto o
+  booleano) el libro es BYTE A BYTE: .xlsx miembro a miembro y vista en
+  pantalla, y 54 variantes (individual y general, USD y pesos, en cascada y
+  legadas, con y sin entregas, con las llaves nuevas donde no se pintan)
+  contra una copia limpia de HEAD 9d67c72 (`git archive`) en el mismo
+  intérprete, cero diferencias; las huellas congeladas del repo no se
+  regeneraron. La vista en pantalla (`libro_json`) lo hereda todo. Orden de
+  deploy: **pyservices ⇒ API** (seguro en los dos sentidos: el API previo no
+  manda las llaves; un pyservices previo las ignora y pinta las tres columnas
+  de hoy con `entregado_mxn` completo). Tests:
+  `tests/test_balance_vuelos_utilidades.py` (54).
+
 - **Reparto: COMBUSTIBLE separado de los gastos directos, cascada en el orden
   del Excel del cliente (23-oct-2026, API 0.0.103, invariante 104 del API).**
   Pedido: «debemos separar gastos directos del combustible, porque los está

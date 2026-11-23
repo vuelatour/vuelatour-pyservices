@@ -1375,6 +1375,21 @@ class BalanceAvionSocio(BaseModel):
     reserva_usd: float | None = None
     reserva_mxn: float | None = None
     descuenta_reserva: bool | None = None
+    # VUELOS PAGADOS CON UTILIDADES (23-nov-2026, API 0.0.148; pedido del
+    # dueño: el socio paga un vuelo propio «descontándolo de sus utilidades» y
+    # el API lo registra como una ENTREGA ligada al cobro del vuelo). Lo que
+    # YA existía no cambia de significado: `entregado_mxn` sigue siendo TODAS
+    # las entregas (vuelos incluidos) y `por_entregar_mxn` = monto − entregado
+    # (ya neto). Estas tres solo lo PARTEN para pintarlo aparte:
+    # `vuelos_utilidades_mxn` = lo que este socio pagó así (0 si no tiene),
+    # `entregado_efectivo_mxn` = `entregado_mxn` − `vuelos_utilidades_mxn` (el
+    # dinero que sí se le entregó) y `entregado_efectivo_usd`, su USD
+    # informativo. Todo lo calcula el API; solo se pintan cuando el bloque
+    # trae `vuelos_utilidades_socios_mxn` (el discriminador). Liberales:
+    # jamás un 422 por una columna del reparto.
+    vuelos_utilidades_mxn: float | None = None
+    entregado_efectivo_mxn: float | None = None
+    entregado_efectivo_usd: float | None = None
 
     @field_validator(
         "entregado_mxn",
@@ -1384,6 +1399,9 @@ class BalanceAvionSocio(BaseModel):
         "utilidad_mxn",
         "reserva_usd",
         "reserva_mxn",
+        "vuelos_utilidades_mxn",
+        "entregado_efectivo_mxn",
+        "entregado_efectivo_usd",
         mode="before",
     )
     @classmethod
@@ -1438,6 +1456,41 @@ class BalanceReservaTramo(BaseModel):
     def _motores_liberal(cls, v: Any) -> int | None:
         n = numero_cierre_liberal(v)
         return int(n) if n is not None and n >= 0 and n.is_integer() else None
+
+
+class BalanceVueloUtilidades(BaseModel):
+    """Un vuelo que un socio pagó «descontándolo de sus utilidades»
+    (23-nov-2026, API 0.0.148): una fila del DETALLE «VUELOS PAGADOS CON
+    UTILIDADES» de la hoja 'balance'. `matricula` es el avión que VOLÓ (puede
+    ser otro que el del bloque) y `monto_mxn` lo que se le restó al socio, ya
+    calculado por el API. Liberal: jamás un 422 por un metadato (un folio que
+    no es entero ≥ 1 o un texto vacío ⇒ None y esa pieza no se escribe). El
+    monto es lo único obligatorio: las filas sin él las descarta ANTES el
+    validador de la lista (`BalanceAvionBalanceBloque.vuelos_utilidades`)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    folio: int | None = None
+    fecha: str | None = None  # 'YYYY-MM-DD', día Cancún
+    socio: str = ""
+    matricula: str | None = None
+    cliente: str | None = None
+    monto_mxn: float
+
+    @field_validator("folio", mode="before")
+    @classmethod
+    def _folio_liberal(cls, v: Any) -> int | None:
+        return consecutivo_liberal(v)
+
+    @field_validator("fecha", "matricula", "cliente", mode="before")
+    @classmethod
+    def _textos_liberales(cls, v: Any) -> str | None:
+        return _texto_liberal(v)
+
+    @field_validator("socio", mode="before")
+    @classmethod
+    def _socio_liberal(cls, v: Any) -> str:
+        return _texto_liberal(v) or ""
 
 
 class BalanceAvionBalanceBloque(BaseModel):
@@ -1549,6 +1602,23 @@ class BalanceAvionBalanceBloque(BaseModel):
     # migración ⇒ ni columnas, ni totales, ni nota: libro byte a byte.
     entregado_socios_mxn: float | None = None
     por_entregar_socios_mxn: float | None = None
+    # VUELOS PAGADOS CON UTILIDADES (23-nov-2026, API 0.0.148; pedido del
+    # dueño: los socios a veces pagan un vuelo propio «descontándolo de sus
+    # utilidades»; el API lo registra como una ENTREGA al socio ligada a un
+    # cobro del vuelo y el balance lo muestra APARTE del dinero entregado).
+    # ADITIVAS y SOLO cuando el avión tiene al menos un vuelo así en el
+    # periodo: `vuelos_utilidades_socios_mxn` (Σ de `socios[]
+    # .vuelos_utilidades_mxn`) es el DISCRIMINADOR —None/ausente ⇒ el libro
+    # byte a byte—, `entregado_efectivo_socios_mxn` = `entregado_socios_mxn` −
+    # `vuelos_utilidades_socios_mxn` y `vuelos_utilidades` el detalle, una
+    # fila por vuelo. `entregado_socios_mxn` y `por_entregar_socios_mxn` NO
+    # cambian de significado (todas las entregas; ya neto). Aquí no se calcula
+    # nada. Solo lo pinta la tabla de socios EN CASCADA de la hoja en PESOS
+    # (`_vuelos_utilidades_en_tabla` en el render); los demás caminos las
+    # ignoran.
+    vuelos_utilidades_socios_mxn: float | None = None
+    entregado_efectivo_socios_mxn: float | None = None
+    vuelos_utilidades: list[BalanceVueloUtilidades] = Field(default_factory=list)
     # LA RESERVA DE OVERHAUL RESTA EN LA CASCADA (9-nov-2026, API 0.0.129,
     # invariante 125 del API; decisión del cliente: «Necesito resolver ese tema
     # del Overhaul, que quede ANTES del total», como en su Excel manual y en el
@@ -1585,11 +1655,31 @@ class BalanceAvionBalanceBloque(BaseModel):
         "reserva_overhaul_horas_sin_tarifa_hr",
         "entregado_socios_mxn",
         "por_entregar_socios_mxn",
+        "vuelos_utilidades_socios_mxn",
+        "entregado_efectivo_socios_mxn",
         mode="before",
     )
     @classmethod
     def _reserva_numeros_liberales(cls, v: Any) -> float | None:
         return numero_cierre_liberal(v)
+
+    @field_validator("vuelos_utilidades", mode="before")
+    @classmethod
+    def _vuelos_utilidades_liberal(cls, v: Any) -> list:
+        """Una lista ⇒ sus filas con `monto_mxn` numérico (lo que no sea
+        objeto o no traiga monto se salta: sin monto no hay qué pintar); lo
+        demás (null, texto, objeto) ⇒ []. Jamás un 422 por el detalle."""
+        if not isinstance(v, list):
+            return []
+        filas: list = []
+        for x in v:
+            if isinstance(x, BalanceVueloUtilidades):
+                filas.append(x)
+            elif isinstance(x, dict):
+                monto = numero_cierre_liberal(x.get("monto_mxn"))
+                if monto is not None:
+                    filas.append({**x, "monto_mxn": monto})
+        return filas
 
     @field_validator("reserva_overhaul_tramos", mode="before")
     @classmethod

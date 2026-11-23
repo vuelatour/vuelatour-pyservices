@@ -145,6 +145,7 @@ from app.schemas.reportes import (
     BalanceOtroMovimientoFila,
     BalanceReservaTramo,
     BalanceVinculoGasto,
+    BalanceVueloUtilidades,
     TcHoy,
 )
 from app.services import cierre_mes, libro_json, xlsx_formulas
@@ -4507,10 +4508,14 @@ def _hoja_balance(
 _ANCHOS_BALANCE_USD = [46, 14, 16]
 
 
-def _anchos_hoja_balance(ws: Worksheet, base: list[int], con_entregas: bool) -> None:
+def _anchos_hoja_balance(
+    ws: Worksheet, base: list[int], con_entregas: bool, con_vuelos: bool = False
+) -> None:
     """Anchos de la hoja 'balance': los de siempre y, SOLO con las entregas a
-    socios del API (invariante 100), los de sus tres columnas extra."""
-    anchos = [*base, *([_ANCHO_COL_ENTREGAS] * _N_COLS_ENTREGAS)] if con_entregas else base
+    socios del API (invariante 100), los de sus tres columnas extra (cuatro
+    con `con_vuelos`: la de los vuelos pagados con utilidades, API 0.0.148)."""
+    n_entregas = _n_cols_entregas(con_vuelos)
+    anchos = [*base, *([_ANCHO_COL_ENTREGAS] * n_entregas)] if con_entregas else base
     for i, w in enumerate(anchos, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -4788,15 +4793,21 @@ def _tabla_socios_en_cascada(
     utilidad y reserva deja esas celdas vacías y su MONTO con la fórmula de
     siempre. `celdas_empresa` recibe la celda MONTO (E) y, en pesos, la USD
     (F). Empieza en `row` (la fila en blanco tras la cascada ya está puesta)
-    y devuelve la siguiente fila libre."""
+    y devuelve la siguiente fila libre. Con los VUELOS PAGADOS CON UTILIDADES
+    del API 0.0.148 (`_vuelos_utilidades_en_tabla`: solo en pesos) las
+    entregas son CUATRO columnas —«(−) VUELOS PAGADOS CON UTILIDADES (MXN)»
+    va primero—, el pie suma las cuatro, hay una nota más y, tras las notas,
+    el bloque de detalle `_detalle_vuelos_utilidades`."""
     b = req.balance
     con_entregas = _con_entregas_socios(b)
+    con_vuelos = _vuelos_utilidades_en_tabla(b, pesos=pesos)
+    n_entregas = _n_cols_entregas(con_vuelos)
     n_base = 6 if pesos else 5
     col_entregas = n_base + 1
-    n_tabla = n_base + (_N_COLS_ENTREGAS if con_entregas else 0)
+    n_tabla = n_base + (n_entregas if con_entregas else 0)
     ancho = sum(_anchos_base(pesos=pesos, en_cascada=True))
     if con_entregas:
-        ancho += _ANCHO_COL_ENTREGAS * _N_COLS_ENTREGAS
+        ancho += _ANCHO_COL_ENTREGAS * n_entregas
     _titulo_envuelto(ws, _TITULO_SOCIOS_EN_CASCADA, row, n_tabla, ancho)
     row += 1
     if pesos:
@@ -4807,7 +4818,7 @@ def _tabla_socios_en_cascada(
     if pesos:
         _encabezado_info(ws, row, 6)
     if con_entregas:
-        _encabezados_entregas(ws, row, col_entregas)
+        _encabezados_entregas(ws, row, col_entregas, con_vuelos=con_vuelos)
     row += 1
     fila_ini = row
     # Celdas de la cascada que citan las fórmulas: B (USD en la hoja USD; MXN
@@ -4878,8 +4889,11 @@ def _tabla_socios_en_cascada(
                     )
                 )
             if con_entregas:
-                # POR ENTREGAR = ROUND(MONTO MXN − ENTREGADO, 2): E es el MONTO.
-                _celdas_entregas_socio(ws, row, col_entregas, s, col_monto_mxn="E")
+                # POR ENTREGAR = ROUND(MONTO MXN − ENTREGADO, 2): E es el MONTO
+                # (con los vuelos pagados con utilidades, − VUELOS − ENTREGADO).
+                _celdas_entregas_socio(
+                    ws, row, col_entregas, s, col_monto_mxn="E", con_vuelos=con_vuelos
+                )
         else:
             completos = s.utilidad_usd is not None and s.reserva_usd is not None
             _formula(ws, row, 3, f_utilidad, s.utilidad_usd, MONEY).border = _border
@@ -4960,9 +4974,13 @@ def _tabla_socios_en_cascada(
             fila_fin=fila_fin,
             n_cols=n_tabla,
             ancho=ancho,
+            con_vuelos=con_vuelos,
         )
     _pinta_nota_envuelta(ws, row, _NOTA_SOCIOS_EN_CASCADA, n_tabla, ancho)
-    return row + 1
+    row += 1
+    if con_vuelos:
+        row = _detalle_vuelos_utilidades(ws, b, row, col=col_entregas, n_cols=n_tabla)
+    return row
 
 
 # ENTREGAS A SOCIOS en la tabla «Reparto a socios» (21-oct-2026, invariante
@@ -4994,6 +5012,39 @@ _NOTA_SIN_PESOS_POR_ENTREGAR = (
 _ANCHO_COL_ENTREGAS = 20
 _N_COLS_ENTREGAS = 3
 
+# VUELOS PAGADOS CON UTILIDADES (23-nov-2026, API 0.0.148). Pedido del dueño:
+# los socios a veces pagan un vuelo propio «descontándolo de sus utilidades».
+# El API lo registra como una ENTREGA al socio ligada a un cobro del vuelo y
+# el balance por avión y el general lo muestran APARTE del dinero entregado.
+# Aquí no se calcula nada. El API manda, SOLO cuando el avión tiene al menos
+# un vuelo así en el periodo: por avión `vuelos_utilidades_socios_mxn` (el
+# DISCRIMINADOR), `entregado_efectivo_socios_mxn` y el detalle
+# `vuelos_utilidades` (una fila por vuelo); por socio `vuelos_utilidades_mxn`,
+# `entregado_efectivo_mxn` y `entregado_efectivo_usd`. Lo de siempre no cambia
+# de significado: `entregado_mxn` = TODAS las entregas (vuelos incluidos) y
+# `por_entregar_mxn` = monto − entregado, ya neto. Con el discriminador, y
+# SOLO en la tabla de socios EN CASCADA de la hoja en PESOS
+# (`_vuelos_utilidades_en_tabla`), las entregas pasan de tres a CUATRO
+# columnas —«(−) VUELOS PAGADOS CON UTILIDADES (MXN)» · ENTREGADO (MXN), ya
+# solo el dinero · POR ENTREGAR (MXN) = ROUND(MONTO − VUELOS − ENTREGADO, 2) ·
+# ENTREGADO USD (informativo)—, el pie suma las cuatro con otro rótulo, hay
+# una nota más y, tras las notas de la tabla, el DETALLE vuelo por vuelo con
+# su TOTAL. Los demás caminos (tabla en cascada en USD y las tablas legadas)
+# ignoran las llaves. Sin el discriminador, byte a byte.
+_COL_VUELOS_UTILIDADES = "(−) VUELOS PAGADOS\nCON UTILIDADES (MXN)"
+_FILA_TOTAL_ENTREGAS_CON_VUELOS = (
+    "Vuelos pagados con utilidades / Entregado a socios / Por entregar"
+)
+_NOTA_VUELOS_UTILIDADES = (
+    "Vuelos pagados con utilidades: el socio pagó su vuelo descontándolo de "
+    "sus utilidades (no entró dinero). El vuelo cuenta como cobrado y aquí se "
+    "le resta al socio; por eso no aparece en ENTREGADO."
+)
+_TITULO_VUELOS_UTILIDADES = "VUELOS PAGADOS CON UTILIDADES"
+_FILA_TOTAL_VUELOS_UTILIDADES = "TOTAL"
+_SEPARADOR_VUELO_UTILIDADES = " · "
+_VUELO_UTILIDADES_SIN_DATOS = "Vuelo sin datos"
+
 
 def _con_entregas_socios(b: BalanceAvionBalanceBloque) -> bool:
     """¿El API mandó las entregas a socios (invariante 100)? Discriminador:
@@ -5002,15 +5053,63 @@ def _con_entregas_socios(b: BalanceAvionBalanceBloque) -> bool:
     return b.entregado_socios_mxn is not None
 
 
-def _encabezados_entregas(ws: Worksheet, row: int, col: int) -> None:
-    """Los tres encabezados de las entregas a partir de `col`: los dos en
-    pesos como encabezado principal y el USD informativo en gris."""
-    _header_row(ws, row, [_COL_ENTREGADO, _COL_POR_ENTREGAR], start=col)
-    _encabezado_info(ws, row, col + 2, _COL_ENTREGADO_USD_INFO)
+def _vuelos_utilidades_en_tabla(b: BalanceAvionBalanceBloque, *, pesos: bool) -> bool:
+    """¿La tabla de socios de este bloque lleva la columna «(−) VUELOS PAGADOS
+    CON UTILIDADES (MXN)» (API 0.0.148)? Solo la tabla EN CASCADA de la hoja
+    en PESOS (`_tabla_socios_en_cascada`), con las entregas, y con el
+    DISCRIMINADOR `vuelos_utilidades_socios_mxn` (un número; None = API previo
+    o avión sin vuelos pagados así en el periodo ⇒ nada, byte a byte)."""
+    return (
+        pesos
+        and _reserva_en_cascada(b)
+        and _con_entregas_socios(b)
+        and b.vuelos_utilidades_socios_mxn is not None
+    )
+
+
+def _n_cols_entregas(con_vuelos: bool) -> int:
+    """Columnas de entregas de la tabla de socios: las tres de siempre y, con
+    los vuelos pagados con utilidades, una más (que va primero)."""
+    return _N_COLS_ENTREGAS + (1 if con_vuelos else 0)
+
+
+def _entregado_efectivo_mxn(s: BalanceAvionSocio) -> float | None:
+    """El dinero realmente entregado al socio, sin sus vuelos pagados con
+    utilidades: `entregado_efectivo_mxn` del API y, si no viniera, el respaldo
+    del contrato (`entregado_mxn` − `vuelos_utilidades_mxn`). Sin lo
+    entregado, None (celda vacía, jamás un 0)."""
+    if s.entregado_efectivo_mxn is not None:
+        return s.entregado_efectivo_mxn
+    if s.entregado_mxn is None:
+        return None
+    return round(s.entregado_mxn - (s.vuelos_utilidades_mxn or 0.0), 2)
+
+
+def _entregado_efectivo_usd(s: BalanceAvionSocio) -> float | None:
+    """El USD informativo del dinero entregado: `entregado_efectivo_usd` del
+    API (respaldo: `entregado_usd`)."""
+    return s.entregado_usd if s.entregado_efectivo_usd is None else s.entregado_efectivo_usd
+
+
+def _encabezados_entregas(ws: Worksheet, row: int, col: int, *, con_vuelos: bool = False) -> None:
+    """Los encabezados de las entregas a partir de `col`: los de pesos como
+    encabezado principal (con `con_vuelos`, primero el de los vuelos pagados
+    con utilidades) y el USD informativo en gris."""
+    principales = [_COL_ENTREGADO, _COL_POR_ENTREGAR]
+    if con_vuelos:
+        principales.insert(0, _COL_VUELOS_UTILIDADES)
+    _header_row(ws, row, principales, start=col)
+    _encabezado_info(ws, row, col + len(principales), _COL_ENTREGADO_USD_INFO)
 
 
 def _celdas_entregas_socio(
-    ws: Worksheet, row: int, col: int, s: BalanceAvionSocio, *, col_monto_mxn: str | None
+    ws: Worksheet,
+    row: int,
+    col: int,
+    s: BalanceAvionSocio,
+    *,
+    col_monto_mxn: str | None,
+    con_vuelos: bool = False,
 ) -> None:
     """Las tres celdas de entregas de UN socio a partir de `col`: ENTREGADO
     (MXN) como VALOR del API (sus insumos no están en el libro); POR ENTREGAR
@@ -5018,13 +5117,28 @@ def _celdas_entregas_socio(
     MONTO MXN (`col_monto_mxn`, la hoja en pesos; en la hoja USD va como
     valor), «—» con nota si el API no pudo calcularlo; y el USD informativo
     gris. Un dato ausente deja la celda vacía (jamás un 0). Negativos en
-    rojo (se le adelantó al socio)."""
-    ec = _celda_pesos(ws, row, col, None, s.entregado_mxn, nota_sin=None, color="000000")
-    if s.entregado_mxn is not None:
+    rojo (se le adelantó al socio). Con `con_vuelos` (API 0.0.148) son
+    CUATRO: antes va «(−) VUELOS PAGADOS CON UTILIDADES» (valor del API; 0.00
+    si el socio no tiene), ENTREGADO es solo el dinero
+    (`_entregado_efectivo_mxn`), POR ENTREGAR = ROUND(MONTO − VUELOS −
+    ENTREGADO, 2) con el `por_entregar_mxn` de siempre del API, y el USD
+    informativo es el del dinero."""
+    entregado, entregado_usd = s.entregado_mxn, s.entregado_usd
+    resta_vuelos = ""
+    if con_vuelos:
+        vc = _celda_pesos(
+            ws, row, col, None, s.vuelos_utilidades_mxn or 0.0, nota_sin=None, color="000000"
+        )
+        _rojo_si_negativo(ws, vc.coordinate)
+        resta_vuelos = f"-{vc.coordinate}"
+        entregado, entregado_usd = _entregado_efectivo_mxn(s), _entregado_efectivo_usd(s)
+        col += 1
+    ec = _celda_pesos(ws, row, col, None, entregado, nota_sin=None, color="000000")
+    if entregado is not None:
         _rojo_si_negativo(ws, ec.coordinate)
     formula = (
-        f"ROUND({col_monto_mxn}{row}-{get_column_letter(col)}{row},2)"
-        if col_monto_mxn is not None and s.entregado_mxn is not None
+        f"ROUND({col_monto_mxn}{row}{resta_vuelos}-{get_column_letter(col)}{row},2)"
+        if col_monto_mxn is not None and entregado is not None
         else None
     )
     pc = _celda_pesos(
@@ -5039,7 +5153,7 @@ def _celdas_entregas_socio(
     )
     if s.por_entregar_mxn is not None:
         _rojo_si_negativo(ws, pc.coordinate)
-    _celda_usd_info(ws, row, col + 2, None, s.entregado_usd)
+    _celda_usd_info(ws, row, col + 2, None, entregado_usd)
 
 
 def _pie_entregas_socios(
@@ -5052,23 +5166,53 @@ def _pie_entregas_socios(
     fila_fin: int,
     n_cols: int,
     ancho: float,
+    con_vuelos: bool = False,
 ) -> int:
     """Fila de totales de las entregas (ROUND(SUM(columna),2), como las Σ del
     resto del libro, con el Σ del API; `por_entregar_socios_mxn` None ⇒ «—»)
     y la nota al pie de la tabla de socios. Con `fila_fin` < `fila_ini` (sin socios) solo la nota.
-    Devuelve la siguiente fila libre."""
+    Devuelve la siguiente fila libre. Con `con_vuelos` (API 0.0.148) el rótulo
+    es `_FILA_TOTAL_ENTREGAS_CON_VUELOS`, la fila suma las CUATRO columnas
+    (VUELOS con `vuelos_utilidades_socios_mxn` y ENTREGADO con
+    `entregado_efectivo_socios_mxn`) y debajo de la nota de siempre va
+    `_NOTA_VUELOS_UTILIDADES`."""
     if fila_fin >= fila_ini:
-        lc = ws.cell(row=row, column=1, value=_FILA_TOTAL_ENTREGAS)
+        rotulo = _FILA_TOTAL_ENTREGAS_CON_VUELOS if con_vuelos else _FILA_TOTAL_ENTREGAS
+        lc = ws.cell(row=row, column=1, value=rotulo)
         lc.font = Font(bold=True, color=NAVY)
         lc.border = _border
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=col - 1)
+        entregado_socios = b.entregado_socios_mxn
+        usd = [s.entregado_usd for s in b.socios]
+        if con_vuelos:
+            v = get_column_letter(col)
+            vc = _celda_pesos(
+                ws,
+                row,
+                col,
+                f"ROUND(SUM({v}{fila_ini}:{v}{fila_fin}),2)",
+                b.vuelos_utilidades_socios_mxn,
+                nota_sin=None,
+                bold=True,
+                color="000000",
+            )
+            _rojo_si_negativo(ws, vc.coordinate)
+            # ENTREGADO ya es solo el dinero: su Σ es la del API y, si no
+            # viniera, el respaldo del contrato (todas − los vuelos).
+            entregado_socios = b.entregado_efectivo_socios_mxn
+            if entregado_socios is None and b.entregado_socios_mxn is not None:
+                entregado_socios = round(
+                    b.entregado_socios_mxn - (b.vuelos_utilidades_socios_mxn or 0.0), 2
+                )
+            usd = [_entregado_efectivo_usd(s) for s in b.socios]
+            col += 1
         e, p, u = (get_column_letter(col + i) for i in range(3))
         tc = _celda_pesos(
             ws,
             row,
             col,
             f"ROUND(SUM({e}{fila_ini}:{e}{fila_fin}),2)",
-            b.entregado_socios_mxn,
+            entregado_socios,
             nota_sin=None,
             bold=True,
             color="000000",
@@ -5088,11 +5232,73 @@ def _pie_entregas_socios(
             _rojo_si_negativo(ws, pc.coordinate)
         # El USD informativo solo se RE-SUMA (la columna de al lado), nunca
         # se convierte; con un socio sin dato, vacío.
-        usd = [s.entregado_usd for s in b.socios]
         total_usd = None if any(x is None for x in usd) else round(sum(usd), 2)
         _celda_usd_info(ws, row, col + 2, f"ROUND(SUM({u}{fila_ini}:{u}{fila_fin}),2)", total_usd)
         row += 1
     _pinta_nota_envuelta(ws, row, _NOTA_ENTREGAS_SOCIOS, n_cols, ancho)
+    if con_vuelos:
+        row += 1
+        _pinta_nota_envuelta(ws, row, _NOTA_VUELOS_UTILIDADES, n_cols, ancho)
+    return row + 1
+
+
+def _texto_vuelo_utilidades(v: BalanceVueloUtilidades) -> str:
+    """El renglón de un vuelo pagado con utilidades: «#498 · 28/10/2026 ·
+    Macedo · N621TX» (folio · fecha · socio · el avión que voló); las piezas
+    que no vienen se omiten y el cliente solo se añade si es otro que el
+    socio (comparación sin mayúsculas ni espacios de más)."""
+    piezas = [
+        f"#{v.folio}" if v.folio is not None else None,
+        _fecha(v.fecha),
+        v.socio or None,
+        v.matricula,
+    ]
+    if v.cliente and " ".join(v.cliente.split()).casefold() != " ".join(v.socio.split()).casefold():
+        piezas.append(v.cliente)
+    return _SEPARADOR_VUELO_UTILIDADES.join(p for p in piezas if p) or _VUELO_UTILIDADES_SIN_DATOS
+
+
+def _detalle_vuelos_utilidades(
+    ws: Worksheet, b: BalanceAvionBalanceBloque, row: int, *, col: int, n_cols: int
+) -> int:
+    """Bloque de DETALLE «VUELOS PAGADOS CON UTILIDADES» (23-nov-2026, API
+    0.0.148) debajo de la tabla de socios y sus notas (`row` = la siguiente
+    fila libre), separado por una fila en blanco: título en negritas, una
+    fila por vuelo de `b.vuelos_utilidades` —el texto de
+    `_texto_vuelo_utilidades` combinado hasta antes de `col` y su `monto_mxn`
+    (valor del API) en `col`, la columna de los VUELOS de la tabla— y la fila
+    TOTAL = ROUND(SUM(filas),2) (re-suma de lo que se ve, lo único que se
+    calcula aquí). Sin filas en la lista no pinta nada. Devuelve la siguiente
+    fila libre."""
+    if not b.vuelos_utilidades:
+        return row
+    row += 1  # fila en blanco: el detalle no es parte de la tabla
+    _title(ws, _TITULO_VUELOS_UTILIDADES, row, n_cols, size=11)
+    row += 1
+    fila_ini = row
+    for v in b.vuelos_utilidades:
+        tc = ws.cell(row=row, column=1, value=_texto_vuelo_utilidades(v))
+        # Nombres tecleados por la oficina: un «=» inicial se queda en texto.
+        _texto_literal(tc)
+        tc.border = _border
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=col - 1)
+        _celda_pesos(ws, row, col, None, v.monto_mxn, nota_sin=None, color="000000")
+        row += 1
+    lc = ws.cell(row=row, column=1, value=_FILA_TOTAL_VUELOS_UTILIDADES)
+    lc.font = Font(bold=True, color=NAVY)
+    lc.border = _border
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=col - 1)
+    letra = get_column_letter(col)
+    _celda_pesos(
+        ws,
+        row,
+        col,
+        f"ROUND(SUM({letra}{fila_ini}:{letra}{row - 1}),2)",
+        round(sum(v.monto_mxn for v in b.vuelos_utilidades), 2),
+        nota_sin=None,
+        bold=True,
+        color="000000",
+    )
     return row + 1
 
 
@@ -6669,6 +6875,7 @@ def _hoja_balance_pesos(
         ws,
         _anchos_base(pesos=True, en_cascada=_reserva_en_cascada(req.balance)),
         _con_entregas_socios(req.balance),
+        _vuelos_utilidades_en_tabla(req.balance, pesos=True),
     )
 
 
@@ -6969,6 +7176,7 @@ def _hoja_balance_general_pesos(
             pesos=True, en_cascada=any(_reserva_en_cascada(a.balance) for a in req.aviones)
         ),
         any(_con_entregas_socios(a.balance) for a in req.aviones),
+        any(_vuelos_utilidades_en_tabla(a.balance, pesos=True) for a in req.aviones),
     )
 
 
